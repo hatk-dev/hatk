@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "check": "tsc --noEmit && oxlint . && oxfmt --check ."
+    "check": "tsc --noEmit && oxlint . && oxfmt --check .",
+    "docs": "npm run dev -w @hatk/docs",
+    "docs:build": "npm run build -w @hatk/docs"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",
