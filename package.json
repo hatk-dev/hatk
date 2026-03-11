@@ -1,0 +1,24 @@
+{
+  "name": "hatk",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "lint": "oxlint .",
+    "typecheck": "tsc --noEmit",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "check": "tsc --noEmit && oxlint . && oxfmt --check ."
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "oxfmt": "^0.35.0",
+    "oxlint": "^1.50.0",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=25.0.0"
+  }
+}

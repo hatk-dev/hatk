@@ -1,0 +1,38 @@
+---
+title: Build & Deploy
+description: Build your Hatk server for production.
+---
+
+## `hatk build`
+
+Build the frontend for production using Vite.
+
+```bash
+hatk build
+```
+
+Compiles and bundles the files in `public/` (or `src/` for Svelte projects) into optimized production assets.
+
+## Deployment
+
+To run in production:
+
+1. Build the frontend:
+   ```bash
+   hatk build
+   ```
+
+2. Start the server:
+   ```bash
+   hatk start
+   ```
+
+3. Configure environment variables for production:
+   ```bash
+   RELAY=wss://bsky.network \
+   DATABASE=data/hatk.db \
+   PORT=3000 \
+   hatk start
+   ```
+
+See [Configuration](/getting-started/configuration/) for all available environment variables.

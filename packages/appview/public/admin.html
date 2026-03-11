@@ -1,0 +1,2166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Figtree:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      :root {
+        --bg: #f5f2ee;
+        --bg-recessed: #eae6e1;
+        --surface: #ffffff;
+        --border: #e2ddd7;
+        --border-hover: #cdc6be;
+        --text: #1c1917;
+        --text-2: #78716c;
+        --text-3: #a8a29e;
+        --accent: #f06449;
+        --accent-hover: #de5338;
+        --green: #16a34a;
+        --green-bg: #f0fdf4;
+        --yellow: #ca8a04;
+        --yellow-bg: #fefce8;
+        --red: #dc2626;
+        --red-bg: #fef2f2;
+        --label-color: #4f46e5;
+        --label-bg: #eef2ff;
+        --label-border: #c7d2fe;
+        --font: 'Figtree', system-ui, -apple-system, sans-serif;
+        --mono: 'DM Mono', 'Menlo', monospace;
+        --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.04), 0 1px 3px rgba(28, 25, 23, 0.06);
+        --shadow-md: 0 2px 8px rgba(28, 25, 23, 0.07), 0 1px 3px rgba(28, 25, 23, 0.05);
+        --shadow-lg: 0 4px 16px rgba(28, 25, 23, 0.1);
+      }
+
+      html {
+        font-size: 16px;
+      }
+
+      body {
+        font-family: var(--font);
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        min-height: 100dvh;
+        line-height: 1.6;
+        font-weight: 400;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* ── Login ── */
+      #login-screen {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        min-height: 100dvh;
+        padding: 1.5rem;
+      }
+
+      .login-card {
+        background: var(--surface);
+        border-radius: 16px;
+        padding: 2.5rem 2rem;
+        width: 380px;
+        max-width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+        box-shadow: var(--shadow-lg);
+      }
+
+      .login-header {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+      }
+      .login-header .logo-mark {
+        width: 28px;
+        height: 28px;
+        background: var(--accent);
+        border-radius: 8px;
+        flex-shrink: 0;
+      }
+      .login-card h1 {
+        font-size: 1.5rem;
+        font-weight: 700;
+      }
+      .login-card p {
+        font-size: 0.9375rem;
+        color: var(--text-2);
+        margin-top: -0.5rem;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+      }
+      .field label {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--text-2);
+      }
+
+      input[type='text'],
+      .search-input {
+        font-family: var(--font);
+        font-size: 0.9375rem;
+        font-weight: 400;
+        background: var(--surface);
+        border: 1.5px solid var(--border);
+        color: var(--text);
+        padding: 0.6rem 0.85rem;
+        border-radius: 10px;
+        outline: none;
+        transition:
+          border-color 0.2s,
+          box-shadow 0.2s;
+      }
+      input:focus,
+      .search-input:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(240, 100, 73, 0.12);
+      }
+      input::placeholder,
+      .search-input::placeholder {
+        color: var(--text-3);
+      }
+
+      /* ── Buttons ── */
+      .btn {
+        font-family: var(--font);
+        font-size: 0.875rem;
+        font-weight: 600;
+        padding: 0.5rem 1rem;
+        border: 1.5px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+        color: var(--text);
+        cursor: pointer;
+        transition: all 0.15s;
+        white-space: nowrap;
+        line-height: 1.4;
+      }
+      .btn:hover {
+        border-color: var(--border-hover);
+        transform: translateY(-1px);
+        box-shadow: var(--shadow-sm);
+      }
+      .btn:active {
+        transform: translateY(0);
+        box-shadow: none;
+      }
+      .btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+      }
+
+      .btn-primary {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+      .btn-primary:hover {
+        background: var(--accent-hover);
+        border-color: var(--accent-hover);
+      }
+
+      .btn-danger {
+        color: var(--red);
+        border-color: #fecaca;
+        background: var(--red-bg);
+      }
+      .btn-danger:hover {
+        background: var(--red);
+        color: #fff;
+        border-color: var(--red);
+      }
+
+      .btn-success {
+        color: var(--green);
+        border-color: #bbf7d0;
+        background: var(--green-bg);
+      }
+      .btn-success:hover {
+        background: var(--green);
+        color: #fff;
+        border-color: var(--green);
+      }
+
+      .btn-sm {
+        padding: 0.25rem 0.6rem;
+        font-size: 0.8rem;
+        border-radius: 8px;
+      }
+
+      .btn-link {
+        font-family: var(--font);
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: var(--text-2);
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 0;
+        transition: color 0.15s;
+      }
+      .btn-link:hover {
+        color: var(--text);
+      }
+
+      /* ── Topbar ── */
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        background: rgba(245, 242, 238, 0.8);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+      }
+
+      .topbar-inner {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 0 1.5rem;
+        height: 56px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .logo {
+        font-size: 1.125rem;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: var(--text);
+      }
+      .logo .logo-mark {
+        width: 24px;
+        height: 24px;
+        background: var(--accent);
+        border-radius: 7px;
+        flex-shrink: 0;
+      }
+
+      .topbar-right {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+      }
+
+      .viewer-did {
+        font-family: var(--mono);
+        font-size: 0.75rem;
+        color: var(--text-3);
+      }
+
+      /* ── App shell ── */
+      #app {
+        display: none;
+      }
+      #app.visible {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+        min-height: 100dvh;
+      }
+
+      .container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 1.5rem;
+        padding-bottom: 3rem;
+        flex: 1;
+        width: 100%;
+      }
+
+      /* ── Tabs (desktop pill track) ── */
+      .tabs {
+        display: inline-flex;
+        gap: 0.2rem;
+        background: var(--bg-recessed);
+        padding: 0.3rem;
+        border-radius: 12px;
+        margin-bottom: 2rem;
+      }
+      .tab {
+        padding: 0.5rem 1.1rem;
+        border-radius: 10px;
+        font-family: var(--font);
+        font-size: 0.9375rem;
+        font-weight: 600;
+        color: var(--text-2);
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .tab:hover {
+        color: var(--text);
+      }
+      .tab.active {
+        background: var(--surface);
+        color: var(--text);
+        box-shadow: var(--shadow-sm);
+      }
+
+      .tab-panel {
+        display: none;
+        animation: fadeIn 0.2s ease;
+      }
+      .tab-panel.active {
+        display: block;
+      }
+
+      /* ── Bottom nav (mobile) ── */
+      .bottom-nav {
+        display: none;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 100;
+        background: rgba(245, 242, 238, 0.85);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-top: 1px solid rgba(0, 0, 0, 0.06);
+        padding: 0.5rem 1rem;
+        padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+      }
+      .bottom-nav-track {
+        display: flex;
+        gap: 0.2rem;
+        background: var(--bg-recessed);
+        border-radius: 12px;
+        padding: 0.3rem;
+        max-width: 360px;
+        margin: 0 auto;
+      }
+      .bnav-btn {
+        flex: 1;
+        padding: 0.55rem;
+        border-radius: 10px;
+        font-family: var(--font);
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--text-2);
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        transition: all 0.2s;
+        text-align: center;
+      }
+      .bnav-btn.active {
+        background: var(--surface);
+        color: var(--text);
+        box-shadow: var(--shadow-sm);
+      }
+
+      /* ── Section label ── */
+      .section-label {
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-3);
+        margin-bottom: 0.75rem;
+      }
+
+      /* ── Overview cards ── */
+      .cards-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+        gap: 0.6rem;
+        margin-bottom: 2rem;
+      }
+
+      .stat-card {
+        background: var(--surface);
+        border-radius: 14px;
+        padding: 1rem 1.1rem;
+        box-shadow: var(--shadow-sm);
+        transition:
+          transform 0.2s,
+          box-shadow 0.2s;
+      }
+      .stat-card:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-md);
+      }
+
+      .stat-card .stat-label {
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-3);
+        margin-bottom: 0.3rem;
+        word-break: break-word;
+        line-height: 1.4;
+      }
+      .stat-card .stat-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: var(--text);
+        letter-spacing: -0.02em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .stat-card .stat-value.green {
+        color: var(--green);
+      }
+      .stat-card .stat-value.yellow {
+        color: var(--yellow);
+      }
+      .stat-card .stat-value.red {
+        color: var(--red);
+      }
+
+      /* ── Collection list ── */
+      .collection-list {
+        background: var(--surface);
+        border-radius: 14px;
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
+        margin-bottom: 2rem;
+      }
+      .collection-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.6rem 1rem;
+        border-bottom: 1px solid var(--border);
+      }
+      .collection-row:last-child {
+        border-bottom: none;
+      }
+      .collection-row:hover {
+        background: #faf8f6;
+      }
+      .collection-name {
+        font-family: var(--mono);
+        font-size: 0.8rem;
+        color: var(--text-2);
+      }
+      .collection-count {
+        font-weight: 700;
+        font-size: 0.9375rem;
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .quick-actions {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+
+      /* ── Search ── */
+      .search-bar {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1.25rem;
+      }
+      .search-bar .search-input {
+        flex: 1;
+      }
+
+      /* ── Card wrapper ── */
+      .card {
+        background: var(--surface);
+        border-radius: 14px;
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
+      }
+
+      /* ── Table ── */
+      .data-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      .data-table th {
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-3);
+        text-align: left;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid var(--border);
+      }
+      .data-table td {
+        padding: 0.7rem 1rem;
+        border-bottom: 1px solid var(--border);
+        vertical-align: middle;
+        font-size: 0.9375rem;
+      }
+      .data-table tbody tr:last-child td {
+        border-bottom: none;
+      }
+      .data-table tbody tr:hover td {
+        background: #faf8f6;
+      }
+
+      .data-table .did-cell {
+        font-family: var(--mono);
+        font-size: 0.75rem;
+        color: var(--text-2);
+        max-width: 180px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+      .data-table .did-cell:hover {
+        color: var(--accent);
+      }
+      .rcm-did {
+        cursor: pointer;
+      }
+      .rcm-did:hover {
+        color: var(--accent) !important;
+      }
+      .data-table .handle-cell {
+        font-weight: 600;
+      }
+
+      /* ── Actions dropdown ── */
+      .actions-wrap {
+        position: relative;
+      }
+
+      .actions-trigger {
+        font-family: var(--font);
+        font-size: 1.1rem;
+        font-weight: 700;
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: none;
+        border: 1.5px solid var(--border);
+        border-radius: 8px;
+        color: var(--text-2);
+        cursor: pointer;
+        transition: all 0.15s;
+        line-height: 1;
+        letter-spacing: 2px;
+      }
+      .actions-trigger:hover {
+        border-color: var(--border-hover);
+        color: var(--text);
+        background: var(--bg);
+      }
+
+      .actions-menu {
+        display: none;
+        position: fixed;
+        background: var(--surface);
+        border-radius: 12px;
+        box-shadow: var(--shadow-lg);
+        min-width: 160px;
+        z-index: 200;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        animation: fadeIn 0.12s ease;
+      }
+      .actions-menu.open {
+        display: block;
+      }
+
+      .actions-menu button {
+        font-family: var(--font);
+        font-size: 0.875rem;
+        font-weight: 500;
+        width: 100%;
+        text-align: left;
+        padding: 0.6rem 0.9rem;
+        background: none;
+        border: none;
+        color: var(--text);
+        cursor: pointer;
+        transition: background 0.1s;
+      }
+      .actions-menu button:hover {
+        background: var(--bg);
+      }
+      .actions-menu button.danger {
+        color: var(--red);
+      }
+      .actions-menu button.danger:hover {
+        background: var(--red-bg);
+      }
+      .actions-menu button.success {
+        color: var(--green);
+      }
+      .actions-menu button.success:hover {
+        background: var(--green-bg);
+      }
+      .actions-menu .menu-sep {
+        height: 1px;
+        background: var(--border);
+        margin: 0.2rem 0;
+      }
+
+      /* ── Status pills ── */
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        font-size: 0.8rem;
+        font-weight: 600;
+        padding: 0.2rem 0.65rem;
+        border-radius: 20px;
+      }
+      .status::before {
+        content: '';
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .status-active {
+        color: #15803d;
+        background: var(--green-bg);
+      }
+      .status-active::before {
+        background: var(--green);
+      }
+      .status-pending {
+        color: #a16207;
+        background: var(--yellow-bg);
+      }
+      .status-pending::before {
+        background: var(--yellow);
+        animation: pulse 2s ease-in-out infinite;
+      }
+      .status-failed {
+        color: var(--red);
+        background: var(--red-bg);
+      }
+      .status-failed::before {
+        background: var(--red);
+      }
+      .status-takendown {
+        color: var(--red);
+        background: var(--red-bg);
+      }
+      .status-takendown::before {
+        background: var(--red);
+      }
+
+      /* ── Labels ── */
+      .label-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.2rem;
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        font-weight: 500;
+        padding: 0.15rem 0.5rem;
+        background: var(--label-bg);
+        border: 1px solid var(--label-border);
+        color: var(--label-color);
+        border-radius: 6px;
+        line-height: 1.4;
+      }
+      .label-tag .remove-x {
+        cursor: pointer;
+        color: var(--text-3);
+        font-size: 0.85rem;
+        line-height: 1;
+        opacity: 0;
+        transition:
+          opacity 0.1s,
+          color 0.1s;
+      }
+      .label-tag:hover .remove-x {
+        opacity: 1;
+      }
+      .label-tag .remove-x:hover {
+        color: var(--red);
+      }
+
+      .label-select {
+        font-family: var(--font);
+        font-size: 0.8rem;
+        font-weight: 500;
+        background: var(--surface);
+        border: 1.5px solid var(--border);
+        color: var(--text-2);
+        padding: 0.25rem 0.5rem;
+        border-radius: 8px;
+        outline: none;
+        cursor: pointer;
+      }
+      .label-select:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(240, 100, 73, 0.12);
+      }
+
+      /* ── Toolbar ── */
+      .toolbar {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1.25rem;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .toolbar .search-input {
+        flex: 1;
+        min-width: 200px;
+      }
+
+      .filter-select {
+        font-family: var(--font);
+        font-size: 0.9375rem;
+        font-weight: 500;
+        background: var(--surface);
+        border: 1.5px solid var(--border);
+        color: var(--text);
+        padding: 0.55rem 0.85rem;
+        border-radius: 10px;
+        outline: none;
+        cursor: pointer;
+      }
+      .filter-select:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(240, 100, 73, 0.12);
+      }
+
+      .add-repos-bar {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1.25rem;
+      }
+      .add-repos-bar .search-input {
+        flex: 1;
+      }
+
+      /* ── Pagination ── */
+      .pagination {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.75rem 1rem;
+        border-top: 1px solid var(--border);
+        font-size: 0.8rem;
+        color: var(--text-2);
+      }
+      .pagination-buttons {
+        display: flex;
+        gap: 0.3rem;
+      }
+
+      /* ── Empty / loading ── */
+      .empty-state {
+        text-align: center;
+        padding: 3rem 2rem;
+        color: var(--text-3);
+        font-size: 1rem;
+      }
+
+      /* ── Schema ── */
+      .schema-pre {
+        font-family: var(--mono);
+        font-size: 0.8rem;
+        line-height: 1.6;
+        padding: 1rem;
+        margin: 0;
+        background: var(--bg-recessed);
+        border-radius: 0 0 6px 6px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: var(--text);
+        overflow-x: auto;
+      }
+      .schema-section {
+        margin-bottom: 1.5rem;
+      }
+      .loading {
+        color: var(--text-3);
+        font-size: 0.9375rem;
+        padding: 2rem;
+        text-align: center;
+      }
+      .loading::after {
+        content: '';
+        animation: dots 1.2s infinite steps(4);
+      }
+
+      .result-count {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--text-3);
+        padding: 0.6rem 1rem;
+        border-bottom: 1px solid var(--border);
+      }
+
+      /* ── Record detail ── */
+      .record-card {
+        border-bottom: 1px solid var(--border);
+        padding: 0.85rem 1rem;
+        transition: background 0.1s;
+      }
+      .record-card:last-child {
+        border-bottom: none;
+      }
+      .record-card:hover {
+        background: #faf8f6;
+      }
+
+      .record-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.75rem;
+      }
+      .record-meta {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .record-uri {
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        color: var(--text-2);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .record-summary {
+        font-size: 0.9375rem;
+        color: var(--text);
+        margin-top: 0.15rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .record-handle {
+        font-family: var(--mono);
+        font-size: 0.8rem;
+        color: var(--text-3);
+        margin-top: 0.1rem;
+      }
+      .record-actions {
+        display: flex;
+        gap: 0.3rem;
+        align-items: center;
+        flex-shrink: 0;
+      }
+      .record-labels {
+        display: flex;
+        gap: 0.3rem;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-top: 0.4rem;
+      }
+
+      .toggle-detail {
+        font-family: var(--font);
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--accent);
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 0;
+        margin-top: 0.4rem;
+        transition: opacity 0.15s;
+      }
+      .toggle-detail:hover {
+        opacity: 0.7;
+      }
+
+      .record-detail {
+        display: none;
+        margin-top: 0.6rem;
+        border-top: 1px solid var(--border);
+        padding-top: 0.6rem;
+      }
+      .record-detail.open {
+        display: block;
+      }
+
+      .record-detail pre {
+        font-family: var(--mono);
+        font-size: 0.8rem;
+        line-height: 1.6;
+        color: var(--text-2);
+        background: var(--bg);
+        border-radius: 10px;
+        padding: 1rem;
+        overflow-x: auto;
+        max-height: 400px;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+
+      .blob-section {
+        margin-top: 0.6rem;
+      }
+      .blob-section h4 {
+        font-size: 0.7rem;
+        font-weight: 700;
+        color: var(--text-3);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 0.4rem;
+      }
+      .blob-grid {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .blob-thumb {
+        width: 100px;
+        height: 100px;
+        object-fit: cover;
+        border-radius: 10px;
+        background: var(--bg);
+      }
+      .blob-link {
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        color: var(--accent);
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.3rem 0.6rem;
+        border: 1.5px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+      }
+      .blob-link:hover {
+        border-color: var(--accent);
+      }
+
+      /* ── Toast ── */
+      #toast-container {
+        position: fixed;
+        bottom: 1.5rem;
+        right: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        z-index: 1000;
+        pointer-events: none;
+      }
+      .toast {
+        font-size: 0.875rem;
+        font-weight: 500;
+        padding: 0.65rem 1rem;
+        background: var(--surface);
+        border-radius: 12px;
+        box-shadow: var(--shadow-lg);
+        color: var(--text);
+        animation: slideUp 0.25s ease;
+        pointer-events: auto;
+        max-width: 380px;
+      }
+      .toast.error {
+        border-left: 3px solid var(--red);
+      }
+      .toast.success {
+        border-left: 3px solid var(--green);
+      }
+
+      /* ── Error screen ── */
+      #error-screen {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        gap: 0.75rem;
+        text-align: center;
+        padding: 2rem;
+      }
+      #error-screen.visible {
+        display: flex;
+      }
+      #error-screen h2 {
+        font-size: 1.25rem;
+        font-weight: 700;
+      }
+      #error-screen .error-msg {
+        font-size: 1rem;
+        color: var(--text-2);
+      }
+
+      /* ── Mobile repo cards ── */
+      .repo-cards-mobile {
+        display: none;
+      }
+
+      .repo-card-m {
+        background: var(--surface);
+        border-radius: 14px;
+        padding: 1rem;
+        box-shadow: var(--shadow-sm);
+        margin-bottom: 0.5rem;
+      }
+      .repo-card-m .rcm-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 0.2rem;
+      }
+      .repo-card-m .rcm-handle {
+        font-weight: 600;
+        font-size: 1rem;
+      }
+      .repo-card-m .rcm-did {
+        font-family: var(--mono);
+        font-size: 0.7rem;
+        color: var(--text-2);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        margin-bottom: 0.35rem;
+      }
+      .repo-card-m .rcm-meta {
+        font-size: 0.8rem;
+        color: var(--text-3);
+        margin-bottom: 0.6rem;
+      }
+      .repo-card-m .rcm-actions {
+        display: flex;
+        gap: 0.3rem;
+        flex-wrap: wrap;
+      }
+
+      /* ── Animations ── */
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      @keyframes slideUp {
+        from {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      @keyframes dots {
+        0%,
+        20% {
+          content: '';
+        }
+        40% {
+          content: '.';
+        }
+        60% {
+          content: '..';
+        }
+        80%,
+        100% {
+          content: '...';
+        }
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.35;
+        }
+      }
+
+      /* ── Responsive ── */
+      @media (max-width: 640px) {
+        .container {
+          padding: 1rem;
+          padding-bottom: 5.5rem;
+        }
+        .topbar-inner {
+          padding: 0 1rem;
+        }
+        .tabs {
+          display: none;
+        }
+        .bottom-nav {
+          display: block;
+        }
+        .viewer-did {
+          display: none;
+        }
+
+        .cards-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .stat-card .stat-value {
+          font-size: 1.4rem;
+        }
+
+        .toolbar {
+          flex-direction: column;
+        }
+        .toolbar .search-input {
+          min-width: unset;
+          width: 100%;
+        }
+        .add-repos-bar {
+          flex-direction: column;
+        }
+        .search-bar {
+          flex-direction: column;
+        }
+
+        .record-header {
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+        .record-actions {
+          align-self: flex-start;
+        }
+
+        .repos-table-wrap {
+          display: none !important;
+        }
+        .repo-cards-mobile {
+          display: block !important;
+        }
+
+        .quick-actions {
+          flex-direction: column;
+        }
+        .quick-actions .btn {
+          width: 100%;
+          text-align: center;
+        }
+
+        #toast-container {
+          bottom: 5rem;
+          right: 1rem;
+          left: 1rem;
+        }
+        .toast {
+          max-width: none;
+        }
+      }
+
+      @media (max-width: 380px) {
+        .login-card {
+          padding: 2rem 1.5rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Login -->
+    <div id="login-screen">
+      <div class="login-card">
+        <div class="login-header">
+          <span class="logo-mark"></span>
+          <h1>admin</h1>
+        </div>
+        <p>Sign in to manage your server.</p>
+        <div class="field">
+          <label for="handle-input">Handle</label>
+          <input type="text" id="handle-input" placeholder="alice.bsky.social" autocomplete="off" spellcheck="false" />
+        </div>
+        <button class="btn btn-primary" id="login-btn" style="width: 100%">Sign In</button>
+      </div>
+    </div>
+
+    <!-- Error -->
+    <div id="error-screen">
+      <h2>Access Denied</h2>
+      <div class="error-msg" id="error-msg">Your account does not have admin privileges.</div>
+      <button class="btn" onclick="auth.logout().then(() => location.reload())">Sign Out</button>
+    </div>
+
+    <!-- App -->
+    <div id="app">
+      <div class="topbar">
+        <div class="topbar-inner">
+          <span class="logo"><span class="logo-mark"></span> admin</span>
+          <div class="topbar-right">
+            <span class="viewer-did" id="viewer-did"></span>
+            <button class="btn-link" id="logout-btn">Sign out</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="container">
+        <nav class="tabs">
+          <button class="tab active" data-tab="overview">Overview</button>
+          <button class="tab" data-tab="repos">Repos</button>
+          <button class="tab" data-tab="content">Content</button>
+          <button class="tab" data-tab="schema">Schema</button>
+        </nav>
+
+        <!-- Overview -->
+        <div class="tab-panel active" id="panel-overview">
+          <div id="overview-loading" class="loading">Loading</div>
+          <div id="overview-content" style="display: none">
+            <div class="section-label">Repos</div>
+            <div class="cards-grid" id="status-cards"></div>
+            <div class="section-label">Collections</div>
+            <div id="collection-cards"></div>
+            <div class="section-label">Database</div>
+            <div class="cards-grid" id="db-cards"></div>
+            <div class="quick-actions">
+              <button class="btn" id="resync-all-btn">Resync All Repos</button>
+              <button class="btn" id="rescan-labels-btn">Rescan Labels</button>
+              <select class="filter-select" id="reset-label-select">
+                <option value="">Reset labels...</option>
+              </select>
+              <button class="btn" id="reset-labels-btn" style="display: none">Delete All</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Repos -->
+        <div class="tab-panel" id="panel-repos">
+          <div class="add-repos-bar">
+            <input
+              class="search-input"
+              id="add-repos-input"
+              type="text"
+              placeholder="Add DIDs (comma-separated)..."
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="btn btn-primary" id="add-repos-btn">Add</button>
+          </div>
+          <div class="toolbar">
+            <input
+              class="search-input"
+              id="repos-search"
+              type="text"
+              placeholder="Search by DID or handle..."
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <select class="filter-select" id="repos-status-filter">
+              <option value="">All statuses</option>
+              <option value="active">Active</option>
+              <option value="pending">Pending</option>
+              <option value="failed">Failed</option>
+              <option value="takendown">Taken down</option>
+            </select>
+          </div>
+          <div id="repos-results"><div class="loading">Loading</div></div>
+        </div>
+
+        <!-- Schema -->
+        <div class="tab-panel" id="panel-schema">
+          <div id="schema-results"><div class="loading">Loading</div></div>
+        </div>
+
+        <!-- Content -->
+        <div class="tab-panel" id="panel-content">
+          <div class="search-bar">
+            <input
+              class="search-input"
+              id="content-search"
+              type="search"
+              placeholder="Search records by text, DID, or AT URI..."
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="btn btn-primary" id="content-search-btn">Search</button>
+          </div>
+          <div id="content-results">
+            <div class="loading">Loading</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom nav (mobile) -->
+      <div class="bottom-nav">
+        <div class="bottom-nav-track">
+          <button class="bnav-btn active" data-tab="overview">Overview</button>
+          <button class="bnav-btn" data-tab="repos">Repos</button>
+          <button class="bnav-btn" data-tab="content">Content</button>
+          <button class="bnav-btn" data-tab="schema">Schema</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast-container"></div>
+
+    <script type="module">
+      import { OAuthClient } from '/admin/admin-auth.js'
+
+      const auth = new OAuthClient({
+        server: location.origin,
+        clientId: location.origin + '/oauth-client-metadata.json',
+        redirectUri: location.origin + '/admin',
+      })
+
+      window.auth = auth
+      let labelDefinitions = []
+
+      function toast(msg, type = '') {
+        const el = document.createElement('div')
+        el.className = `toast ${type}`
+        el.textContent = msg
+        document.getElementById('toast-container').appendChild(el)
+        setTimeout(() => el.remove(), 3000)
+      }
+
+      async function api(path, opts = {}) {
+        const res = await auth.fetch(path, opts)
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: res.statusText }))
+          throw new Error(err.error || 'Request failed')
+        }
+        return res.json()
+      }
+
+      function escapeHtml(str) {
+        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+      }
+
+      function summarizeValue(record) {
+        if (!record.value) return ''
+        const v = record.value
+        const parts = []
+        for (const [key, val] of Object.entries(v)) {
+          if (typeof val === 'string' && val.length > 0 && val.length < 120) {
+            parts.push(`${key}: ${val}`)
+          }
+          if (parts.length >= 3) break
+        }
+        return parts.join(' \u2014 ')
+      }
+
+      function formatTimestamp(ts) {
+        if (!ts) return '\u2014'
+        try {
+          const d = typeof ts === 'object' && 'micros' in ts ? new Date(Number(ts.micros) / 1000) : new Date(ts)
+          return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        } catch {
+          return '\u2014'
+        }
+      }
+
+      // ── Auth ──
+
+      const loginScreen = document.getElementById('login-screen')
+      const errorScreen = document.getElementById('error-screen')
+      const appEl = document.getElementById('app')
+
+      document.getElementById('login-btn').addEventListener('click', async () => {
+        const handle = document.getElementById('handle-input').value.trim()
+        if (!handle) return
+        try {
+          await auth.login(handle)
+        } catch (e) {
+          toast(e.message, 'error')
+        }
+      })
+
+      document.getElementById('handle-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') document.getElementById('login-btn').click()
+      })
+
+      async function boot() {
+        try {
+          const handled = await auth.handleCallback()
+          if (handled) history.replaceState({}, '', '/admin')
+        } catch (e) {
+          console.error('OAuth callback error:', e)
+        }
+
+        if (!auth.isLoggedIn) {
+          loginScreen.style.display = 'flex'
+          return
+        }
+        loginScreen.style.display = 'none'
+
+        try {
+          const whoami = await api('/admin/whoami')
+          document.getElementById('viewer-did').textContent = whoami.did
+        } catch (e) {
+          document.getElementById('error-msg').textContent =
+            e.message === 'Admin access required'
+              ? 'Your account does not have admin privileges on this server.'
+              : e.message
+          errorScreen.classList.add('visible')
+          return
+        }
+
+        try {
+          const result = await api('/admin/labels/definitions')
+          labelDefinitions = result.definitions || []
+        } catch {}
+
+        appEl.classList.add('visible')
+        restoreFromURL()
+      }
+
+      boot()
+
+      document.getElementById('logout-btn').addEventListener('click', async () => {
+        await auth.logout()
+        location.reload()
+      })
+
+      // ── URL State ──
+
+      function getURLState() {
+        const p = new URLSearchParams(location.search)
+        return {
+          tab: p.get('tab') || 'overview',
+          status: p.get('status') || '',
+          q: p.get('q') || '',
+          offset: parseInt(p.get('offset') || '0'),
+          cq: p.get('cq') || '',
+        }
+      }
+
+      function pushURL(overrides = {}) {
+        const cur = getURLState()
+        const next = { ...cur, ...overrides }
+        const p = new URLSearchParams()
+        if (next.tab && next.tab !== 'overview') p.set('tab', next.tab)
+        if (next.tab === 'repos') {
+          if (next.status) p.set('status', next.status)
+          if (next.q) p.set('q', next.q)
+          if (next.offset) p.set('offset', next.offset)
+        }
+        if (next.tab === 'content' && next.cq) p.set('cq', next.cq)
+        const qs = p.toString()
+        const url = '/admin' + (qs ? '?' + qs : '')
+        if (url !== location.pathname + location.search) {
+          history.pushState(null, '', url)
+        }
+      }
+
+      function restoreFromURL() {
+        const s = getURLState()
+        // Set state before activateTab so tab loaders see the right values
+        if (s.tab === 'repos') {
+          reposPage.status = s.status
+          reposPage.q = s.q
+          reposPage.offset = s.offset
+          document.getElementById('repos-search').value = s.q
+          document.getElementById('repos-status-filter').value = s.status
+        } else if (s.tab === 'content' && s.cq) {
+          document.getElementById('content-search').value = s.cq
+        }
+        activateTab(s.tab, false)
+      }
+
+      window.addEventListener('popstate', () => restoreFromURL())
+
+      // ── Tabs ──
+
+      function activateTab(tab, push = true) {
+        document.querySelectorAll('.tab').forEach((b) => b.classList.remove('active'))
+        document.querySelectorAll('.bnav-btn').forEach((b) => b.classList.remove('active'))
+        document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'))
+        document.querySelectorAll(`[data-tab="${tab}"]`).forEach((b) => b.classList.add('active'))
+        document.getElementById(`panel-${tab}`).classList.add('active')
+        if (tab === 'overview') loadOverview()
+        if (tab === 'repos') loadRepos()
+        if (tab === 'schema') loadSchema()
+        if (tab === 'content') loadContent()
+        if (push) pushURL({ tab, status: '', q: '', offset: 0, cq: '' })
+      }
+
+      document.querySelectorAll('.tab').forEach((btn) => {
+        btn.addEventListener('click', () => activateTab(btn.dataset.tab))
+      })
+      document.querySelectorAll('.bnav-btn').forEach((btn) => {
+        btn.addEventListener('click', () => activateTab(btn.dataset.tab))
+      })
+
+      // ── Overview ──
+
+      async function loadOverview() {
+        try {
+          const info = await api('/admin/info')
+          const statusCards = document.getElementById('status-cards')
+          const repoStatuses = info.repos || {}
+          const total = Object.values(repoStatuses).reduce((a, b) => a + b, 0)
+
+          const fmt = (n) => Number(n || 0).toLocaleString()
+          statusCards.innerHTML = `
+      <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value">${fmt(total)}</div></div>
+      <div class="stat-card"><div class="stat-label">Active</div><div class="stat-value green">${fmt(repoStatuses.active)}</div></div>
+      <div class="stat-card"><div class="stat-label">Pending</div><div class="stat-value yellow">${fmt(repoStatuses.pending)}</div></div>
+      <div class="stat-card"><div class="stat-label">Failed</div><div class="stat-value red">${fmt(repoStatuses.failed)}</div></div>
+      <div class="stat-card"><div class="stat-label">Taken Down</div><div class="stat-value red">${fmt(repoStatuses.takendown)}</div></div>
+    `
+
+          const collectionCards = document.getElementById('collection-cards')
+          const collections = info.collections || {}
+          const collectionRows = Object.entries(collections)
+            .map(
+              ([name, count]) =>
+                `<div class="collection-row"><span class="collection-name">${escapeHtml(name)}</span><span class="collection-count">${Number(count).toLocaleString()}</span></div>`,
+            )
+            .join('')
+          collectionCards.innerHTML = collectionRows
+            ? `<div class="collection-list">${collectionRows}</div>`
+            : '<div class="empty-state">No collections</div>'
+
+          const dbCards = document.getElementById('db-cards')
+          const db = info.duckdb || {}
+          dbCards.innerHTML = `
+      <div class="stat-card"><div class="stat-label">DB Size</div><div class="stat-value" style="font-size:1.35rem">${db.database_size || '\u2014'}</div></div>
+      <div class="stat-card"><div class="stat-label">Memory</div><div class="stat-value" style="font-size:1.35rem">${db.memory_usage || '\u2014'}</div></div>
+    `
+
+          const resetSelect = document.getElementById('reset-label-select')
+          resetSelect.innerHTML =
+            '<option value="">Reset labels...</option>' +
+            labelDefinitions
+              .map((d) => `<option value="${escapeHtml(d.identifier)}">${escapeHtml(d.identifier)}</option>`)
+              .join('')
+
+          document.getElementById('overview-loading').style.display = 'none'
+          document.getElementById('overview-content').style.display = 'block'
+        } catch (e) {
+          document.getElementById('overview-loading').textContent = 'Failed to load: ' + e.message
+        }
+      }
+
+      document.getElementById('resync-all-btn').addEventListener('click', async () => {
+        if (!confirm('Resync all active repos? This will re-download all data.')) return
+        try {
+          const result = await api('/admin/repos/resync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          })
+          toast(`Resyncing ${result.resyncing} repos`, 'success')
+          loadOverview()
+        } catch (e) {
+          toast(e.message, 'error')
+        }
+      })
+
+      document.getElementById('rescan-labels-btn').addEventListener('click', async () => {
+        try {
+          const result = await api('/admin/labels/rescan', { method: 'POST' })
+          toast(`Label rescan complete: ${result.applied || 0} applied`, 'success')
+        } catch (e) {
+          toast(e.message, 'error')
+        }
+      })
+
+      document.getElementById('reset-label-select').addEventListener('change', (e) => {
+        document.getElementById('reset-labels-btn').style.display = e.target.value ? '' : 'none'
+      })
+
+      document.getElementById('reset-labels-btn').addEventListener('click', async () => {
+        const val = document.getElementById('reset-label-select').value
+        if (!val) return
+        if (!confirm(`Delete ALL "${val}" labels? This cannot be undone.`)) return
+        try {
+          const result = await api('/admin/labels/reset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ val }),
+          })
+          toast(`Deleted ${result.deleted} "${val}" labels`, 'success')
+          document.getElementById('reset-label-select').value = ''
+          document.getElementById('reset-labels-btn').style.display = 'none'
+        } catch (e) {
+          toast(e.message, 'error')
+        }
+      })
+
+      // ── Schema ──
+
+      async function loadSchema() {
+        const container = document.getElementById('schema-results')
+        try {
+          const data = await api('/admin/schema')
+          let html = ''
+
+          // Lexicons section
+          if (data.lexicons && data.lexicons.length) {
+            html += '<div class="schema-section"><div class="section-label">Lexicons</div>'
+            for (const lex of data.lexicons) {
+              html += `<div class="card" style="margin-bottom:0.5rem;"><div style="font-family:var(--mono);font-size:0.8rem;font-weight:600;padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);">${escapeHtml(lex.nsid)}</div><pre class="schema-pre">${escapeHtml(JSON.stringify(lex.lexicon, null, 2))}</pre></div>`
+            }
+            html += '</div>'
+          }
+
+          // DDL section
+          if (data.ddl) {
+            html += '<div class="schema-section"><div class="section-label">Tables (DuckDB DDL)</div>'
+            html += `<div class="card"><pre class="schema-pre">${escapeHtml(data.ddl)}</pre></div>`
+            html += '</div>'
+          }
+
+          container.innerHTML = html || '<div class="empty-state">No schema found</div>'
+        } catch (e) {
+          container.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`
+        }
+      }
+
+      // ── Repos ──
+
+      let reposLoaded = false
+      let reposPage = { offset: 0, limit: 50, status: '', q: '' }
+
+      async function loadRepos() {
+        reposLoaded = true
+        const container = document.getElementById('repos-results')
+        container.innerHTML = '<div class="loading">Loading</div>'
+
+        const params = new URLSearchParams({ limit: reposPage.limit, offset: reposPage.offset })
+        if (reposPage.status) params.set('status', reposPage.status)
+        if (reposPage.q) params.set('q', reposPage.q)
+
+        try {
+          const result = await api(`/admin/repos?${params}`)
+          renderRepos(result)
+        } catch (e) {
+          container.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`
+        }
+      }
+
+      function repoActionMenu(repo) {
+        const isTD = repo.status === 'takendown'
+        const d = escapeHtml(repo.did)
+        return `
+    <div class="actions-wrap">
+      <button class="actions-trigger" title="Actions">&middot;&middot;&middot;</button>
+      <div class="actions-menu">
+        <button data-action="resync" data-did="${d}">Resync</button>
+        ${
+          isTD
+            ? `<button class="success" data-action="reverse-takedown" data-did="${d}">Reverse Takedown</button>`
+            : `<button class="danger" data-action="takedown" data-did="${d}">Takedown</button>`
+        }
+        <div class="menu-sep"></div>
+        <button class="danger" data-action="remove" data-did="${d}">Remove</button>
+      </div>
+    </div>
+  `
+      }
+
+      function renderRepos({ repos, total }) {
+        const container = document.getElementById('repos-results')
+        if (!repos.length) {
+          container.innerHTML = '<div class="empty-state">No repos found</div>'
+          return
+        }
+
+        const totalPages = Math.ceil(total / reposPage.limit)
+        const currentPage = Math.floor(reposPage.offset / reposPage.limit) + 1
+
+        const paginationHtml = `
+    <div class="pagination">
+      <span>${totalPages > 1 ? `Page ${currentPage} of ${totalPages} &middot; ` : ''}${total} repo${total !== 1 ? 's' : ''}</span>
+      ${
+        totalPages > 1
+          ? `<div class="pagination-buttons">
+        <button class="btn btn-sm" data-page="prev" ${currentPage <= 1 ? 'disabled' : ''}>&larr; Prev</button>
+        <button class="btn btn-sm" data-page="next" ${currentPage >= totalPages ? 'disabled' : ''}>Next &rarr;</button>
+      </div>`
+          : '<span></span>'
+      }
+    </div>`
+
+        // Desktop table
+        const tableHtml = `
+    <div class="repos-table-wrap">
+      <div class="card">
+        <table class="data-table">
+          <thead><tr>
+            <th>Handle</th>
+            <th>DID</th>
+            <th>Status</th>
+            <th>Backfilled</th>
+            <th>Actions</th>
+          </tr></thead>
+          <tbody>
+            ${repos
+              .map((r) => {
+                const sc = r.status || 'pending'
+                return `<tr>
+                <td class="handle-cell">${r.handle ? escapeHtml(r.handle) : '\u2014'}</td>
+                <td class="did-cell" data-copy="${escapeHtml(r.did)}" title="Click to copy">${escapeHtml(r.did)}</td>
+                <td><span class="status status-${sc}">${r.status || 'pending'}</span></td>
+                <td style="font-size:0.8rem;color:var(--text-2)">${formatTimestamp(r.backfilled_at)}</td>
+                <td>${repoActionMenu(r)}</td>
+              </tr>`
+              })
+              .join('')}
+          </tbody>
+        </table>
+        ${paginationHtml}
+      </div>
+    </div>`
+
+        // Mobile cards
+        const cardsHtml = `
+    <div class="repo-cards-mobile">
+      ${repos
+        .map((r) => {
+          const sc = r.status || 'pending'
+          return `<div class="repo-card-m">
+          <div class="rcm-top">
+            <span class="rcm-handle">${r.handle ? escapeHtml(r.handle) : '\u2014'}</span>
+            <span class="status status-${sc}">${r.status || 'pending'}</span>
+          </div>
+          <div class="rcm-did" data-copy="${escapeHtml(r.did)}" title="Click to copy">${escapeHtml(r.did)}</div>
+          <div class="rcm-meta">${formatTimestamp(r.backfilled_at)}</div>
+          <div class="rcm-actions">${repoActionMenu(r)}</div>
+        </div>`
+        })
+        .join('')}
+      <div style="margin-top:0.5rem;">${paginationHtml}</div>
+    </div>`
+
+        container.innerHTML = tableHtml + cardsHtml
+        wireRepoActions(container)
+      }
+
+      let activeMenuTrigger = null
+
+      function positionMenu(trigger, menu) {
+        const rect = trigger.getBoundingClientRect()
+        const menuH = menu.offsetHeight
+        const spaceBelow = window.innerHeight - rect.bottom
+        if (spaceBelow < menuH + 8) {
+          menu.style.top = rect.top - menuH - 4 + 'px'
+        } else {
+          menu.style.top = rect.bottom + 4 + 'px'
+        }
+        menu.style.left = Math.max(8, rect.right - menu.offsetWidth) + 'px'
+      }
+
+      function closeAllMenus() {
+        document.querySelectorAll('.actions-menu.open').forEach((m) => m.classList.remove('open'))
+        activeMenuTrigger = null
+      }
+
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('.actions-wrap')) closeAllMenus()
+      })
+
+      window.addEventListener(
+        'scroll',
+        () => {
+          if (!activeMenuTrigger) return
+          const menu = activeMenuTrigger.nextElementSibling
+          if (!menu || !menu.classList.contains('open')) return
+          positionMenu(activeMenuTrigger, menu)
+        },
+        true,
+      )
+
+      function wireRepoActions(container) {
+        container.querySelectorAll('[data-page="prev"]').forEach((b) => {
+          b.addEventListener('click', () => {
+            reposPage.offset = Math.max(0, reposPage.offset - reposPage.limit)
+            pushURL({ offset: reposPage.offset })
+            loadRepos()
+          })
+        })
+        container.querySelectorAll('[data-page="next"]').forEach((b) => {
+          b.addEventListener('click', () => {
+            reposPage.offset += reposPage.limit
+            pushURL({ offset: reposPage.offset })
+            loadRepos()
+          })
+        })
+
+        // Click DID to copy
+        container.querySelectorAll('[data-copy]').forEach((el) => {
+          el.addEventListener('click', async () => {
+            await navigator.clipboard.writeText(el.dataset.copy)
+            const orig = el.textContent
+            el.textContent = 'Copied!'
+            setTimeout(() => {
+              el.textContent = orig
+            }, 1000)
+          })
+        })
+
+        // Toggle dropdown menus
+        container.querySelectorAll('.actions-trigger').forEach((trigger) => {
+          trigger.addEventListener('click', (e) => {
+            e.stopPropagation()
+            const menu = trigger.nextElementSibling
+            const wasOpen = menu.classList.contains('open')
+            closeAllMenus()
+            if (!wasOpen) {
+              menu.classList.add('open')
+              activeMenuTrigger = trigger
+              positionMenu(trigger, menu)
+            }
+          })
+        })
+
+        // Action handlers
+        async function doAction(b, action) {
+          const did = b.dataset.did
+          closeAllMenus()
+          try {
+            if (action === 'resync') {
+              await api('/admin/repos/resync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dids: [did] }),
+              })
+              toast('Resync started', 'success')
+            } else if (action === 'remove') {
+              if (!confirm(`Remove ${did} from tracking?`)) return
+              await api('/admin/repos/remove', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dids: [did] }),
+              })
+              toast('Removed', 'success')
+            } else if (action === 'takedown') {
+              if (!confirm(`Takedown account ${did}?`)) return
+              await api('/admin/takedown', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ did }),
+              })
+              toast('Taken down', 'success')
+            } else if (action === 'reverse-takedown') {
+              if (!confirm(`Reverse takedown for ${did}?`)) return
+              await api('/admin/reverse-takedown', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ did }),
+              })
+              toast('Reversed', 'success')
+            }
+            loadRepos()
+          } catch (e) {
+            toast(e.message, 'error')
+          }
+        }
+
+        container.querySelectorAll('[data-action]').forEach((b) => {
+          if (b.classList.contains('actions-trigger')) return
+          b.addEventListener('click', () => doAction(b, b.dataset.action))
+        })
+      }
+
+      document.getElementById('repos-search').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          reposPage.offset = 0
+          reposPage.q = e.target.value.trim()
+          pushURL({ q: reposPage.q, offset: 0 })
+          loadRepos()
+        }
+      })
+
+      document.getElementById('repos-status-filter').addEventListener('change', (e) => {
+        reposPage.offset = 0
+        reposPage.status = e.target.value
+        pushURL({ status: reposPage.status, offset: 0 })
+        loadRepos()
+      })
+
+      document.getElementById('add-repos-btn').addEventListener('click', async () => {
+        const input = document.getElementById('add-repos-input')
+        const raw = input.value.trim()
+        if (!raw) return
+        const dids = raw
+          .split(/[,\s]+/)
+          .map((d) => d.trim())
+          .filter((d) => d.startsWith('did:'))
+        if (!dids.length) {
+          toast('Enter valid DIDs (must start with did:)', 'error')
+          return
+        }
+        try {
+          const result = await api('/admin/repos/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dids }),
+          })
+          toast(`Added ${result.added} repo${result.added !== 1 ? 's' : ''}`, 'success')
+          input.value = ''
+          loadRepos()
+          loadOverview()
+        } catch (e) {
+          toast(e.message, 'error')
+        }
+      })
+
+      document.getElementById('add-repos-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') document.getElementById('add-repos-btn').click()
+      })
+
+      // ── Content ──
+
+      let contentPage = { offset: 0, limit: 50 }
+
+      document.getElementById('content-search-btn').addEventListener('click', () => {
+        contentPage.offset = 0
+        searchContent()
+      })
+      document.getElementById('content-search').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          contentPage.offset = 0
+          searchContent()
+        }
+      })
+      document.getElementById('content-search').addEventListener('search', () => {
+        contentPage.offset = 0
+        if (!document.getElementById('content-search').value) {
+          pushURL({ cq: '' })
+          loadContent()
+        } else {
+          searchContent()
+        }
+      })
+
+      async function loadContent() {
+        const q = document.getElementById('content-search').value.trim()
+        if (q) {
+          searchContent()
+          return
+        }
+        const container = document.getElementById('content-results')
+        container.innerHTML = '<div class="loading">Loading</div>'
+        try {
+          const result = await api(`/admin/search?type=records&limit=${contentPage.limit}&offset=${contentPage.offset}`)
+          renderContentResults(result.records || [], result.total)
+        } catch (e) {
+          container.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`
+        }
+      }
+
+      async function searchContent() {
+        const q = document.getElementById('content-search').value.trim()
+        if (!q) {
+          loadContent()
+          return
+        }
+        pushURL({ tab: 'content', cq: q })
+        const container = document.getElementById('content-results')
+        container.innerHTML = '<div class="loading">Searching</div>'
+        try {
+          const result = await api(`/admin/search?q=${encodeURIComponent(q)}&type=records&limit=50`)
+          renderContentResults(result.records || [])
+        } catch (e) {
+          container.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`
+        }
+      }
+
+      function findBlobs(obj, path = '') {
+        const blobs = []
+        if (!obj || typeof obj !== 'object') return blobs
+        if (obj.$type === 'blob' || (obj.ref && obj.ref.$link && obj.mimeType)) {
+          blobs.push({ path, cid: obj.ref?.$link || obj.ref, mimeType: obj.mimeType || '', size: obj.size })
+          return blobs
+        }
+        for (const [key, val] of Object.entries(obj)) {
+          if (val && typeof val === 'object') {
+            blobs.push(...findBlobs(val, path ? `${path}.${key}` : key))
+          }
+        }
+        return blobs
+      }
+
+      function blobUrl(did, cid) {
+        return `https://cdn.bsky.app/img/feed_thumbnail/plain/${did}/${cid}@jpeg`
+      }
+
+      function renderContentResults(records, total) {
+        const container = document.getElementById('content-results')
+        if (!records.length) {
+          container.innerHTML = '<div class="empty-state">No records found</div>'
+          return
+        }
+
+        const labelOptions = labelDefinitions
+          .map((d) => `<option value="${d.identifier}">${d.identifier}</option>`)
+          .join('')
+
+        const showPagination = total != null && total > contentPage.limit
+        const paginationHtml = showPagination
+          ? `
+    <div class="pagination">
+      <span>${contentPage.offset + 1}\u2013${Math.min(contentPage.offset + contentPage.limit, total)} of ${total.toLocaleString()}</span>
+      <div class="pagination-buttons">
+        <button class="btn btn-sm" data-content-page="prev" ${contentPage.offset === 0 ? 'disabled' : ''}>Prev</button>
+        <button class="btn btn-sm" data-content-page="next" ${contentPage.offset + contentPage.limit >= total ? 'disabled' : ''}>Next</button>
+      </div>
+    </div>
+  `
+          : ''
+
+        const countLabel =
+          total != null
+            ? `${total.toLocaleString()} record${total !== 1 ? 's' : ''}`
+            : `${records.length} result${records.length !== 1 ? 's' : ''}`
+
+        container.innerHTML = `
+    <div class="card">
+      <div class="result-count">${countLabel}</div>
+      ${records
+        .map((rec, i) => {
+          const uri = rec.uri || ''
+          const did = rec.did || ''
+          const handle = rec.handle || ''
+          const activeLabels = (rec.labels || []).filter((l) => !l.neg)
+          const summary = summarizeValue(rec)
+          const value = rec.value || {}
+          const blobs = findBlobs(value)
+          const jsonStr = JSON.stringify(value, null, 2)
+
+          return `<div class="record-card">
+          <div class="record-header">
+            <div class="record-meta">
+              <div class="record-uri" title="${escapeHtml(uri)}">${escapeHtml(uri)}</div>
+              ${summary ? `<div class="record-summary">${escapeHtml(summary)}</div>` : ''}
+              ${handle ? `<div class="record-handle">@${escapeHtml(handle)}</div>` : ''}
+              ${
+                activeLabels.length
+                  ? `<div class="record-labels">${activeLabels
+                      .map(
+                        (l) => `
+                <span class="label-tag">
+                  ${escapeHtml(l.val)}<span class="remove-x" data-uri="${escapeHtml(uri)}" data-val="${escapeHtml(l.val)}" title="Remove">&times;</span>
+                </span>
+              `,
+                      )
+                      .join('')}</div>`
+                  : ''
+              }
+            </div>
+            <div class="record-actions">
+              <select class="label-select" id="lsel-${i}">
+                <option value="">+ label</option>
+                ${labelOptions}
+              </select>
+              <button class="btn btn-sm" data-action="add-label" data-uri="${escapeHtml(uri)}" data-sel="lsel-${i}">Apply</button>
+            </div>
+          </div>
+          <button class="toggle-detail" data-target="detail-${i}">Show JSON${blobs.length ? ` + ${blobs.length} blob${blobs.length > 1 ? 's' : ''}` : ''}</button>
+          <div class="record-detail" id="detail-${i}">
+            ${
+              blobs.length
+                ? `
+              <div class="blob-section">
+                <h4>Blobs (${blobs.length})</h4>
+                <div class="blob-grid">
+                  ${blobs
+                    .map((b) => {
+                      const isImage = b.mimeType.startsWith('image/')
+                      if (isImage && did) {
+                        return `<a href="${blobUrl(did, b.cid)}" target="_blank" rel="noopener">
+                        <img class="blob-thumb" src="${blobUrl(did, b.cid)}" alt="${escapeHtml(b.path)}" loading="lazy">
+                      </a>`
+                      }
+                      return `<a class="blob-link" href="${blobUrl(did, b.cid)}" target="_blank" rel="noopener">
+                      ${escapeHtml(b.mimeType)} (${b.size ? Math.round(b.size / 1024) + ' KB' : 'unknown size'})
+                    </a>`
+                    })
+                    .join('')}
+                </div>
+              </div>
+            `
+                : ''
+            }
+            <pre>${escapeHtml(jsonStr)}</pre>
+          </div>
+        </div>`
+        })
+        .join('')}
+      ${paginationHtml}
+    </div>
+  `
+
+        container.querySelectorAll('[data-content-page="prev"]').forEach((b) => {
+          b.addEventListener('click', () => {
+            contentPage.offset = Math.max(0, contentPage.offset - contentPage.limit)
+            loadContent()
+          })
+        })
+        container.querySelectorAll('[data-content-page="next"]').forEach((b) => {
+          b.addEventListener('click', () => {
+            contentPage.offset += contentPage.limit
+            loadContent()
+          })
+        })
+
+        container.querySelectorAll('.toggle-detail').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const detail = document.getElementById(btn.dataset.target)
+            const isOpen = detail.classList.toggle('open')
+            btn.textContent = btn.textContent.replace(/^(Show|Hide)/, isOpen ? 'Hide' : 'Show')
+          })
+        })
+
+        container.querySelectorAll('.remove-x').forEach((el) => {
+          el.addEventListener('click', async () => {
+            try {
+              await api('/admin/labels/negate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uri: el.dataset.uri, val: el.dataset.val }),
+              })
+              toast(`Removed: ${el.dataset.val}`, 'success')
+              loadContent()
+            } catch (e) {
+              toast(e.message, 'error')
+            }
+          })
+        })
+
+        container.querySelectorAll('[data-action="add-label"]').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const sel = document.getElementById(btn.dataset.sel)
+            const val = sel.value
+            if (!val) return
+            try {
+              await api('/admin/labels', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uri: btn.dataset.uri, val }),
+              })
+              toast(`Applied: ${val}`, 'success')
+              sel.value = ''
+              loadContent()
+            } catch (e) {
+              toast(e.message, 'error')
+            }
+          })
+        })
+      }
+    </script>
+  </body>
+</html>

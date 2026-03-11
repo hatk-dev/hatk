@@ -1,0 +1,44 @@
+---
+title: Hooks
+description: Lifecycle hooks for customizing Hatk behavior.
+---
+
+Hooks let you run custom logic at key points in the Hatk lifecycle. Place hook files in the `hooks/` directory.
+
+## `on-login`
+
+Runs after a successful OAuth login. Use this to trigger backfill of the user's repository so their data is indexed immediately.
+
+Create `hooks/on-login.ts`:
+
+```typescript
+export default async function onLogin({
+  did,
+  ensureRepo,
+}: {
+  did: string
+  ensureRepo: (did: string) => Promise<void>
+}) {
+  await ensureRepo(did)
+}
+```
+
+### Context
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `did` | string | The DID of the user who just logged in |
+| `ensureRepo` | function | Marks the user's repo as pending and triggers a backfill |
+
+### How `ensureRepo` works
+
+Calling `ensureRepo(did)` does two things:
+
+1. Sets the repo status to `pending` in the database
+2. Triggers an automatic backfill of that user's repository from their PDS
+
+This means the first time a user logs in, their existing records are fetched and indexed — so their data is available immediately rather than waiting for new firehose events.
+
+### Error handling
+
+If the hook throws an error, it's logged but does not block the login flow. The user still completes authentication successfully.

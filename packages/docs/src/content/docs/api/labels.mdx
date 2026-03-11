@@ -1,0 +1,37 @@
+---
+title: Labels
+description: Label API endpoints.
+---
+
+## `dev.hatk.describeLabels`
+
+List all available label definitions.
+
+- **Type:** Query (GET)
+- **Auth:** None
+- **Parameters:** None
+
+### Example
+
+```bash
+curl "http://localhost:3000/xrpc/dev.hatk.describeLabels"
+```
+
+### Response
+
+```json
+{
+  "definitions": [
+    {
+      "identifier": "explicit",
+      "severity": "alert",
+      "blurs": "media",
+      "defaultSetting": "warn"
+    }
+  ]
+}
+```
+
+---
+
+See [Labels guide](/guides/labels/) for how to define labels and hydrate them in responses.

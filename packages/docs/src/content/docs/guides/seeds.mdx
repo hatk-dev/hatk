@@ -1,0 +1,70 @@
+---
+title: Seeds
+description: Create test data for local development.
+---
+
+Seeds populate your local PDS with test data during development. Place your seed script at `seeds/seed.ts`.
+
+## How it works
+
+Seeds run automatically during `hatk dev` after the PDS starts, or manually with `hatk seed`. They use the generated `seed()` helper to create accounts and records against the local PDS.
+
+## Example
+
+```typescript
+import { seed } from '../hatk.generated.ts'
+
+const { createAccount, createRecord, uploadBlob } = seed()
+
+// Create test accounts
+const alice = await createAccount('alice.test')
+const bob = await createAccount('bob.test')
+
+// Upload an avatar
+const avatar = await uploadBlob(alice, './seeds/images/alice.png')
+
+// Create a profile
+await createRecord(
+  alice,
+  'app.bsky.actor.profile',
+  {
+    displayName: 'Alice',
+    description: 'Test user',
+    avatar,
+  },
+  { rkey: 'self' },
+)
+
+// Create records
+await createRecord(alice, 'fm.teal.alpha.feed.play', {
+  trackName: 'Blinding Lights',
+  releaseName: 'After Hours',
+  artists: [{ artistName: 'The Weeknd' }],
+  playedTime: new Date().toISOString(),
+})
+
+// Bob follows Alice
+await createRecord(bob, 'app.bsky.graph.follow', {
+  subject: alice.did,
+  createdAt: new Date().toISOString(),
+})
+```
+
+## `seed()` helpers
+
+| Function | Description |
+|----------|-------------|
+| `createAccount(handle)` | Create a test account on the local PDS. Returns `{ did, handle }` |
+| `createRecord(account, collection, record, opts?)` | Create a record. Pass `{ rkey }` in opts for a specific record key |
+| `uploadBlob(account, filePath)` | Upload a file as a blob. Returns a blob reference for use in records |
+
+## Tips
+
+- Use `{ rkey: 'self' }` for singleton records like profiles
+- Place test images in `seeds/images/`
+- Stagger timestamps to test time-based feeds:
+  ```typescript
+  const now = Date.now()
+  const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString()
+  ```
+- Run `hatk reset` to wipe and re-seed from scratch

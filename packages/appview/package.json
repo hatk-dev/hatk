@@ -1,0 +1,38 @@
+{
+  "name": "hatk",
+  "bin": {
+    "hatk": "src/cli.ts"
+  },
+  "type": "module",
+  "exports": {
+    "./feeds": "./src/feeds.ts",
+    "./xrpc": "./src/xrpc.ts",
+    "./opengraph": "./src/opengraph.ts",
+    "./labels": "./src/labels.ts",
+    "./lex-types": "./src/lex-types.ts",
+    "./xrpc-client": "./src/xrpc-client.ts",
+    "./views": "./src/views.ts",
+    "./seed": "./src/seed.ts",
+    "./setup": "./src/setup.ts",
+    "./test": "./src/test.ts",
+    "./test/browser": "./src/test-browser.ts",
+    "./vite-plugin": "./src/vite-plugin.ts"
+  },
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@hatk/oauth-client": "*",
+    "@bigmoves/lexicon": "^0.2.1",
+    "@duckdb/node-api": "^1.4.4-r.1",
+    "@resvg/resvg-js": "^2.6.2",
+    "satori": "^0.19.2",
+    "vitest": "^4",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/react": "^19.2.14",
+    "vite": "^6"
+  }
+}
