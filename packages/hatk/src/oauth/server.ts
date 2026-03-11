@@ -38,7 +38,7 @@ import { fireOnLoginHook } from './hooks.ts'
 const SERVER_KEY_KID = 'appview-oauth-key'
 
 async function resolveHandleForDid(did: string): Promise<string | undefined> {
-  const rows = await querySQL('SELECT handle FROM _repos WHERE did = $1', [did]) as { handle: string }[]
+  const rows = (await querySQL('SELECT handle FROM _repos WHERE did = $1', [did])) as { handle: string }[]
   return rows[0]?.handle || undefined
 }
 

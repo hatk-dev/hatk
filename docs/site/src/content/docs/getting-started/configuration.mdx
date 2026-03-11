@@ -89,14 +89,14 @@ DIDs allowed to access `/admin/*` endpoints.
 
 Controls how the server backfills historical data from the network.
 
-| Option | Default | Env | Description |
-|--------|---------|-----|-------------|
-| `parallelism` | `5` | `BACKFILL_PARALLELISM` | Concurrent repo fetches |
-| `fetchTimeout` | `300` | `BACKFILL_FETCH_TIMEOUT` | Timeout per repo (seconds) |
-| `maxRetries` | `5` | `BACKFILL_MAX_RETRIES` | Max retry attempts for failed repos |
-| `fullNetwork` | `false` | `BACKFILL_FULL_NETWORK` | Backfill the entire network |
-| `repos` | — | `BACKFILL_REPOS` | Pin specific DIDs to backfill (comma-separated) |
-| `signalCollections` | — | — | Collections that trigger backfill (defaults to top-level `collections`) |
+| Option              | Default | Env                      | Description                                                             |
+| ------------------- | ------- | ------------------------ | ----------------------------------------------------------------------- |
+| `parallelism`       | `5`     | `BACKFILL_PARALLELISM`   | Concurrent repo fetches                                                 |
+| `fetchTimeout`      | `300`   | `BACKFILL_FETCH_TIMEOUT` | Timeout per repo (seconds)                                              |
+| `maxRetries`        | `5`     | `BACKFILL_MAX_RETRIES`   | Max retry attempts for failed repos                                     |
+| `fullNetwork`       | `false` | `BACKFILL_FULL_NETWORK`  | Backfill the entire network                                             |
+| `repos`             | —       | `BACKFILL_REPOS`         | Pin specific DIDs to backfill (comma-separated)                         |
+| `signalCollections` | —       | —                        | Collections that trigger backfill (defaults to top-level `collections`) |
 
 ## Full-text search
 
@@ -125,9 +125,9 @@ OAuth scopes to request. Defaults to `['atproto']`.
 
 Array of allowed OAuth clients. Each client needs:
 
-| Field | Description |
-|-------|-------------|
-| `client_id` | Client identifier URL |
-| `client_name` | Human-readable name |
-| `redirect_uris` | Allowed redirect URIs |
-| `scope` | Optional scope override |
+| Field           | Description             |
+| --------------- | ----------------------- |
+| `client_id`     | Client identifier URL   |
+| `client_name`   | Human-readable name     |
+| `redirect_uris` | Allowed redirect URIs   |
+| `scope`         | Optional scope override |

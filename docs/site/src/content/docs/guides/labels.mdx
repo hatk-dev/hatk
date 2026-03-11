@@ -20,11 +20,7 @@ Here's an example that marks `fm.teal.alpha.feed.play` records as explicit when 
 ```typescript
 import type { LabelRuleContext } from 'hatk/labels'
 
-const EXPLICIT_PATTERNS = [
-  /\(explicit\)/i,
-  /\[explicit\]/i,
-  /\bexplicit version\b/i,
-]
+const EXPLICIT_PATTERNS = [/\(explicit\)/i, /\[explicit\]/i, /\bexplicit version\b/i]
 
 export default {
   definition: {
@@ -69,27 +65,27 @@ async evaluate(ctx: LabelRuleContext) {
 
 ## `LabelDefinition`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `identifier` | string | Unique label ID |
-| `severity` | `'alert'` \| `'inform'` \| `'none'` | How urgently to surface the label |
-| `blurs` | `'media'` \| `'content'` \| `'none'` | What to blur when label is applied |
-| `defaultSetting` | `'warn'` \| `'hide'` \| `'ignore'` | Default user-facing behavior |
-| `locales` | array | Localized name and description |
+| Field            | Type                                 | Description                        |
+| ---------------- | ------------------------------------ | ---------------------------------- |
+| `identifier`     | string                               | Unique label ID                    |
+| `severity`       | `'alert'` \| `'inform'` \| `'none'`  | How urgently to surface the label  |
+| `blurs`          | `'media'` \| `'content'` \| `'none'` | What to blur when label is applied |
+| `defaultSetting` | `'warn'` \| `'hide'` \| `'ignore'`   | Default user-facing behavior       |
+| `locales`        | array                                | Localized name and description     |
 
 ## Evaluation context
 
 The `evaluate` function receives a `LabelRuleContext` with:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `db.query` | function | Run SQL queries against DuckDB |
-| `db.run` | function | Execute SQL statements |
-| `record.uri` | string | AT URI of the record being evaluated |
-| `record.cid` | string | CID of the record |
-| `record.did` | string | DID of the record author |
-| `record.collection` | string | Collection NSID |
-| `record.value` | object | The record's fields |
+| Field               | Type     | Description                          |
+| ------------------- | -------- | ------------------------------------ |
+| `db.query`          | function | Run SQL queries against DuckDB       |
+| `db.run`            | function | Execute SQL statements               |
+| `record.uri`        | string   | AT URI of the record being evaluated |
+| `record.cid`        | string   | CID of the record                    |
+| `record.did`        | string   | DID of the record author             |
+| `record.collection` | string   | Collection NSID                      |
+| `record.value`      | object   | The record's fields                  |
 
 Label rules run automatically when records are indexed. Return an array of label identifier strings to apply, or an empty array to skip.
 
@@ -119,9 +115,7 @@ export default defineFeed({
     const last = rows[rows.length - 1]
     return ctx.ok({
       uris: rows.map((r) => r.uri),
-      cursor: hasMore && last
-        ? ctx.packCursor(last.indexed_at, last.cid)
-        : undefined,
+      cursor: hasMore && last ? ctx.packCursor(last.indexed_at, last.cid) : undefined,
     })
   },
 
@@ -139,14 +133,14 @@ export default defineFeed({
 
 The `ctx.labels()` method returns a `Map<string, Label[]>` where each label has:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `src` | string | DID of the label creator |
-| `uri` | string | AT URI of the labeled resource |
-| `val` | string | Label identifier (e.g. `"explicit"`) |
-| `neg` | boolean | If true, this negates a previous label |
-| `cts` | string | Timestamp when the label was created |
-| `exp` | string \| null | Expiration timestamp |
+| Field | Type           | Description                            |
+| ----- | -------------- | -------------------------------------- |
+| `src` | string         | DID of the label creator               |
+| `uri` | string         | AT URI of the labeled resource         |
+| `val` | string         | Label identifier (e.g. `"explicit"`)   |
+| `neg` | boolean        | If true, this negates a previous label |
+| `cts` | string         | Timestamp when the label was created   |
+| `exp` | string \| null | Expiration timestamp                   |
 
 Only active labels are returned — expired labels and labels that have been negated are automatically filtered out.
 

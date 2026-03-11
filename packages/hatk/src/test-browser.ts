@@ -19,12 +19,15 @@ export async function loginAs(page: Page, did: string): Promise<void> {
  */
 export const test = base.extend<{}, WorkerFixtures>({
   // eslint-disable-next-line no-empty-pattern -- Playwright fixture API requires the deps arg
-  server: [async ({}, use) => {
-    const server = await startTestServer()
-    await server.loadFixtures()
-    await use(server)
-    await server.close()
-  }, { scope: 'worker' }],
+  server: [
+    async (_deps, use) => {
+      const server = await startTestServer()
+      await server.loadFixtures()
+      await use(server)
+      await server.close()
+    },
+    { scope: 'worker' },
+  ],
 })
 
 export { expect }

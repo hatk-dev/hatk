@@ -14,11 +14,11 @@ hatk test --integration      # Integration tests only
 hatk test --browser          # Playwright browser tests
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--unit` | Run unit tests in `test/feeds/` and `test/xrpc/` |
-| `--integration` | Run integration tests in `test/integration/` |
-| `--browser` | Run Playwright browser tests in `test/browser/` |
+| Flag            | Description                                      |
+| --------------- | ------------------------------------------------ |
+| `--unit`        | Run unit tests in `test/feeds/` and `test/xrpc/` |
+| `--integration` | Run integration tests in `test/integration/`     |
+| `--browser`     | Run Playwright browser tests in `test/browser/`  |
 
 Without flags, all test types are run.
 
@@ -42,15 +42,15 @@ afterAll(async () => ctx?.close())
 
 ### Test context API
 
-| Method | Description |
-|--------|-------------|
-| `ctx.loadFixtures(dir?)` | Load YAML fixture files from `test/fixtures/` (or a custom path) |
-| `ctx.loadFeed(name)` | Load a feed by name. Returns `{ generate(feedContext) }` |
-| `ctx.loadXrpc(name)` | Load an XRPC handler by name. Returns `{ handler(ctx) }` |
-| `ctx.feedContext(opts?)` | Create a feed context with `limit`, `cursor`, `viewer`, and `params` |
-| `ctx.db.query(sql, params?)` | Run a SQL query against the in-memory database |
-| `ctx.db.run(sql, ...params)` | Execute a SQL statement |
-| `ctx.close()` | Shut down the database |
+| Method                       | Description                                                          |
+| ---------------------------- | -------------------------------------------------------------------- |
+| `ctx.loadFixtures(dir?)`     | Load YAML fixture files from `test/fixtures/` (or a custom path)     |
+| `ctx.loadFeed(name)`         | Load a feed by name. Returns `{ generate(feedContext) }`             |
+| `ctx.loadXrpc(name)`         | Load an XRPC handler by name. Returns `{ handler(ctx) }`             |
+| `ctx.feedContext(opts?)`     | Create a feed context with `limit`, `cursor`, `viewer`, and `params` |
+| `ctx.db.query(sql, params?)` | Run a SQL query against the in-memory database                       |
+| `ctx.db.run(sql, ...params)` | Execute a SQL statement                                              |
+| `ctx.close()`                | Shut down the database                                               |
 
 ### Testing a feed
 
@@ -66,9 +66,7 @@ test('respects limit and cursor', async () => {
   const page1 = await feed.generate(ctx.feedContext({ limit: 3 }))
   expect(page1.cursor).toBeDefined()
 
-  const page2 = await feed.generate(
-    ctx.feedContext({ limit: 3, cursor: page1.cursor }),
-  )
+  const page2 = await feed.generate(ctx.feedContext({ limit: 3, cursor: page1.cursor }))
   expect(page2.items).toHaveLength(3)
 })
 ```
@@ -152,12 +150,12 @@ A YAML file whose name doesn't match a known collection creates a custom table w
 
 Use `$now` in fixture values to generate timestamps relative to the current time:
 
-| Expression | Result |
-|------------|--------|
-| `$now` | Current time |
-| `$now(-5m)` | 5 minutes ago |
-| `$now(-2h)` | 2 hours ago |
-| `$now(-1d)` | 1 day ago |
+| Expression  | Result              |
+| ----------- | ------------------- |
+| `$now`      | Current time        |
+| `$now(-5m)` | 5 minutes ago       |
+| `$now(-2h)` | 2 hours ago         |
+| `$now(-1d)` | 1 day ago           |
 | `$now(30s)` | 30 seconds from now |
 
 This keeps fixtures time-relative so tests for "recent" feeds and time-based sorting always work.
@@ -180,9 +178,7 @@ beforeAll(async () => {
 afterAll(async () => server?.close())
 
 test('GET /xrpc/dev.hatk.getFeed returns items', async () => {
-  const res = await server.fetch(
-    '/xrpc/dev.hatk.getFeed?feed=recent&limit=5',
-  )
+  const res = await server.fetch('/xrpc/dev.hatk.getFeed?feed=recent&limit=5')
   const data = await res.json()
   expect(data.items.length).toBeGreaterThan(0)
 })
@@ -192,9 +188,9 @@ test('GET /xrpc/dev.hatk.getFeed returns items', async () => {
 
 The test server extends the test context with:
 
-| Method | Description |
-|--------|-------------|
-| `server.url` | The base URL (e.g., `http://127.0.0.1:54321`) |
-| `server.fetch(path, init?)` | Fetch a path on the test server |
+| Method                             | Description                                                  |
+| ---------------------------------- | ------------------------------------------------------------ |
+| `server.url`                       | The base URL (e.g., `http://127.0.0.1:54321`)                |
+| `server.fetch(path, init?)`        | Fetch a path on the test server                              |
 | `server.fetchAs(did, path, init?)` | Fetch as an authenticated user (sets `x-test-viewer` header) |
-| `server.seed(opts?)` | Get seed helpers for creating records against a real PDS |
+| `server.seed(opts?)`               | Get seed helpers for creating records against a real PDS     |

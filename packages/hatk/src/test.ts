@@ -3,7 +3,13 @@ import { resolve, dirname } from 'node:path'
 import { readdirSync, readFileSync } from 'node:fs'
 import YAML from 'yaml'
 import { loadConfig, type HatkConfig } from './config.ts'
-import { loadLexicons, storeLexicons, discoverCollections, generateTableSchema, generateCreateTableSQL } from './schema.ts'
+import {
+  loadLexicons,
+  storeLexicons,
+  discoverCollections,
+  generateTableSchema,
+  generateCreateTableSQL,
+} from './schema.ts'
 import { initDatabase, querySQL, runSQL, insertRecord, closeDatabase } from './db.ts'
 import { initFeeds, executeFeed, listFeeds, createPaginate } from './feeds.ts'
 import { initXrpc, executeXrpc, listXrpc, configureRelay } from './xrpc.ts'
@@ -24,7 +30,12 @@ export interface TestContext {
   loadFixtures: (dir?: string) => Promise<void>
   loadFeed: (name: string) => { generate: (ctx: FeedContext) => Promise<any> }
   loadXrpc: (name: string) => { handler: (ctx: any) => Promise<any> }
-  feedContext: (opts?: { limit?: number; cursor?: string; viewer?: { did: string } | null; params?: Record<string, string> }) => FeedContext
+  feedContext: (opts?: {
+    limit?: number
+    cursor?: string
+    viewer?: { did: string } | null
+    params?: Record<string, string>
+  }) => FeedContext
   close: () => Promise<void>
   /** @internal */ _config: HatkConfig
   /** @internal */ _collections: string[]
@@ -93,7 +104,9 @@ export async function createTestContext(): Promise<TestContext> {
 
   // Discover views + hooks
   discoverViews()
-  try { await loadOnLoginHook(resolve(configDir, 'hooks')) } catch {}
+  try {
+    await loadOnLoginHook(resolve(configDir, 'hooks'))
+  } catch {}
 
   // Skip setup hooks in test context — they're for server boot-time
   // initialization (e.g. importing large datasets) and not appropriate for tests
@@ -126,7 +139,10 @@ export async function createTestContext(): Promise<TestContext> {
             const row = interpolateHelpers(rec)
             await runSQL(
               `INSERT OR IGNORE INTO _repos (did, status, handle, backfilled_at) VALUES ($1, $2, $3, $4)`,
-              row.did, row.status || 'active', row.handle || row.did.split(':').pop() + '.test', new Date().toISOString(),
+              row.did,
+              row.status || 'active',
+              row.handle || row.did.split(':').pop() + '.test',
+              new Date().toISOString(),
             )
           }
         }
@@ -152,7 +168,10 @@ export async function createTestContext(): Promise<TestContext> {
             const row = interpolateHelpers(rec)
             const vals = keys.map((k) => row[k])
             const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ')
-            await runSQL(`INSERT INTO "${tableName}" (${keys.map((k) => `"${k}"`).join(', ')}) VALUES (${placeholders})`, ...vals)
+            await runSQL(
+              `INSERT INTO "${tableName}" (${keys.map((k) => `"${k}"`).join(', ')}) VALUES (${placeholders})`,
+              ...vals,
+            )
           }
           continue
         }
@@ -171,7 +190,10 @@ export async function createTestContext(): Promise<TestContext> {
             seenDids.add(did)
             await runSQL(
               `INSERT OR IGNORE INTO _repos (did, status, handle, backfilled_at) VALUES ($1, $2, $3, $4)`,
-              did, 'active', did.split(':').pop() + '.test', new Date().toISOString(),
+              did,
+              'active',
+              did.split(':').pop() + '.test',
+              new Date().toISOString(),
             )
           }
           await insertRecord(tableName, uri, cid, did, fields)
@@ -180,14 +202,16 @@ export async function createTestContext(): Promise<TestContext> {
     },
     loadFeed: (name) => {
       const feedList = listFeeds()
-      if (!feedList.find((f) => f.name === name)) throw new Error(`Feed "${name}" not found. Available: ${feedList.map((f) => f.name).join(', ')}`)
+      if (!feedList.find((f) => f.name === name))
+        throw new Error(`Feed "${name}" not found. Available: ${feedList.map((f) => f.name).join(', ')}`)
       return {
         generate: (ctx: FeedContext) => executeFeed(name, ctx.params || {}, ctx.cursor, ctx.limit, ctx.viewer),
       }
     },
     loadXrpc: (name) => {
       const xrpcList = listXrpc()
-      if (!xrpcList.includes(name)) throw new Error(`XRPC handler "${name}" not found. Available: ${xrpcList.join(', ')}`)
+      if (!xrpcList.includes(name))
+        throw new Error(`XRPC handler "${name}" not found. Available: ${xrpcList.join(', ')}`)
       return {
         handler: (ctx: any) => {
           const params = { ...ctx.params }
@@ -263,7 +287,14 @@ export async function startTestServer(): Promise<TestServer> {
     const did = req.headers['x-test-viewer']
     return typeof did === 'string' ? { did } : null
   }
-  const httpServer = startServer(0, ctx._collections, ctx._config.publicDir, ctx._config.oauth, ctx._config.admins, resolveViewer)
+  const httpServer = startServer(
+    0,
+    ctx._collections,
+    ctx._config.publicDir,
+    ctx._config.oauth,
+    ctx._config.admins,
+    resolveViewer,
+  )
   await new Promise<void>((resolve) => httpServer.on('listening', resolve))
   const port = (httpServer.address() as any).port
   const url = `http://127.0.0.1:${port}`
@@ -273,10 +304,11 @@ export async function startTestServer(): Promise<TestServer> {
     url,
     port,
     fetch: (path, init) => fetch(`${url}${path}`, init),
-    fetchAs: (did, path, init) => fetch(`${url}${path}`, {
-      ...init,
-      headers: { ...init?.headers, 'x-test-viewer': did },
-    }),
+    fetchAs: (did, path, init) =>
+      fetch(`${url}${path}`, {
+        ...init,
+        headers: { ...init?.headers, 'x-test-viewer': did },
+      }),
     seed: (seedOpts) => createSeedHelpers(seedOpts),
     waitForRecord: async (uri, timeoutMs = 10_000) => {
       const start = Date.now()

@@ -62,10 +62,12 @@ export async function resolveRecords(uris: string[]): Promise<Row<unknown>[]> {
   }
 
   // Return in original URI order, reshaped
-  return uris.map((uri) => {
-    const row = primaryRecords.get(uri)
-    return reshapeRow(row, row?.__childData, row?.__unionData)
-  }).filter((r): r is Row<unknown> => r != null)
+  return uris
+    .map((uri) => {
+      const row = primaryRecords.get(uri)
+      return reshapeRow(row, row?.__childData, row?.__unionData)
+    })
+    .filter((r): r is Row<unknown> => r != null)
 }
 
 // --- Context Builder ---

@@ -11,9 +11,15 @@ let readCon: Awaited<ReturnType<DuckDBInstance['connect']>>
 const schemas = new Map<string, TableSchema>()
 
 export function closeDatabase(): void {
-  try { readCon?.closeSync() } catch {}
-  try { con?.closeSync() } catch {}
-  try { instance?.closeSync() } catch {}
+  try {
+    readCon?.closeSync()
+  } catch {}
+  try {
+    con?.closeSync()
+  } catch {}
+  try {
+    instance?.closeSync()
+  } catch {}
 }
 
 let writeQueue = Promise.resolve()
@@ -413,7 +419,7 @@ export async function insertRecord(
     const unionValue = record[union.fieldName]
     if (!unionValue || !unionValue.$type) continue
 
-    const branch = union.branches.find(b => b.type === unionValue.$type)
+    const branch = union.branches.find((b) => b.type === unionValue.$type)
     if (!branch) continue
 
     // Delete existing branch rows (handles INSERT OR REPLACE)
@@ -704,10 +710,11 @@ export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> 
 
         // Delete existing child rows for these URIs, then merge staging
         const uriPlaceholders = recs.map((_, i) => `$${i + 1}`).join(',')
-        const delStmt = await con.prepare(
-          `DELETE FROM ${child.tableName} WHERE parent_uri IN (${uriPlaceholders})`,
+        const delStmt = await con.prepare(`DELETE FROM ${child.tableName} WHERE parent_uri IN (${uriPlaceholders})`)
+        bindParams(
+          delStmt,
+          recs.map((r) => r.uri),
         )
-        bindParams(delStmt, recs.map((r) => r.uri))
         await delStmt.run()
 
         const childSelectCols = childAllCols.map((name) => {
@@ -799,10 +806,11 @@ export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> 
 
           // Delete existing branch rows for these URIs, then merge staging
           const uriPlaceholders = recs.map((_, i) => `$${i + 1}`).join(',')
-          const delStmt = await con.prepare(
-            `DELETE FROM ${branch.tableName} WHERE parent_uri IN (${uriPlaceholders})`,
+          const delStmt = await con.prepare(`DELETE FROM ${branch.tableName} WHERE parent_uri IN (${uriPlaceholders})`)
+          bindParams(
+            delStmt,
+            recs.map((r) => r.uri),
           )
-          bindParams(delStmt, recs.map((r) => r.uri))
           await delStmt.run()
 
           const branchSelectCols = branchAllCols.map((name) => {
@@ -892,7 +900,7 @@ export async function queryRecords(
       childData.set(child.fieldName, childRows)
     }
     for (const row of rows) {
-      (row as any).__childData = childData
+      ;(row as any).__childData = childData
     }
   }
 
@@ -909,7 +917,7 @@ export async function queryRecords(
       unionData.set(union.fieldName, branchData)
     }
     for (const row of rows) {
-      (row as any).__unionData = unionData
+      ;(row as any).__unionData = unionData
     }
   }
 
@@ -983,7 +991,7 @@ export async function getRecordsByUris(collection: string, uris: string[]): Prom
 
   // Attach child data to rows for reshapeRow
   for (const row of rows) {
-    (row as any).__childData = childData
+    ;(row as any).__childData = childData
     if (unionData.size > 0) (row as any).__unionData = unionData
   }
 
@@ -1293,7 +1301,7 @@ export async function findByFieldBatch(
       childData.set(child.fieldName, childRows)
     }
     for (const row of rows) {
-      (row as any).__childData = childData
+      ;(row as any).__childData = childData
     }
   }
 
@@ -1342,16 +1350,10 @@ export function normalizeValue(v: any): any {
   return v
 }
 
-export async function getChildRows(
-  childTableName: string,
-  parentUris: string[],
-): Promise<Map<string, any[]>> {
+export async function getChildRows(childTableName: string, parentUris: string[]): Promise<Map<string, any[]>> {
   if (parentUris.length === 0) return new Map()
   const placeholders = parentUris.map((_, i) => `$${i + 1}`).join(',')
-  const rows = await all(
-    `SELECT * FROM ${childTableName} WHERE parent_uri IN (${placeholders})`,
-    ...parentUris,
-  )
+  const rows = await all(`SELECT * FROM ${childTableName} WHERE parent_uri IN (${placeholders})`, ...parentUris)
   const result = new Map<string, any[]>()
   for (const row of rows) {
     const key = row.parent_uri as string
@@ -1549,12 +1551,13 @@ export async function filterTakendownDids(dids: string[]): Promise<Set<string>> 
 }
 
 export async function backfillChildTables(): Promise<void> {
-  for (const [collection, schema] of schemas) {
+  for (const [, schema] of schemas) {
     for (const child of schema.children) {
       // Check if child table needs backfill (significantly fewer rows than parent)
       const mainCount = (await all(`SELECT COUNT(*)::INTEGER as n FROM ${schema.tableName}`))[0]?.n || 0
       if (mainCount === 0) continue
-      const childCount = (await all(`SELECT COUNT(DISTINCT parent_uri)::INTEGER as n FROM ${child.tableName}`))[0]?.n || 0
+      const childCount =
+        (await all(`SELECT COUNT(DISTINCT parent_uri)::INTEGER as n FROM ${child.tableName}`))[0]?.n || 0
       if (childCount >= mainCount * 0.9) continue
 
       console.log(`[db] Backfilling ${child.tableName} from ${schema.tableName}...`)

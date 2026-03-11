@@ -61,10 +61,10 @@ The `path` field uses Express-style route parameters. The `/og` prefix is signif
 This means your page routes and OG routes stay in sync automatically. If you have `og/artist.ts` with `path: '/og/artist/:name'`, then any visitor to `/artist/radiohead` gets meta tags injected:
 
 ```html
-<meta property="og:image" content="https://yourapp.com/og/artist/radiohead">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta name="twitter:card" content="summary_large_image">
+<meta property="og:image" content="https://yourapp.com/og/artist/radiohead" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
 ```
 
 ## The generate function
@@ -73,25 +73,25 @@ This means your page routes and OG routes stay in sync automatically. If you hav
 
 The `generate` function receives an `OpengraphContext` with:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `db.query` | function | Run SQL queries against DuckDB |
-| `params` | object | URL path parameters (e.g. `{ artist: 'Radiohead' }`) |
+| Field        | Type     | Description                                             |
+| ------------ | -------- | ------------------------------------------------------- |
+| `db.query`   | function | Run SQL queries against DuckDB                          |
+| `params`     | object   | URL path parameters (e.g. `{ artist: 'Radiohead' }`)    |
 | `fetchImage` | function | Fetch a remote image and return it as a base64 data URL |
-| `lookup` | function | Look up records by field value |
-| `count` | function | Count records by field value |
-| `labels` | function | Query labels for record URIs |
-| `blobUrl` | function | Resolve a blob reference to a CDN URL |
+| `lookup`     | function | Look up records by field value                          |
+| `count`      | function | Count records by field value                            |
+| `labels`     | function | Query labels for record URIs                            |
+| `blobUrl`    | function | Resolve a blob reference to a CDN URL                   |
 
 ### Return value
 
 Return an `OpengraphResult`:
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `element` | Yes | A satori virtual DOM tree (see below) |
-| `options` | No | Override `width` (default 1200), `height` (default 630), or provide custom `fonts` |
-| `meta` | No | `title` and `description` for the injected meta tags |
+| Field     | Required | Description                                                                        |
+| --------- | -------- | ---------------------------------------------------------------------------------- |
+| `element` | Yes      | A satori virtual DOM tree (see below)                                              |
+| `options` | No       | Override `width` (default 1200), `height` (default 630), or provide custom `fonts` |
+| `meta`    | No       | `title` and `description` for the injected meta tags                               |
 
 ### Virtual DOM
 
@@ -164,15 +164,17 @@ export default {
           children: [
             // Artist image
             ...(artUrl
-              ? [{
-                  type: 'img',
-                  props: {
-                    src: artUrl,
-                    width: 300,
-                    height: 300,
-                    style: { borderRadius: '20px', objectFit: 'cover' },
+              ? [
+                  {
+                    type: 'img',
+                    props: {
+                      src: artUrl,
+                      width: 300,
+                      height: 300,
+                      style: { borderRadius: '20px', objectFit: 'cover' },
+                    },
                   },
-                }]
+                ]
               : []),
             // Text content
             {

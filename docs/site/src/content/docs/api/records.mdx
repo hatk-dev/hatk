@@ -12,9 +12,9 @@ Fetch a single record by its AT URI.
 
 ### Parameters
 
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `uri` | string (AT URI) | Yes | The AT URI of the record |
+| Name  | Type            | Required | Description              |
+| ----- | --------------- | -------- | ------------------------ |
+| `uri` | string (AT URI) | Yes      | The AT URI of the record |
 
 ### Example
 
@@ -47,13 +47,13 @@ List records from a collection with optional filters and pagination.
 
 ### Parameters
 
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `collection` | string | Yes | — | Collection NSID |
-| `limit` | integer | No | `20` | Results per page (1–100) |
-| `cursor` | string | No | — | Pagination cursor |
-| `sort` | string | No | — | Sort field |
-| `order` | string | No | — | Sort order |
+| Name         | Type    | Required | Default | Description              |
+| ------------ | ------- | -------- | ------- | ------------------------ |
+| `collection` | string  | Yes      | —       | Collection NSID          |
+| `limit`      | integer | No       | `20`    | Results per page (1–100) |
+| `cursor`     | string  | No       | —       | Pagination cursor        |
+| `sort`       | string  | No       | —       | Sort field               |
+| `order`      | string  | No       | —       | Sort order               |
 
 Additional filter parameters are accepted based on the collection's schema — any field defined in the record lexicon can be used as a query parameter.
 
@@ -90,11 +90,11 @@ Create a record via the authenticated user's PDS.
 
 ### Input
 
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `collection` | string | Yes | Collection NSID |
-| `repo` | string (DID) | Yes | The user's DID |
-| `record` | object | Yes | The record data |
+| Name         | Type         | Required | Description     |
+| ------------ | ------------ | -------- | --------------- |
+| `collection` | string       | Yes      | Collection NSID |
+| `repo`       | string (DID) | Yes      | The user's DID  |
+| `record`     | object       | Yes      | The record data |
 
 ### Example
 
@@ -133,12 +133,12 @@ Create or update a record at a specific rkey via the authenticated user's PDS.
 
 ### Input
 
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `collection` | string | Yes | Collection NSID |
-| `rkey` | string | Yes | Record key |
-| `record` | object | Yes | The record data |
-| `repo` | string (DID) | No | The user's DID (inferred from auth if omitted) |
+| Name         | Type         | Required | Description                                    |
+| ------------ | ------------ | -------- | ---------------------------------------------- |
+| `collection` | string       | Yes      | Collection NSID                                |
+| `rkey`       | string       | Yes      | Record key                                     |
+| `record`     | object       | Yes      | The record data                                |
+| `repo`       | string (DID) | No       | The user's DID (inferred from auth if omitted) |
 
 ### Example
 
@@ -177,10 +177,10 @@ Delete a record via the authenticated user's PDS.
 
 ### Input
 
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `collection` | string | Yes | Collection NSID |
-| `rkey` | string | Yes | Record key |
+| Name         | Type   | Required | Description     |
+| ------------ | ------ | -------- | --------------- |
+| `collection` | string | Yes      | Collection NSID |
+| `rkey`       | string | Yes      | Record key      |
 
 ### Example
 

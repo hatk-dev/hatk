@@ -14,7 +14,7 @@ async function ensurePds() {
   try {
     const res = await fetch('http://localhost:2583/xrpc/_health')
     if (res.ok) return
-  } catch { }
+  } catch {}
   // Start it
   console.log('[dev] starting PDS...')
   execSync('docker compose up -d', { stdio: 'inherit', cwd: process.cwd() })
@@ -22,8 +22,11 @@ async function ensurePds() {
   for (let i = 0; i < 30; i++) {
     try {
       const res = await fetch('http://localhost:2583/xrpc/_health')
-      if (res.ok) { console.log('[dev] PDS ready'); return }
-    } catch { }
+      if (res.ok) {
+        console.log('[dev] PDS ready')
+        return
+      }
+    } catch {}
     await new Promise((r) => setTimeout(r, 1000))
   }
   console.error('[dev] PDS failed to start')
@@ -349,7 +352,23 @@ if (command === 'new') {
 
   const withSvelte = args.includes('--svelte')
   mkdirSync(dir)
-  const subs = ['lexicons', 'feeds', 'xrpc', 'og', 'labels', 'jobs', 'seeds', 'setup', 'public', 'test', 'test/feeds', 'test/xrpc', 'test/integration', 'test/browser', 'test/fixtures']
+  const subs = [
+    'lexicons',
+    'feeds',
+    'xrpc',
+    'og',
+    'labels',
+    'jobs',
+    'seeds',
+    'setup',
+    'public',
+    'test',
+    'test/feeds',
+    'test/xrpc',
+    'test/integration',
+    'test/browser',
+    'test/fixtures',
+  ]
   if (withSvelte) subs.push('src', 'src/routes', 'src/lib')
   for (const sub of subs) {
     mkdirSync(join(dir, sub))
@@ -1331,7 +1350,8 @@ a {
     for (const { nsid, defType } of entries) {
       if (!defType) continue
       // createRecord/deleteRecord/putRecord get typed overrides after RecordRegistry
-      if (nsid === 'dev.hatk.createRecord' || nsid === 'dev.hatk.deleteRecord' || nsid === 'dev.hatk.putRecord') continue
+      if (nsid === 'dev.hatk.createRecord' || nsid === 'dev.hatk.deleteRecord' || nsid === 'dev.hatk.putRecord')
+        continue
       const varName = varNames.get(nsid)!
       const typeName = capitalize(varName)
       const wrapper = wrapperMap[defType]
@@ -1443,7 +1463,8 @@ a {
               // Pattern 3: cross-namespace view — has explicit ref to a record-type lexicon
               if (!found) {
                 const recordRef = Object.values(def.properties).find(
-                  (p: any) => p.type === 'ref' && !p.ref.startsWith('#') && lexicons.get(p.ref)?.defs?.main?.type === 'record',
+                  (p: any) =>
+                    p.type === 'ref' && !p.ref.startsWith('#') && lexicons.get(p.ref)?.defs?.main?.type === 'record',
                 ) as any
                 if (recordRef) {
                   viewEntries.push({ fullNsid, typeName: name, collection: recordRef.ref })
@@ -1554,7 +1575,9 @@ a {
   } else {
     const name = args[2]
     if (!type || !name || !templates[type]) {
-      console.error(`Usage: hatk generate <${[...Object.keys(templates), ...Object.keys(lexiconTemplates)].join('|')}|types> <name>`)
+      console.error(
+        `Usage: hatk generate <${[...Object.keys(templates), ...Object.keys(lexiconTemplates)].join('|')}|types> <name>`,
+      )
       process.exit(1)
     }
 
@@ -1706,28 +1729,40 @@ a {
     console.log('[check] tsc (server)...')
     try {
       execSync('npx tsc --noEmit -p tsconfig.server.json', { stdio: 'inherit', cwd: process.cwd() })
-    } catch { failed = true }
+    } catch {
+      failed = true
+    }
   }
 
   // Svelte type checking (if SvelteKit project)
   if (existsSync(resolve('svelte.config.js')) && existsSync(resolve('src/app.html'))) {
     console.log('[check] svelte-check...')
     try {
-      execSync('npx svelte-kit sync && npx svelte-check --tsconfig ./tsconfig.json', { stdio: 'inherit', cwd: process.cwd() })
-    } catch { failed = true }
+      execSync('npx svelte-kit sync && npx svelte-check --tsconfig ./tsconfig.json', {
+        stdio: 'inherit',
+        cwd: process.cwd(),
+      })
+    } catch {
+      failed = true
+    }
   }
 
   // Lint
   console.log('[check] oxlint...')
   try {
     execSync('npx oxlint .', { stdio: 'inherit', cwd: process.cwd() })
-  } catch { failed = true }
+  } catch {
+    failed = true
+  }
 
   if (failed) process.exit(1)
 } else if (command === 'test') {
   const knownFlags = new Set(['--unit', '--integration', '--browser', '--verbose'])
   const parsedFlags = args.slice(1).filter((a) => knownFlags.has(a))
-  const extraArgs = args.slice(1).filter((a) => !knownFlags.has(a)).join(' ')
+  const extraArgs = args
+    .slice(1)
+    .filter((a) => !knownFlags.has(a))
+    .join(' ')
   const flag = parsedFlags.find((f) => f !== '--verbose') || null
   const verbose = parsedFlags.includes('--verbose')
   if (!verbose && !process.env.DEBUG) process.env.DEBUG = '0'
@@ -1771,7 +1806,8 @@ a {
 
   if (runBrowser) {
     const browserDir = resolve(process.cwd(), 'test/browser')
-    const hasBrowserTests = existsSync(browserDir) && readdirSync(browserDir).some((f) => f.endsWith('.test.ts') || f.endsWith('.spec.ts'))
+    const hasBrowserTests =
+      existsSync(browserDir) && readdirSync(browserDir).some((f) => f.endsWith('.test.ts') || f.endsWith('.spec.ts'))
     if (hasBrowserTests) {
       console.log('[test] running browser tests...')
       try {
@@ -1828,15 +1864,19 @@ a {
   const instance = await DuckDBInstance.create(config.database)
   const con = await instance.connect()
 
-  const tables = (await (await con.runAndReadAll(
-    `SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' ORDER BY table_name`,
-  )).getRowObjects()) as { table_name: string }[]
+  const tables = (await (
+    await con.runAndReadAll(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' ORDER BY table_name`,
+    )
+  ).getRowObjects()) as { table_name: string }[]
 
   for (const { table_name } of tables) {
     console.log(`"${table_name}"`)
-    const cols = (await (await con.runAndReadAll(
-      `SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = '${table_name}' ORDER BY ordinal_position`,
-    )).getRowObjects()) as { column_name: string; data_type: string; is_nullable: string }[]
+    const cols = (await (
+      await con.runAndReadAll(
+        `SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = '${table_name}' ORDER BY ordinal_position`,
+      )
+    ).getRowObjects()) as { column_name: string; data_type: string; is_nullable: string }[]
 
     for (const col of cols) {
       const nullable = col.is_nullable === 'YES' ? '' : ' NOT NULL'

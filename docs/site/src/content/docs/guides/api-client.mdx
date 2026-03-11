@@ -13,12 +13,9 @@ import { createClient } from 'hatk/xrpc-client'
 import type { XrpcSchema } from '$hatk'
 import { getAuthFetch } from './auth'
 
-export const api = createClient<XrpcSchema>(
-  typeof window !== 'undefined' ? window.location.origin : '',
-  {
-    fetch: (url, opts) => getAuthFetch()(url as string, opts),
-  },
-)
+export const api = createClient<XrpcSchema>(typeof window !== 'undefined' ? window.location.origin : '', {
+  fetch: (url, opts) => getAuthFetch()(url as string, opts),
+})
 ```
 
 The `XrpcSchema` type is generated from your lexicons and provides full type safety for endpoint names, parameters, inputs, and outputs.
@@ -57,11 +54,7 @@ The `input` argument is typed from the lexicon's input schema.
 Upload binary data (e.g., images):
 
 ```typescript
-const result = await api.upload(
-  'dev.hatk.uploadBlob',
-  file,
-  'image/jpeg',
-)
+const result = await api.upload('dev.hatk.uploadBlob', file, 'image/jpeg')
 // result: { blob: { ref: { $link: '...' }, ... } }
 ```
 

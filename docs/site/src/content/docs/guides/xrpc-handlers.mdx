@@ -79,27 +79,27 @@ export default defineProcedure('dev.hatk.unspecced.doSomething', async (ctx) => 
 
 Both `defineQuery` and `defineProcedure` receive the same context:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `db.query` | function | Run SQL queries against DuckDB |
-| `db.run` | function | Execute SQL statements |
-| `params` | object | Typed parameters from the lexicon schema |
-| `input` | object | Request body (procedures only), typed from the lexicon's input schema |
-| `limit` | number | Requested page size |
-| `cursor` | string \| undefined | Pagination cursor |
-| `viewer` | `{ did: string }` \| null | The authenticated user, or null |
-| `ok` | function | Wraps your return value with type checking |
-| `packCursor` | function | Encode a `(primary, cid)` pair into a cursor string |
-| `unpackCursor` | function | Decode a cursor back into `{ primary, cid }` |
-| `search` | function | Full-text search a collection |
-| `resolve` | function | Resolve AT URIs into full records |
-| `lookup` | function | Look up records by a field value |
-| `count` | function | Count records by field value |
-| `exists` | function | Check if a record exists matching field filters |
-| `labels` | function | Query labels for a list of URIs |
-| `blobUrl` | function | Resolve a blob reference to a CDN URL |
-| `isTakendown` | function | Check if a DID has been taken down |
-| `filterTakendownDids` | function | Filter a list of DIDs, returning those taken down |
+| Field                 | Type                      | Description                                                           |
+| --------------------- | ------------------------- | --------------------------------------------------------------------- |
+| `db.query`            | function                  | Run SQL queries against DuckDB                                        |
+| `db.run`              | function                  | Execute SQL statements                                                |
+| `params`              | object                    | Typed parameters from the lexicon schema                              |
+| `input`               | object                    | Request body (procedures only), typed from the lexicon's input schema |
+| `limit`               | number                    | Requested page size                                                   |
+| `cursor`              | string \| undefined       | Pagination cursor                                                     |
+| `viewer`              | `{ did: string }` \| null | The authenticated user, or null                                       |
+| `ok`                  | function                  | Wraps your return value with type checking                            |
+| `packCursor`          | function                  | Encode a `(primary, cid)` pair into a cursor string                   |
+| `unpackCursor`        | function                  | Decode a cursor back into `{ primary, cid }`                          |
+| `search`              | function                  | Full-text search a collection                                         |
+| `resolve`             | function                  | Resolve AT URIs into full records                                     |
+| `lookup`              | function                  | Look up records by a field value                                      |
+| `count`               | function                  | Count records by field value                                          |
+| `exists`              | function                  | Check if a record exists matching field filters                       |
+| `labels`              | function                  | Query labels for a list of URIs                                       |
+| `blobUrl`             | function                  | Resolve a blob reference to a CDN URL                                 |
+| `isTakendown`         | function                  | Check if a DID has been taken down                                    |
+| `filterTakendownDids` | function                  | Filter a list of DIDs, returning those taken down                     |
 
 ## Errors
 

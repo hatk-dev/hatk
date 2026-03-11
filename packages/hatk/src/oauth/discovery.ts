@@ -41,7 +41,10 @@ export async function fetchAuthServerMetadata(authServerEndpoint: string): Promi
   return res.json()
 }
 
-export async function discoverAuthServer(did: string, plcUrl: string): Promise<{
+export async function discoverAuthServer(
+  did: string,
+  plcUrl: string,
+): Promise<{
   pdsEndpoint: string
   authServerEndpoint: string
   authServerMetadata: AuthServerMetadata
@@ -59,12 +62,8 @@ export async function discoverAuthServer(did: string, plcUrl: string): Promise<{
 }
 
 export async function resolveHandle(handle: string, relayUrl?: string): Promise<string> {
-  const baseUrl = relayUrl?.includes('localhost:2583')
-    ? 'http://localhost:2583'
-    : 'https://bsky.social'
-  const res = await fetch(
-    `${baseUrl}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`,
-  )
+  const baseUrl = relayUrl?.includes('localhost:2583') ? 'http://localhost:2583' : 'https://bsky.social'
+  const res = await fetch(`${baseUrl}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`)
   if (!res.ok) throw new Error(`resolveHandle failed: ${res.status}`)
   const data = await res.json()
   return data.did

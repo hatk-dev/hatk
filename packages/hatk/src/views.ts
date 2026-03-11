@@ -5,8 +5,6 @@
 
 import { log } from './logger.ts'
 import { getAllLexicons, getLexicon } from './schema.ts'
-import { blobUrl } from './xrpc.ts'
-import type { Row, FlatRow } from './lex-types.ts'
 
 // --- Types ---
 
@@ -238,24 +236,3 @@ function discoverBlobFields(mainDef: any): Map<string, string> {
   return blobs
 }
 
-
-/** Flatten a Row<T> into a view object: { uri, did, handle, ...value, ...overrides } */
-function flattenRow<T>(row: Row<T>, overrides?: Record<string, unknown>): FlatRow<T> {
-  if (!row) return null as any
-  return {
-    uri: row.uri,
-    did: row.did,
-    handle: row.handle,
-    ...(row.value as any),
-    ...overrides,
-  } as FlatRow<T>
-}
-
-/** Resolve blob fields on a record to CDN URLs. */
-function resolveBlobOverrides(item: Row<unknown>, blobFields: Map<string, string>): Record<string, unknown> {
-  const overrides: Record<string, unknown> = {}
-  for (const [fieldName, preset] of blobFields) {
-    overrides[fieldName] = blobUrl(item.did, (item.value as any)?.[fieldName], preset as any)
-  }
-  return overrides
-}

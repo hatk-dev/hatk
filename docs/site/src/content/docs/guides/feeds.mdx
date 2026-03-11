@@ -13,13 +13,13 @@ Each feed has two phases: **generate** (query for record URIs) and **hydrate** (
 
 ## `defineFeed` options
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `collection` | Yes (unless `hydrate` provided) | The collection this feed queries |
-| `label` | Yes | Human-readable name shown in `describeFeeds` |
-| `view` | No | View definition to use for auto-hydration |
-| `generate` | Yes | Function that returns record URIs |
-| `hydrate` | No | Function that enriches resolved records |
+| Field        | Required                        | Description                                  |
+| ------------ | ------------------------------- | -------------------------------------------- |
+| `collection` | Yes (unless `hydrate` provided) | The collection this feed queries             |
+| `label`      | Yes                             | Human-readable name shown in `describeFeeds` |
+| `view`       | No                              | View definition to use for auto-hydration    |
+| `generate`   | Yes                             | Function that returns record URIs            |
+| `hydrate`    | No                              | Function that enriches resolved records      |
 
 ---
 
@@ -29,19 +29,19 @@ Queries DuckDB and returns record URIs with optional cursor-based pagination.
 
 ### Context
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `db.query` | function | Run SQL queries against DuckDB |
-| `params` | `Record<string, string>` | Query string parameters from the request |
-| `limit` | number | Requested page size |
-| `cursor` | string \| undefined | Pagination cursor from the client |
-| `viewer` | `{ did: string }` \| null | The authenticated user, or null |
-| `ok` | function | Wraps your return value with type checking |
-| `packCursor` | function | Encode a `(primary, cid)` pair into an opaque cursor string |
-| `unpackCursor` | function | Decode a cursor back into `{ primary, cid }` or null |
-| `isTakendown` | function | Check if a DID has been taken down |
-| `filterTakendownDids` | function | Filter a list of DIDs, returning those that are taken down |
-| `paginate` | function | Run a paginated query — handles cursor, ORDER BY, LIMIT automatically |
+| Field                 | Type                      | Description                                                           |
+| --------------------- | ------------------------- | --------------------------------------------------------------------- |
+| `db.query`            | function                  | Run SQL queries against DuckDB                                        |
+| `params`              | `Record<string, string>`  | Query string parameters from the request                              |
+| `limit`               | number                    | Requested page size                                                   |
+| `cursor`              | string \| undefined       | Pagination cursor from the client                                     |
+| `viewer`              | `{ did: string }` \| null | The authenticated user, or null                                       |
+| `ok`                  | function                  | Wraps your return value with type checking                            |
+| `packCursor`          | function                  | Encode a `(primary, cid)` pair into an opaque cursor string           |
+| `unpackCursor`        | function                  | Decode a cursor back into `{ primary, cid }` or null                  |
+| `isTakendown`         | function                  | Check if a DID has been taken down                                    |
+| `filterTakendownDids` | function                  | Filter a list of DIDs, returning those that are taken down            |
+| `paginate`            | function                  | Run a paginated query — handles cursor, ORDER BY, LIMIT automatically |
 
 ### Cursor pagination
 
@@ -94,16 +94,16 @@ Enriches feed results with additional data after the `generate` phase returns UR
 
 ### Context
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `items` | `Row[]` | The resolved records (each has `uri`, `did`, `handle`, `value`) |
-| `viewer` | `{ did: string }` \| null | The authenticated user, or null |
-| `db.query` | function | Run SQL queries against DuckDB |
-| `getRecords` | function | Fetch records by URI from another collection |
-| `lookup` | function | Look up records by a field value (e.g. profiles by DID) |
-| `count` | function | Count records by field value |
-| `labels` | function | Query labels for a list of URIs |
-| `blobUrl` | function | Resolve a blob reference to a CDN URL |
+| Field        | Type                      | Description                                                     |
+| ------------ | ------------------------- | --------------------------------------------------------------- |
+| `items`      | `Row[]`                   | The resolved records (each has `uri`, `did`, `handle`, `value`) |
+| `viewer`     | `{ did: string }` \| null | The authenticated user, or null                                 |
+| `db.query`   | function                  | Run SQL queries against DuckDB                                  |
+| `getRecords` | function                  | Fetch records by URI from another collection                    |
+| `lookup`     | function                  | Look up records by a field value (e.g. profiles by DID)         |
+| `count`      | function                  | Count records by field value                                    |
+| `labels`     | function                  | Query labels for a list of URIs                                 |
+| `blobUrl`    | function                  | Resolve a blob reference to a CDN URL                           |
 
 ### Example
 

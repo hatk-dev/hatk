@@ -30,12 +30,12 @@ export function getOAuthClient(): OAuthClient {
 
 ### Constructor options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `server` | — | Hatk server URL |
-| `clientId` | `window.location.origin` | OAuth client ID (must match client metadata endpoint) |
-| `redirectUri` | current page URL | Where to redirect after authorization |
-| `scope` | `'atproto'` | OAuth scopes to request |
+| Option        | Default                  | Description                                           |
+| ------------- | ------------------------ | ----------------------------------------------------- |
+| `server`      | —                        | Hatk server URL                                       |
+| `clientId`    | `window.location.origin` | OAuth client ID (must match client metadata endpoint) |
+| `redirectUri` | current page URL         | Where to redirect after authorization                 |
+| `scope`       | `'atproto'`              | OAuth scopes to request                               |
 
 ### Scopes
 
@@ -145,13 +145,13 @@ This clears all stored tokens and DPoP keys from browser storage.
 
 The OAuth flow uses these endpoints on your hatk server:
 
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /oauth/par` | Pushed Authorization Request — initiates the flow |
-| `GET /oauth/authorize` | Redirects to the user's PDS |
-| `POST /oauth/token` | Exchanges authorization code for tokens |
-| `GET /oauth/jwks` | Public keys for token verification |
-| `GET /oauth/client-metadata.json` | Client metadata discovery |
+| Endpoint                          | Purpose                                           |
+| --------------------------------- | ------------------------------------------------- |
+| `POST /oauth/par`                 | Pushed Authorization Request — initiates the flow |
+| `GET /oauth/authorize`            | Redirects to the user's PDS                       |
+| `POST /oauth/token`               | Exchanges authorization code for tokens           |
+| `GET /oauth/jwks`                 | Public keys for token verification                |
+| `GET /oauth/client-metadata.json` | Client metadata discovery                         |
 
 All token requests include DPoP proofs (ECDSA P-256 key pairs stored in IndexedDB), which bind access tokens to the specific browser that requested them.
 

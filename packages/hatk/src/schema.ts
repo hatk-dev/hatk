@@ -10,17 +10,17 @@ export interface ColumnDef {
 }
 
 export interface UnionBranchSchema {
-  type: string           // full $type string (e.g., 'app.bsky.embed.images')
-  branchName: string     // short name for table suffix (e.g., 'images')
-  tableName: string      // quoted table name
-  columns: ColumnDef[]   // branch properties as columns
-  isArray: boolean       // true if the branch wraps an array of objects
-  arrayField?: string    // if isArray, the property name containing the array
-  wrapperField?: string  // if set, data is nested under this key (e.g., 'external' for embed.external)
+  type: string // full $type string (e.g., 'app.bsky.embed.images')
+  branchName: string // short name for table suffix (e.g., 'images')
+  tableName: string // quoted table name
+  columns: ColumnDef[] // branch properties as columns
+  isArray: boolean // true if the branch wraps an array of objects
+  arrayField?: string // if isArray, the property name containing the array
+  wrapperField?: string // if set, data is nested under this key (e.g., 'external' for embed.external)
 }
 
 export interface UnionFieldSchema {
-  fieldName: string      // original camelCase field name (e.g., 'embed')
+  fieldName: string // original camelCase field name (e.g., 'embed')
   branches: UnionBranchSchema[]
 }
 
@@ -34,10 +34,10 @@ export interface TableSchema {
 }
 
 export interface ChildTableSchema {
-  parentCollection: string   // parent NSID
-  fieldName: string          // original camelCase field name (e.g., "artists")
-  tableName: string          // quoted "{collection}__{fieldName}"
-  columns: ColumnDef[]       // columns from the item object properties
+  parentCollection: string // parent NSID
+  fieldName: string // original camelCase field name (e.g., "artists")
+  tableName: string // quoted "{collection}__{fieldName}"
+  columns: ColumnDef[] // columns from the item object properties
 }
 
 // Convert camelCase to snake_case
@@ -135,10 +135,7 @@ export function getLexiconArray(): any[] {
   return [...storedLexicons.values()]
 }
 
-function resolveArrayItemProperties(
-  items: any,
-  defs: Record<string, any>,
-): Record<string, any> | null {
+function resolveArrayItemProperties(items: any, defs: Record<string, any>): Record<string, any> | null {
   if (!items) return null
 
   // Inline object with properties
@@ -159,11 +156,7 @@ function resolveArrayItemProperties(
 }
 
 /** Resolve a ref string to its definition object */
-function resolveRefDef(
-  ref: string,
-  defs: Record<string, any>,
-  lexicons?: Map<string, any>,
-): any | null {
+function resolveRefDef(ref: string, defs: Record<string, any>, lexicons?: Map<string, any>): any | null {
   if (ref.startsWith('#')) {
     return defs?.[ref.slice(1)] || null
   }
@@ -222,9 +215,7 @@ function resolveUnionBranch(
     if ((onlyProp as any).type === 'array' && (onlyProp as any).items) {
       // Single array property (like embed.images wrapping images[])
       const items = (onlyProp as any).items
-      const itemDef = items.type === 'ref' && items.ref
-        ? resolveRefDef(items.ref, branchDefs, lexicons)
-        : items
+      const itemDef = items.type === 'ref' && items.ref ? resolveRefDef(items.ref, branchDefs, lexicons) : items
       if (itemDef?.type === 'object' && itemDef.properties) {
         isArray = true
         arrayField = onlyField
@@ -399,10 +390,7 @@ export function generateCreateTableSQL(schema: TableSchema): string {
   // Child table DDL
   const childDDL: string[] = []
   for (const child of schema.children) {
-    const childLines: string[] = [
-      '  parent_uri TEXT NOT NULL',
-      '  parent_did TEXT NOT NULL',
-    ]
+    const childLines: string[] = ['  parent_uri TEXT NOT NULL', '  parent_did TEXT NOT NULL']
     for (const col of child.columns) {
       const nullable = col.notNull ? ' NOT NULL' : ''
       childLines.push(`  ${col.name} ${col.duckdbType}${nullable}`)
@@ -422,10 +410,7 @@ export function generateCreateTableSQL(schema: TableSchema): string {
   // Union branch table DDL
   for (const union of schema.unions) {
     for (const branch of union.branches) {
-      const branchLines: string[] = [
-        '  parent_uri TEXT NOT NULL',
-        '  parent_did TEXT NOT NULL',
-      ]
+      const branchLines: string[] = ['  parent_uri TEXT NOT NULL', '  parent_did TEXT NOT NULL']
       for (const col of branch.columns) {
         const nullable = col.notNull ? ' NOT NULL' : ''
         branchLines.push(`  ${col.name} ${col.duckdbType}${nullable}`)

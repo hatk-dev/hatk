@@ -53,11 +53,25 @@ interface FeedHandler {
 
 // --- Typed feed helper ---
 
-type FeedGenerate = (ctx: FeedContext & { ok: (value: FeedResult) => Checked<FeedResult> }) => Promise<Checked<FeedResult>>
+type FeedGenerate = (
+  ctx: FeedContext & { ok: (value: FeedResult) => Checked<FeedResult> },
+) => Promise<Checked<FeedResult>>
 
 type FeedOpts =
-  | { collection: string; view?: string; label: string; generate: FeedGenerate; hydrate?: (ctx: HydrateContext<any>) => Promise<unknown[]> }
-  | { collection?: never; view?: never; label: string; generate: FeedGenerate; hydrate: (ctx: HydrateContext<any>) => Promise<unknown[]> }
+  | {
+      collection: string
+      view?: string
+      label: string
+      generate: FeedGenerate
+      hydrate?: (ctx: HydrateContext<any>) => Promise<unknown[]>
+    }
+  | {
+      collection?: never
+      view?: never
+      label: string
+      generate: FeedGenerate
+      hydrate: (ctx: HydrateContext<any>) => Promise<unknown[]>
+    }
 
 export function createPaginate(deps: {
   db: { query: (sql: string, params?: any[]) => Promise<any[]> }
@@ -211,7 +225,6 @@ export async function executeFeed(
 
   return { uris: result.uris, cursor: result.cursor }
 }
-
 
 export function listFeeds(): { name: string; label: string }[] {
   return Array.from(feeds.values()).map((f) => ({ name: f.name, label: f.label }))

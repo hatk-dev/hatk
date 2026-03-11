@@ -462,7 +462,9 @@ export function startServer(
           const rec = await getRecordByUri(q)
           if (rec) {
             const labelsMap = await queryLabelsForUris([rec.uri])
-            jsonResponse(res, { records: [{ ...reshapeRow(rec, rec?.__childData), labels: labelsMap.get(rec.uri) || [] }] })
+            jsonResponse(res, {
+              records: [{ ...reshapeRow(rec, rec?.__childData), labels: labelsMap.get(rec.uri) || [] }],
+            })
           } else {
             jsonResponse(res, { records: [] })
           }
@@ -1030,9 +1032,7 @@ export function startServer(
 
 function jsonResponse(res: any, data: any): void {
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
-  res.end(
-    JSON.stringify(data, (_, v) => normalizeValue(v)),
-  )
+  res.end(JSON.stringify(data, (_, v) => normalizeValue(v)))
 }
 
 function jsonError(res: any, status: number, message: string): void {

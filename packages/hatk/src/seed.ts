@@ -49,7 +49,9 @@ export function seed<R extends Record<string, unknown> = Record<string, unknown>
   ): Promise<{ uri: string; cid: string }> {
     const error = validateRecord(lexiconArray, collection, record)
     if (error) {
-      throw new Error(`[seed] validation error in ${collection}: ${error.path ? error.path + ': ' : ''}${error.message}`)
+      throw new Error(
+        `[seed] validation error in ${collection}: ${error.path ? error.path + ': ' : ''}${error.message}`,
+      )
     }
 
     const body: Record<string, unknown> = {
