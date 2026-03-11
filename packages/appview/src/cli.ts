@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdirSync, writeFileSync, existsSync, unlinkSync, readdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync, existsSync, unlinkSync, readdirSync, readFileSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { execSync } from 'node:child_process'
 import { loadLexicons } from './schema.ts'
@@ -14,7 +14,7 @@ async function ensurePds() {
   try {
     const res = await fetch('http://localhost:2583/xrpc/_health')
     if (res.ok) return
-  } catch {}
+  } catch { }
   // Start it
   console.log('[dev] starting PDS...')
   execSync('docker compose up -d', { stdio: 'inherit', cwd: process.cwd() })
@@ -23,7 +23,7 @@ async function ensurePds() {
     try {
       const res = await fetch('http://localhost:2583/xrpc/_health')
       if (res.ok) { console.log('[dev] PDS ready'); return }
-    } catch {}
+    } catch { }
     await new Promise((r) => setTimeout(r, 1000))
   }
   console.error('[dev] PDS failed to start')
@@ -41,7 +41,7 @@ function usage() {
   Usage: hatk <command> [options]
 
   Getting Started
-    new <name> [--svelte]                  Create a new hatk project
+    new <name> [--svelte] [--template <t>] Create a new hatk project
 
   Running
     start                                  Start the hatk server
@@ -307,17 +307,47 @@ const dirs: Record<string, string> = {
 if (command === 'new') {
   const name = args[1]
   if (!name) {
-    console.error('Usage: hatk new <name> [--svelte]')
+    console.error('Usage: hatk new <name> [--svelte] [--template <template-name>]')
     process.exit(1)
   }
 
-  const withSvelte = args.includes('--svelte')
+  const templateIdx = args.indexOf('--template')
+  const templateName = templateIdx !== -1 ? args[templateIdx + 1] : null
+  if (templateIdx !== -1 && !templateName) {
+    console.error('Usage: hatk new <name> --template <template-name>')
+    process.exit(1)
+  }
+
   const dir = resolve(name)
   if (existsSync(dir)) {
     console.error(`Directory ${name} already exists`)
     process.exit(1)
   }
 
+  if (templateName) {
+    const repo = `https://github.com/hatk-dev/hatk-template-${templateName}.git`
+    console.log(`Cloning template ${templateName}...`)
+    try {
+      execSync(`git clone --depth 1 ${repo} ${dir}`, { stdio: 'inherit' })
+    } catch {
+      console.error(`Failed to clone template: ${repo}`)
+      process.exit(1)
+    }
+    execSync(`rm -rf ${join(dir, '.git')}`)
+    const pkgPath = join(dir, 'package.json')
+    if (existsSync(pkgPath)) {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
+      pkg.name = name
+      writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n')
+    }
+    console.log(`\nCreated ${name}/ from template ${templateName}`)
+    console.log(`\n  cd ${name}`)
+    console.log(`  npm install`)
+    console.log(`  hatk dev`)
+    process.exit(0)
+  }
+
+  const withSvelte = args.includes('--svelte')
   mkdirSync(dir)
   const subs = ['lexicons', 'feeds', 'xrpc', 'og', 'labels', 'jobs', 'seeds', 'setup', 'public', 'test', 'test/feeds', 'test/xrpc', 'test/integration', 'test/browser', 'test/fixtures']
   if (withSvelte) subs.push('src', 'src/routes', 'src/lib')
