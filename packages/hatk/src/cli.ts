@@ -1669,7 +1669,11 @@ a {
     } else {
       // No frontend — just run the hatk server directly
       const mainPath = resolve(import.meta.dirname!, 'main.js')
-      execSync(`npx tsx ${mainPath} config.yaml`, { stdio: 'inherit', cwd: process.cwd() })
+      execSync(`npx tsx ${mainPath} config.yaml`, {
+        stdio: 'inherit',
+        cwd: process.cwd(),
+        env: { ...process.env, DEV_MODE: '1' },
+      })
     }
   } catch (e: any) {
     if (e.signal === 'SIGINT' || e.signal === 'SIGTERM') process.exit(0)

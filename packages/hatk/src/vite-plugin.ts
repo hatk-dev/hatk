@@ -75,6 +75,7 @@ export function hatk(opts?: { port?: number }): Plugin {
           ...process.env,
           PORT: String(backendPort),
           OAUTH_ISSUER: process.env.OAUTH_ISSUER || issuer,
+          DEV_MODE: '1',
         },
       })
 

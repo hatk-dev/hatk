@@ -86,12 +86,14 @@ export function startServer(
 ): Server {
   const coreXrpc = (method: string) => `/xrpc/dev.hatk.${method}`
 
+  const devMode = process.env.DEV_MODE === '1'
+
   function requireAdmin(viewer: { did: string } | null, res: any): boolean {
     if (!viewer) {
       jsonError(res, 401, 'Authentication required')
       return false
     }
-    if (!admins.includes(viewer.did)) {
+    if (!devMode && !admins.includes(viewer.did)) {
       jsonError(res, 403, 'Admin access required')
       return false
     }
