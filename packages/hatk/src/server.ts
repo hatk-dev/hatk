@@ -1,4 +1,5 @@
 import { createServer, type Server, type IncomingMessage } from 'node:http'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, extname } from 'node:path'
 import {
@@ -977,6 +978,21 @@ export function startServer(
             return
           }
           throw err
+        }
+      }
+
+      // GET /robots.txt — serve from user's public dir or fall back to hatk default
+      if (url.pathname === '/robots.txt') {
+        const userRobots = publicDir ? join(publicDir, 'robots.txt') : null
+        const defaultRobots = join(import.meta.dirname, '../public/robots.txt')
+        const robotsPath = userRobots && existsSync(userRobots) ? userRobots : defaultRobots
+        try {
+          const content = await readFile(robotsPath)
+          res.writeHead(200, { 'Content-Type': 'text/plain' })
+          res.end(content)
+          return
+        } catch {
+          // fall through
         }
       }
 
