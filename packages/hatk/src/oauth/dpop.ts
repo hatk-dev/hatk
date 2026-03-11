@@ -1,4 +1,4 @@
-// packages/appview/src/oauth/dpop.ts
+// packages/hatk/src/oauth/dpop.ts
 
 import {
   parseJwt,

@@ -1,4 +1,4 @@
-// packages/appview/src/oauth/server.ts
+// packages/hatk/src/oauth/server.ts
 
 import type { OAuthConfig } from '../config.ts'
 import {

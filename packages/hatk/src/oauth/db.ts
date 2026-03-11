@@ -1,4 +1,4 @@
-// packages/appview/src/oauth/db.ts
+// packages/hatk/src/oauth/db.ts
 
 import { querySQL, runSQL } from '../db.ts'
 

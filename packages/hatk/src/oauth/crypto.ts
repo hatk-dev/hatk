@@ -1,4 +1,4 @@
-// packages/appview/src/oauth/crypto.ts
+// packages/hatk/src/oauth/crypto.ts
 
 const P256_N = BigInt('0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551')
 const P256_N_DIV_2 = P256_N / 2n

@@ -1,4 +1,4 @@
-// packages/appview/src/oauth/discovery.ts
+// packages/hatk/src/oauth/discovery.ts
 
 export interface AuthServerMetadata {
   issuer: string
