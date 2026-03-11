@@ -235,4 +235,3 @@ function discoverBlobFields(mainDef: any): Map<string, string> {
   }
   return blobs
 }
-

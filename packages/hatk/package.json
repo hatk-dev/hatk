@@ -4,6 +4,11 @@
   "bin": {
     "hatk": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "fonts",
+    "public"
+  ],
   "type": "module",
   "exports": {
     "./feeds": "./dist/feeds.js",
@@ -19,7 +24,6 @@
     "./test/browser": "./dist/test-browser.js",
     "./vite-plugin": "./dist/vite-plugin.js"
   },
-  "files": ["dist", "fonts", "public"],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "prepublishOnly": "npm run build"

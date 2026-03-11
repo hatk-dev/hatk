@@ -1056,7 +1056,7 @@ function sendJson(res: any, status: number, body: Buffer): void {
     res.writeHead(status, {
       'Content-Type': 'application/json',
       'Content-Encoding': 'gzip',
-      'Vary': 'Accept-Encoding',
+      Vary: 'Accept-Encoding',
       ...(status === 200 ? { 'Cache-Control': 'no-store' } : {}),
     })
     res.end(compressed)
