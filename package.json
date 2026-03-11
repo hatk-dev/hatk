@@ -2,7 +2,8 @@
   "name": "hatk",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "docs/site"
   ],
   "type": "module",
   "scripts": {
