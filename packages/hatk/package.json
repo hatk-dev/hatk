@@ -1,25 +1,28 @@
 {
-  "name": "hatk",
+  "name": "@hatk/hatk",
+  "version": "0.0.1-alpha.2",
   "bin": {
-    "hatk": "src/cli.ts"
+    "hatk": "dist/cli.js"
   },
   "type": "module",
   "exports": {
-    "./feeds": "./src/feeds.ts",
-    "./xrpc": "./src/xrpc.ts",
-    "./opengraph": "./src/opengraph.ts",
-    "./labels": "./src/labels.ts",
-    "./lex-types": "./src/lex-types.ts",
-    "./xrpc-client": "./src/xrpc-client.ts",
-    "./views": "./src/views.ts",
-    "./seed": "./src/seed.ts",
-    "./setup": "./src/setup.ts",
-    "./test": "./src/test.ts",
-    "./test/browser": "./src/test-browser.ts",
-    "./vite-plugin": "./src/vite-plugin.ts"
+    "./feeds": "./dist/feeds.js",
+    "./xrpc": "./dist/xrpc.js",
+    "./opengraph": "./dist/opengraph.js",
+    "./labels": "./dist/labels.js",
+    "./lex-types": "./dist/lex-types.js",
+    "./xrpc-client": "./dist/xrpc-client.js",
+    "./views": "./dist/views.js",
+    "./seed": "./dist/seed.js",
+    "./setup": "./dist/setup.js",
+    "./test": "./dist/test.js",
+    "./test/browser": "./dist/test-browser.js",
+    "./vite-plugin": "./dist/vite-plugin.js"
   },
+  "files": ["dist", "fonts", "public"],
   "scripts": {
-    "build": "vite build"
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@bigmoves/lexicon": "^0.2.1",

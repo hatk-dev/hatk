@@ -136,7 +136,7 @@ export default defineQuery('${name}', async (ctx) => {
   })
 })
 `,
-  label: (name) => `import type { LabelRuleContext } from 'hatk/labels'
+  label: (name) => `import type { LabelRuleContext } from '@hatk/hatk/labels'
 
 export default {
   definition: {
@@ -152,7 +152,7 @@ export default {
   },
 }
 `,
-  og: (name) => `import type { OpengraphContext, OpengraphResult } from 'hatk/opengraph'
+  og: (name) => `import type { OpengraphContext, OpengraphResult } from '@hatk/hatk/opengraph'
 
 export default {
   path: '/og/${name}/:id',
@@ -190,7 +190,7 @@ function xrpcImportPath(nsid: string) {
 
 const testTemplates: Record<string, (name: string) => string> = {
   feed: (name) => `import { describe, test, expect, beforeAll, afterAll } from 'vitest'
-import { createTestContext } from 'hatk/test'
+import { createTestContext } from '@hatk/hatk/test'
 
 let ctx: Awaited<ReturnType<typeof createTestContext>>
 
@@ -210,7 +210,7 @@ describe('${name} feed', () => {
 })
 `,
   xrpc: (name) => `import { describe, test, expect, beforeAll, afterAll } from 'vitest'
-import { createTestContext } from 'hatk/test'
+import { createTestContext } from '@hatk/hatk/test'
 
 let ctx: Awaited<ReturnType<typeof createTestContext>>
 
@@ -918,7 +918,7 @@ RUN npm ci --omit=dev
 COPY . .
 RUN node_modules/.bin/hatk build
 EXPOSE 3000
-CMD ["node", "--experimental-strip-types", "--no-warnings", "node_modules/hatk/src/main.ts", "config.yaml"]
+CMD ["node", "node_modules/@hatk/hatk/dist/main.js", "config.yaml"]
 `,
   )
 
@@ -1064,7 +1064,7 @@ export default {
     writeFileSync(
       join(dir, 'vite.config.ts'),
       `import { sveltekit } from '@sveltejs/kit/vite'
-import { hatk } from 'hatk/vite-plugin'
+import { hatk } from '@hatk/hatk/vite-plugin'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
@@ -1323,10 +1323,10 @@ a {
     const usedWrappers = new Set(entries.filter((e) => e.defType).map((e) => wrapperMap[e.defType!]))
 
     let out = '// Auto-generated from lexicons. Do not edit.\n'
-    out += `import type { ${[...usedWrappers].sort().join(', ')}, LexServerParams, Checked, Prettify, StrictArg } from 'hatk/lex-types'\n`
-    out += `import type { XrpcContext } from 'hatk/xrpc'\n`
-    out += `import { defineFeed as _defineFeed, type FeedResult, type FeedContext, type HydrateContext } from 'hatk/feeds'\n`
-    out += `import { seed as _seed, type SeedOpts } from 'hatk/seed'\n`
+    out += `import type { ${[...usedWrappers].sort().join(', ')}, LexServerParams, Checked, Prettify, StrictArg } from '@hatk/hatk/lex-types'\n`
+    out += `import type { XrpcContext } from '@hatk/hatk/xrpc'\n`
+    out += `import { defineFeed as _defineFeed, type FeedResult, type FeedContext, type HydrateContext } from '@hatk/hatk/feeds'\n`
+    out += `import { seed as _seed, type SeedOpts } from '@hatk/hatk/seed'\n`
 
     // Emit ALL lexicons as `const ... = {...} as const` (including defs-only)
     out += `\n// ─── Lexicon Definitions ────────────────────────────────────────────\n\n`
@@ -1493,8 +1493,8 @@ a {
 
     // Emit Ctx helper for typesafe XRPC handler contexts
     out += `\n// ─── XRPC Helpers ───────────────────────────────────────────────────\n\n`
-    out += `export type { HydrateContext } from 'hatk/feeds'\n`
-    out += `export { InvalidRequestError, NotFoundError } from 'hatk/xrpc'\n`
+    out += `export type { HydrateContext } from '@hatk/hatk/feeds'\n`
+    out += `export { InvalidRequestError, NotFoundError } from '@hatk/hatk/xrpc'\n`
     out += `export type Ctx<K extends keyof XrpcSchema & keyof Registry> = XrpcContext<\n`
     out += `  LexServerParams<Registry[K], Registry>,\n`
     out += `  RecordRegistry,\n`
@@ -1545,8 +1545,8 @@ a {
     if (hasLexDef) {
       usedWrappers.add('LexDef')
       out = out.replace(
-        /import type \{ ([^}]+) \} from 'hatk\/lex-types'/,
-        `import type { ${[...usedWrappers].sort().join(', ')}, LexServerParams, Checked, Prettify, StrictArg } from 'hatk/lex-types'`,
+        /import type \{ ([^}]+) \} from '@hatk\/hatk\/lex-types'/,
+        `import type { ${[...usedWrappers].sort().join(', ')}, LexServerParams, Checked, Prettify, StrictArg } from '@hatk/hatk/lex-types'`,
       )
     }
 
@@ -1667,7 +1667,7 @@ a {
       execSync('npx vite dev', { stdio: 'inherit', cwd: process.cwd() })
     } else {
       // No frontend — just run the hatk server directly
-      const mainPath = resolve(import.meta.dirname!, 'main.ts')
+      const mainPath = resolve(import.meta.dirname!, 'main.js')
       execSync(`npx tsx ${mainPath} config.yaml`, { stdio: 'inherit', cwd: process.cwd() })
     }
   } catch (e: any) {
@@ -1886,7 +1886,7 @@ a {
   }
 } else if (command === 'start') {
   try {
-    const mainPath = resolve(import.meta.dirname!, 'main.ts')
+    const mainPath = resolve(import.meta.dirname!, 'main.js')
     execSync(`npx tsx ${mainPath} config.yaml`, { stdio: 'inherit', cwd: process.cwd() })
   } catch (e: any) {
     if (e.signal === 'SIGINT' || e.signal === 'SIGTERM') process.exit(0)
