@@ -1,4 +1,5 @@
 import { createServer, type Server, type IncomingMessage } from 'node:http'
+import { gzipSync } from 'node:zlib'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, extname } from 'node:path'
@@ -1046,15 +1047,33 @@ export function startServer(
   return server
 }
 
+function sendJson(res: any, status: number, body: Buffer): void {
+  const acceptEncoding = res.req?.headers['accept-encoding'] || ''
+  if (body.length > 1024 && /\bgzip\b/.test(acceptEncoding as string)) {
+    const compressed = gzipSync(body)
+    res.writeHead(status, {
+      'Content-Type': 'application/json',
+      'Content-Encoding': 'gzip',
+      'Vary': 'Accept-Encoding',
+      ...(status === 200 ? { 'Cache-Control': 'no-store' } : {}),
+    })
+    res.end(compressed)
+  } else {
+    res.writeHead(status, {
+      'Content-Type': 'application/json',
+      ...(status === 200 ? { 'Cache-Control': 'no-store' } : {}),
+    })
+    res.end(body)
+  }
+}
+
 function jsonResponse(res: any, data: any): void {
-  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
-  res.end(JSON.stringify(data, (_, v) => normalizeValue(v)))
+  sendJson(res, 200, Buffer.from(JSON.stringify(data, (_, v) => normalizeValue(v))))
 }
 
 function jsonError(res: any, status: number, message: string): void {
   if (res.headersSent) return
-  res.writeHead(status, { 'Content-Type': 'application/json' })
-  res.end(JSON.stringify({ error: message }))
+  sendJson(res, status, Buffer.from(JSON.stringify({ error: message })))
 }
 
 /** Proxy a request to the user's PDS with DPoP + automatic nonce retry + token refresh. */
