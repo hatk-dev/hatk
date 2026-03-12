@@ -689,6 +689,7 @@ backfill:
               encoding: 'application/json',
               schema: {
                 type: 'object',
+                required: ['items'],
                 properties: {
                   items: { type: 'array', items: { type: 'unknown' } },
                   cursor: { type: 'string' },
@@ -762,6 +763,7 @@ backfill:
               encoding: 'application/json',
               schema: {
                 type: 'object',
+                required: ['items'],
                 properties: {
                   items: { type: 'array', items: { type: 'unknown' } },
                   cursor: { type: 'string' },
@@ -801,6 +803,7 @@ backfill:
               encoding: 'application/json',
               schema: {
                 type: 'object',
+                required: ['items'],
                 properties: {
                   items: { type: 'array', items: { type: 'unknown' } },
                   cursor: { type: 'string' },
@@ -914,9 +917,10 @@ public
     `FROM node:25-slim
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci
 COPY . .
 RUN node_modules/.bin/hatk build
+RUN npm prune --omit=dev
 EXPOSE 3000
 CMD ["node", "node_modules/@hatk/hatk/dist/main.js", "config.yaml"]
 `,
@@ -930,6 +934,7 @@ CMD ["node", "node_modules/@hatk/hatk/dist/main.js", "config.yaml"]
     typescript: '^5',
     vite: '^6',
     vitest: '^4',
+    '@types/node': '^22',
   }
   if (withSvelte) {
     pkgDevDeps['@sveltejs/adapter-static'] = '^3'
