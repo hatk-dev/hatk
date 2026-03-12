@@ -985,7 +985,7 @@ COPY . .
 RUN node_modules/.bin/hatk build
 RUN npm prune --omit=dev
 EXPOSE 3000
-CMD ["node", "--max-old-space-size=256", "node_modules/@hatk/hatk/dist/main.js", "config.yaml"]
+CMD ["node", "--max-old-space-size=512", "node_modules/@hatk/hatk/dist/main.js", "config.yaml"]
 `,
   )
 

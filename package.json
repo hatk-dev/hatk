@@ -12,6 +12,9 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "check": "tsc --noEmit && oxlint . && oxfmt --check .",
+    "build": "npm run build -w @hatk/hatk",
+    "publish:hatk": "npm publish -w @hatk/hatk --tag alpha",
+    "release": "npm run build -w @hatk/hatk && npm publish -w @hatk/hatk --tag alpha",
     "docs": "npm run dev -w @hatk/docs",
     "docs:build": "npm run build -w @hatk/docs"
   },

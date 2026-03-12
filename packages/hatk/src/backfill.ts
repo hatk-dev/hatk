@@ -194,32 +194,6 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
     // Walk MST to find all record paths
     const entries = walkMst(blocks, commit.data.$link)
 
-    const bulk: BulkRecord[] = []
-    for (const entry of entries) {
-      const collection = entry.path.split('/')[0]
-      if (!collections.has(collection)) continue
-
-      const blockData = blocks.get(entry.cid)
-      if (!blockData) continue
-
-      try {
-        const { value: record } = cborDecode(blockData)
-        if (!record?.$type) continue
-
-        const rkey = entry.path.split('/').slice(1).join('/')
-        const uri = `at://${did}/${collection}/${rkey}`
-        bulk.push({ collection, uri, cid: entry.cid, did, record })
-      } catch (recordErr: any) {
-        emit('backfill', 'record_error', {
-          did,
-          uri: `at://${did}/${entry.path}`,
-          collection,
-          error: recordErr.message,
-        })
-      }
-    }
-    blocks = null // free block map before bulk insert
-
     // Delete existing records for this DID before re-importing so deletions are reflected
     for (const col of collections) {
       const schema = getSchema(col)
@@ -235,7 +209,41 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
       }
     }
 
-    count = await bulkInsertRecords(bulk)
+    // Insert records in chunks to limit memory usage
+    const CHUNK_SIZE = 1000
+    let chunk: BulkRecord[] = []
+    for (const entry of entries) {
+      const collection = entry.path.split('/')[0]
+      if (!collections.has(collection)) continue
+
+      const blockData = blocks.get(entry.cid)
+      if (!blockData) continue
+
+      try {
+        const { value: record } = cborDecode(blockData)
+        if (!record?.$type) continue
+
+        const rkey = entry.path.split('/').slice(1).join('/')
+        const uri = `at://${did}/${collection}/${rkey}`
+        chunk.push({ collection, uri, cid: entry.cid, did, record })
+
+        if (chunk.length >= CHUNK_SIZE) {
+          count += await bulkInsertRecords(chunk)
+          chunk = []
+        }
+      } catch (recordErr: any) {
+        emit('backfill', 'record_error', {
+          did,
+          uri: `at://${did}/${entry.path}`,
+          collection,
+          error: recordErr.message,
+        })
+      }
+    }
+    blocks = null // free block map
+    if (chunk.length > 0) {
+      count += await bulkInsertRecords(chunk)
+    }
     await setRepoStatus(did, 'active', commit.rev, { handle })
     return count
   } catch (err: any) {
