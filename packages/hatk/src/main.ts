@@ -11,7 +11,7 @@ import {
   generateCreateTableSQL,
 } from './schema.ts'
 import { discoverViews } from './views.ts'
-import { initDatabase, getCursor, querySQL, backfillChildTables } from './db.ts'
+import { initDatabase, getCursor, querySQL } from './db.ts'
 import { initFeeds, listFeeds } from './feeds.ts'
 import { initXrpc, listXrpc, configureRelay } from './xrpc.ts'
 import { initOpengraph } from './opengraph.ts'
@@ -93,8 +93,6 @@ if (config.database !== ':memory:') {
 await initDatabase(config.database, schemas, ddlStatements)
 log(`[main] DuckDB initialized (${config.database === ':memory:' ? 'in-memory' : config.database})`)
 
-// 3a. Backfill child tables for decomposed arrays (one-time migration)
-await backfillChildTables()
 
 // 3b. Run setup hooks (after DB init, before server)
 await initSetup(resolve(configDir, 'setup'))

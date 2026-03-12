@@ -123,7 +123,10 @@ export async function initDatabase(
   tableSchemas: TableSchema[],
   ddlStatements: string[],
 ): Promise<void> {
-  instance = await DuckDBInstance.create(dbPath === ':memory:' ? undefined : dbPath)
+  instance = await DuckDBInstance.create(dbPath === ':memory:' ? undefined : dbPath, {
+    memory_limit: '512MB',
+    threads: '2',
+  })
   con = await instance.connect()
   readCon = await instance.connect()
 
@@ -1555,44 +1558,3 @@ export async function filterTakendownDids(dids: string[]): Promise<Set<string>> 
   return new Set(rows.map((r: any) => r.did))
 }
 
-export async function backfillChildTables(): Promise<void> {
-  for (const [, schema] of schemas) {
-    for (const child of schema.children) {
-      // Check if child table needs backfill (significantly fewer rows than parent)
-      const mainCount = (await all(`SELECT COUNT(*)::INTEGER as n FROM ${schema.tableName}`))[0]?.n || 0
-      if (mainCount === 0) continue
-      const childCount =
-        (await all(`SELECT COUNT(DISTINCT parent_uri)::INTEGER as n FROM ${child.tableName}`))[0]?.n || 0
-      if (childCount >= mainCount * 0.9) continue
-
-      console.log(`[db] Backfilling ${child.tableName} from ${schema.tableName}...`)
-
-      const snakeField = toSnakeCase(child.fieldName)
-      const childColSelects = child.columns
-        .map((c) => `json_extract_string(item.val, '$.${c.originalName}')`)
-        .join(', ')
-      const childColNames = ['parent_uri', 'parent_did', ...child.columns.map((c) => c.name)]
-
-      const notNullFilters = child.columns
-        .filter((c) => c.notNull)
-        .map((c) => `json_extract_string(item.val, '$.${c.originalName}') IS NOT NULL`)
-
-      const whereClause = [`p.${snakeField} IS NOT NULL`, ...notNullFilters].join(' AND ')
-
-      try {
-        await run(`DELETE FROM ${child.tableName}`)
-        await run(`
-          INSERT INTO ${child.tableName} (${childColNames.join(', ')})
-          SELECT p.uri, p.did, ${childColSelects}
-          FROM ${schema.tableName} p,
-               unnest(from_json(p.${snakeField}::JSON, '["json"]')) AS item(val)
-          WHERE ${whereClause}
-        `)
-        const result = await all(`SELECT COUNT(*)::INTEGER as n FROM ${child.tableName}`)
-        console.log(`[db] Backfilled ${child.tableName}: ${result[0]?.n || 0} rows`)
-      } catch (err: any) {
-        console.warn(`[db] Backfill skipped for ${child.tableName}: ${err.message}`)
-      }
-    }
-  }
-}
