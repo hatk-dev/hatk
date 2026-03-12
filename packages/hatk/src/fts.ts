@@ -785,6 +785,11 @@ export async function rebuildAllIndexes(collections: string[]): Promise<void> {
     }
   }
 
+  // Compact WAL to free DuckDB memory after heavy FTS operations
+  try {
+    await runSQL('CHECKPOINT')
+  } catch {}
+
   emit('fts', 'rebuild', {
     collections_total: collections.length,
     collections_rebuilt: rebuilt,

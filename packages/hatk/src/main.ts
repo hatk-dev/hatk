@@ -26,8 +26,15 @@ import { initOAuth } from './oauth/server.ts'
 import { loadOnLoginHook } from './oauth/hooks.ts'
 import { initSetup } from './setup.ts'
 
+function logMemory(phase: string): void {
+  const mem = process.memoryUsage()
+  log(`[mem] ${phase}: heap=${Math.round(mem.heapUsed / 1024 / 1024)}MB rss=${Math.round(mem.rss / 1024 / 1024)}MB external=${Math.round(mem.external / 1024 / 1024)}MB arrayBuffers=${Math.round(mem.arrayBuffers / 1024 / 1024)}MB`)
+}
+
 const configPath = process.argv[2] || 'config.yaml'
 const configDir = dirname(resolve(configPath))
+
+logMemory('startup')
 
 // 1. Load config
 const config = loadConfig(configPath)
@@ -91,6 +98,7 @@ if (config.database !== ':memory:') {
   mkdirSync(dirname(config.database), { recursive: true })
 }
 await initDatabase(config.database, schemas, ddlStatements)
+logMemory('after-db-init')
 log(`[main] DuckDB initialized (${config.database === ':memory:' ? 'in-memory' : config.database})`)
 
 
@@ -137,6 +145,8 @@ if (config.oauth) {
   log(`[main] OAuth initialized (issuer: ${config.oauth.issuer})`)
 }
 
+logMemory('before-server')
+
 // 5. Start server immediately (don't wait for backfill)
 const collectionSet = new Set(collections)
 startServer(config.port, collections, config.publicDir, config.oauth, config.admins)
@@ -151,6 +161,8 @@ log(
     .map((f) => f.name)
     .join(', ')}`,
 )
+
+logMemory('after-server')
 
 // 6. Start indexer with cursor
 const cursor = await getCursor('relay')

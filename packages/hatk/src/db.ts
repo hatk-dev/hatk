@@ -124,8 +124,8 @@ export async function initDatabase(
   ddlStatements: string[],
 ): Promise<void> {
   instance = await DuckDBInstance.create(dbPath === ':memory:' ? undefined : dbPath, {
-    memory_limit: '512MB',
-    threads: '2',
+    memory_limit: '256MB',
+    threads: '1',
   })
   con = await instance.connect()
   readCon = await instance.connect()

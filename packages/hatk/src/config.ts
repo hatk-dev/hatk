@@ -82,7 +82,7 @@ export function loadConfig(configPath: string): HatkConfig {
       fetchTimeout: parseInt(env.BACKFILL_FETCH_TIMEOUT || '') || backfillRaw.fetchTimeout || 300,
       maxRetries: parseInt(env.BACKFILL_MAX_RETRIES || '') || backfillRaw.maxRetries || 5,
     },
-    ftsRebuildInterval: parseInt(env.FTS_REBUILD_INTERVAL || '') || parsed.ftsRebuildInterval || 500,
+    ftsRebuildInterval: parseInt(env.FTS_REBUILD_INTERVAL || '') || parsed.ftsRebuildInterval || 5000,
     oauth: null,
     admins: env.ADMINS ? env.ADMINS.split(',').map((s) => s.trim()) : parsed.admins || [],
   }
