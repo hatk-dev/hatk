@@ -667,6 +667,69 @@ backfill:
   )
 
   writeFileSync(
+    join(coreLexDir, 'getPreferences.json'),
+    JSON.stringify(
+      {
+        lexicon: 1,
+        id: 'dev.hatk.getPreferences',
+        defs: {
+          main: {
+            type: 'query',
+            description: 'Get all preferences for the authenticated user.',
+            output: {
+              encoding: 'application/json',
+              schema: {
+                type: 'object',
+                properties: {
+                  preferences: { type: 'unknown' },
+                },
+              },
+            },
+          },
+        },
+      },
+      null,
+      2,
+    ) + '\n',
+  )
+
+  writeFileSync(
+    join(coreLexDir, 'putPreference.json'),
+    JSON.stringify(
+      {
+        lexicon: 1,
+        id: 'dev.hatk.putPreference',
+        defs: {
+          main: {
+            type: 'procedure',
+            description: 'Set a single preference by key.',
+            input: {
+              encoding: 'application/json',
+              schema: {
+                type: 'object',
+                required: ['key', 'value'],
+                properties: {
+                  key: { type: 'string' },
+                  value: { type: 'unknown' },
+                },
+              },
+            },
+            output: {
+              encoding: 'application/json',
+              schema: {
+                type: 'object',
+                properties: {},
+              },
+            },
+          },
+        },
+      },
+      null,
+      2,
+    ) + '\n',
+  )
+
+  writeFileSync(
     join(coreLexDir, 'getFeed.json'),
     JSON.stringify(
       {
