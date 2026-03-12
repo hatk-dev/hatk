@@ -558,7 +558,14 @@ export function startServer(
         const sizeRows = await querySQL(`SELECT database_size, memory_usage, memory_limit FROM pragma_database_size()`)
         const dbInfo = sizeRows[0] ?? {}
         const collectionCounts = await getCollectionCounts()
-        jsonResponse(res, { repos: counts, duckdb: dbInfo, collections: collectionCounts })
+        const mem = process.memoryUsage()
+        const node = {
+          rss: `${(mem.rss / 1024 / 1024).toFixed(1)} MiB`,
+          heapUsed: `${(mem.heapUsed / 1024 / 1024).toFixed(1)} MiB`,
+          heapTotal: `${(mem.heapTotal / 1024 / 1024).toFixed(1)} MiB`,
+          external: `${(mem.external / 1024 / 1024).toFixed(1)} MiB`,
+        }
+        jsonResponse(res, { repos: counts, duckdb: dbInfo, node, collections: collectionCounts })
         return
       }
 
