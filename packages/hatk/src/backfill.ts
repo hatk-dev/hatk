@@ -16,23 +16,43 @@ import type { BulkRecord } from './db.ts'
 import { emit, timer } from './logger.ts'
 import type { BackfillConfig } from './config.ts'
 
+/** Options passed to {@link runBackfill}. */
 interface BackfillOpts {
+  /** Base URL of the relay or PDS to enumerate repos from (e.g. `wss://bsky.network`). */
   pdsUrl: string
+  /** PLC directory URL used to resolve `did:plc` identifiers (e.g. `https://plc.directory`). */
   plcUrl: string
+  /** AT Protocol collection NSIDs to index (e.g. `app.bsky.feed.post`). */
   collections: Set<string>
+  /** Backfill behavior settings from `config.yaml`. */
   config: BackfillConfig
 }
 
-// --- DID Resolution ---
 
 interface PdsResolution {
+  /** The PDS service endpoint URL from the DID document. */
   pds: string
+  /** The user's handle extracted from `alsoKnownAs`, or `null` if not present. */
   handle: string | null
 }
 
+/** In-memory cache of DID → PDS resolution results to avoid redundant lookups. */
 const pdsCache = new Map<string, PdsResolution>()
 let plcUrl: string
 
+/**
+ * Resolves a DID to its PDS endpoint and handle by fetching the DID document.
+ *
+ * Supports both `did:web` (fetches `/.well-known/did.json`) and `did:plc`
+ * (fetches from the PLC directory). Results are cached for the lifetime of the process.
+ *
+ * @example
+ * ```ts
+ * const { pds, handle } = await resolvePds('did:plc:abc123')
+ * // pds = "https://puffball.us-east.host.bsky.network"
+ * // handle = "alice.bsky.social"
+ * ```
+ */
 async function resolvePds(did: string): Promise<PdsResolution> {
   const cached = pdsCache.get(did)
   if (cached) return cached
@@ -61,8 +81,11 @@ async function resolvePds(did: string): Promise<PdsResolution> {
   return result
 }
 
-// --- Repo Enumeration ---
 
+/**
+ * Paginates through all active repos on a relay/PDS using `com.atproto.sync.listRepos`.
+ * Yields `{ did, rev }` for each active repo. Skips deactivated repos.
+ */
 async function* listRepos(pdsUrl: string): AsyncGenerator<{ did: string; rev: string }> {
   let cursor: string | undefined
   while (true) {
@@ -79,6 +102,13 @@ async function* listRepos(pdsUrl: string): AsyncGenerator<{ did: string; rev: st
   }
 }
 
+/**
+ * Paginates through repos that contain records in a specific collection using
+ * `com.atproto.sync.listReposByCollection`. More efficient than {@link listRepos}
+ * when only a few collections are needed, since the relay can filter server-side.
+ *
+ * Not all relays support this endpoint — callers should fall back to {@link listRepos}.
+ */
 async function* listReposByCollection(
   pdsUrl: string,
   collection: string,
@@ -98,8 +128,32 @@ async function* listReposByCollection(
   }
 }
 
-// --- Single Repo Backfill ---
 
+/**
+ * Downloads and indexes a single user's repo via `com.atproto.sync.getRepo`.
+ *
+ * The full flow:
+ * 1. Resolve the DID to find the user's PDS endpoint
+ * 2. Fetch the repo as a CAR file from the PDS
+ * 3. Parse the CAR, decode the commit, and walk the MST (Merkle Search Tree)
+ * 4. Delete any existing records for this DID (so deletions are reflected)
+ * 5. Bulk-insert all records matching the target collections
+ *
+ * On failure, applies exponential backoff retry logic. HTTP 4xx errors are
+ * treated as permanent failures (repo doesn't exist or is deactivated) and
+ * are not retried.
+ *
+ * @param did - The DID of the repo to backfill (e.g. `did:plc:abc123`)
+ * @param collections - Collection NSIDs to index; records in other collections are skipped
+ * @param fetchTimeout - Maximum seconds to wait for the CAR download before aborting
+ * @returns The number of records successfully indexed
+ *
+ * @example
+ * ```ts
+ * const count = await backfillRepo('did:plc:abc123', new Set(['app.bsky.feed.post']), 30)
+ * console.log(`Indexed ${count} records`)
+ * ```
+ */
 export async function backfillRepo(did: string, collections: Set<string>, fetchTimeout: number): Promise<number> {
   const elapsed = timer()
   let count = 0
@@ -215,8 +269,17 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
   }
 }
 
-// --- Worker Pool ---
 
+/**
+ * Processes items concurrently with a fixed number of workers.
+ * Workers pull from a shared index so the pool stays saturated even when
+ * individual items complete at different speeds. Errors from `fn` are
+ * swallowed (they're expected to be captured via structured logging).
+ *
+ * @param items - The work items to process
+ * @param parallelism - Maximum number of concurrent workers
+ * @param fn - Async function to run for each item
+ */
 async function runWorkerPool<T>(items: T[], parallelism: number, fn: (item: T) => Promise<void>): Promise<void> {
   let index = 0
 
@@ -235,8 +298,36 @@ async function runWorkerPool<T>(items: T[], parallelism: number, fn: (item: T) =
   await Promise.all(workers)
 }
 
-// --- Main Backfill Entry Point ---
 
+/**
+ * Orchestrates a full backfill run: enumerate repos, filter to pending, download, and index.
+ *
+ * Operates in one of three modes based on config:
+ * - **Pinned repos** — backfill only the DIDs listed in `config.repos`
+ * - **Full network** — enumerate every active repo on the relay via `listRepos`
+ * - **Collection signal** (default) — use `listReposByCollection` to discover repos that
+ *   contain records in the configured signal collections, falling back to `listRepos`
+ *   if the relay doesn't support collection-scoped enumeration
+ *
+ * After the initial pass, failed repos are retried with exponential backoff
+ * (up to `config.maxRetries` attempts). The run emits structured log events for
+ * monitoring via the `backfill.run` and `backfill.retry_round` event types.
+ *
+ * @example
+ * ```ts
+ * await runBackfill({
+ *   pdsUrl: 'wss://bsky.network',
+ *   plcUrl: 'https://plc.directory',
+ *   collections: new Set(['xyz.statusphere.status']),
+ *   config: {
+ *     fullNetwork: false,
+ *     parallelism: 10,
+ *     fetchTimeout: 30,
+ *     maxRetries: 5,
+ *   },
+ * })
+ * ```
+ */
 export async function runBackfill(opts: BackfillOpts): Promise<void> {
   const { pdsUrl, collections, config } = opts
   plcUrl = opts.plcUrl
