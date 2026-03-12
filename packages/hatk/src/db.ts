@@ -123,7 +123,10 @@ export async function initDatabase(
   tableSchemas: TableSchema[],
   ddlStatements: string[],
 ): Promise<void> {
-  instance = await DuckDBInstance.create(dbPath === ':memory:' ? undefined : dbPath)
+  instance = await DuckDBInstance.create(dbPath === ':memory:' ? undefined : dbPath, {
+    memory_limit: '1GB',
+    threads: '4',
+  })
   con = await instance.connect()
   readCon = await instance.connect()
 
