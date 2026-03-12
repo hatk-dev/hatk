@@ -366,7 +366,7 @@ async function runWorkerPool<T>(items: T[], parallelism: number, fn: (item: T) =
  * })
  * ```
  */
-export async function runBackfill(opts: BackfillOpts): Promise<void> {
+export async function runBackfill(opts: BackfillOpts): Promise<number> {
   const { pdsUrl, collections, config } = opts
   plcUrl = opts.plcUrl
   const signalCollections = config.signalCollections || [...collections]
@@ -430,7 +430,7 @@ export async function runBackfill(opts: BackfillOpts): Promise<void> {
       parallelism: config.parallelism,
       status: 'success',
     })
-    return
+    return 0
   }
 
   // 3. Backfill with worker pool
@@ -495,4 +495,5 @@ export async function runBackfill(opts: BackfillOpts): Promise<void> {
     retry_rounds: retryRound,
     status: failedCount > 0 ? 'partial' : 'success',
   })
+  return totalRecords
 }

@@ -185,15 +185,17 @@ runBackfill({
   collections: collectionSet,
   config: config.backfill,
 })
-  .then(() => {
+  .then((recordCount) => {
     log('[main] Backfill complete, rebuilding FTS indexes...')
-    return rebuildAllIndexes(collections)
+    return rebuildAllIndexes(collections).then(() => recordCount)
   })
-  .then(() => {
+  .then((recordCount) => {
     log('[main] FTS indexes ready')
-    logMemory('after-backfill')
-    log('[main] Restarting to reclaim memory...')
-    process.exit(0)
+    if (recordCount > 0) {
+      logMemory('after-backfill')
+      log('[main] Restarting to reclaim memory...')
+      process.exit(1)
+    }
   })
   .catch((err) => {
     console.error('[main] Backfill error:', err.message)
