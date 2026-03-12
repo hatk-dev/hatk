@@ -191,6 +191,9 @@ runBackfill({
   })
   .then(() => {
     log('[main] FTS indexes ready')
+    logMemory('after-backfill')
+    log('[main] Restarting to reclaim memory...')
+    process.exit(0)
   })
   .catch((err) => {
     console.error('[main] Backfill error:', err.message)
