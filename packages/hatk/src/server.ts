@@ -83,6 +83,7 @@ export function startServer(
   oauth: OAuthConfig | null,
   admins: string[] = [],
   resolveViewer?: (req: IncomingMessage) => { did: string } | null,
+  onResync?: () => void,
 ): Server {
   const coreXrpc = (method: string) => `/xrpc/dev.hatk.${method}`
 
@@ -528,9 +529,9 @@ export function startServer(
         }
         for (const did of repoList) {
           await setRepoStatus(did, 'pending')
-          triggerAutoBackfill(did)
         }
         jsonResponse(res, { resyncing: repoList.length })
+        if (onResync) onResync()
         return
       }
 

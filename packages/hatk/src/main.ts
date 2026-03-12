@@ -149,7 +149,34 @@ logMemory('before-server')
 
 // 5. Start server immediately (don't wait for backfill)
 const collectionSet = new Set(collections)
-startServer(config.port, collections, config.publicDir, config.oauth, config.admins)
+
+const backfillOpts = {
+  pdsUrl: relayHttpUrl(config.relay),
+  plcUrl: config.plc,
+  collections: collectionSet,
+  config: config.backfill,
+}
+
+function runBackfillAndRestart() {
+  runBackfill(backfillOpts)
+    .then((recordCount) => {
+      log('[main] Backfill complete, rebuilding FTS indexes...')
+      return rebuildAllIndexes(collections).then(() => recordCount)
+    })
+    .then((recordCount) => {
+      log('[main] FTS indexes ready')
+      if (recordCount > 0) {
+        logMemory('after-backfill')
+        log('[main] Restarting to reclaim memory...')
+        process.exit(1)
+      }
+    })
+    .catch((err) => {
+      console.error('[main] Backfill error:', err.message)
+    })
+}
+
+startServer(config.port, collections, config.publicDir, config.oauth, config.admins, undefined, runBackfillAndRestart)
 
 log(`\nhatk running:`)
 log(`  Relay: ${config.relay}`)
@@ -179,27 +206,7 @@ startIndexer({
 })
 
 // 7. Run backfill in background
-runBackfill({
-  pdsUrl: relayHttpUrl(config.relay),
-  plcUrl: config.plc,
-  collections: collectionSet,
-  config: config.backfill,
-})
-  .then((recordCount) => {
-    log('[main] Backfill complete, rebuilding FTS indexes...')
-    return rebuildAllIndexes(collections).then(() => recordCount)
-  })
-  .then((recordCount) => {
-    log('[main] FTS indexes ready')
-    if (recordCount > 0) {
-      logMemory('after-backfill')
-      log('[main] Restarting to reclaim memory...')
-      process.exit(1)
-    }
-  })
-  .catch((err) => {
-    console.error('[main] Backfill error:', err.message)
-  })
+runBackfillAndRestart()
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
