@@ -181,9 +181,10 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
       throw httpErr
     }
 
-    const carBytes = new Uint8Array(await res.arrayBuffer())
+    let carBytes: Uint8Array | null = new Uint8Array(await res.arrayBuffer())
     carSizeBytes = carBytes.length
-    const { roots, blocks } = parseCarFrame(carBytes)
+    let { roots, blocks }: { roots: string[]; blocks: Map<string, Uint8Array> | null } = parseCarFrame(carBytes)
+    carBytes = null // free CAR bytes before bulk insert
 
     // Decode commit to get MST root
     const rootData = blocks.get(roots[0])
@@ -217,6 +218,7 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
         })
       }
     }
+    blocks = null // free block map before bulk insert
 
     // Delete existing records for this DID before re-importing so deletions are reflected
     for (const col of collections) {
