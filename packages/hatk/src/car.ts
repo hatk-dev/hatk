@@ -1,9 +1,28 @@
-// CAR (Content Addressable aRchive) parser from scratch
-// CAR files bundle content-addressed blocks — used in firehose events
+/**
+ * CAR (Content Addressable aRchive) parser.
+ *
+ * CAR files bundle content-addressed blocks into a single binary container.
+ * They're used by the AT Protocol firehose (`com.atproto.sync.getRepo`) to
+ * deliver entire repos and by commit events to deliver individual changes.
+ *
+ * Format: `varint(headerLen) | CBOR(header) | block*`
+ * Each block: `varint(blockLen) | CID | data`
+ *
+ * @see https://ipld.io/specs/transport/car/carv1/
+ * @module
+ */
 
 import { cborDecode } from './cbor.ts'
 import { cidToString, readVarint } from './cid.ts'
 
+/**
+ * Parses a CID (Content Identifier) from raw bytes at the given offset.
+ *
+ * Handles both CIDv0 (bare SHA-256 multihash, starts with `0x12`) and
+ * CIDv1 (version + codec + multihash with varint-encoded lengths).
+ *
+ * @returns A tuple of `[cidBytes, nextOffset]`
+ */
 function parseCidFromBytes(bytes: Uint8Array, offset: number): [Uint8Array, number] {
   const firstByte = bytes[offset]
 
@@ -30,6 +49,19 @@ function parseCidFromBytes(bytes: Uint8Array, offset: number): [Uint8Array, numb
   return [bytes.slice(offset, pos), pos]
 }
 
+/**
+ * Parses a CARv1 binary frame into its root CIDs and block map.
+ *
+ * @param carBytes - Raw CAR file bytes (e.g. from `getRepo` or a firehose commit)
+ * @returns `roots` — ordered list of root CID strings; `blocks` — map of CID string → raw block data
+ *
+ * @example
+ * ```ts
+ * const car = new Uint8Array(await res.arrayBuffer())
+ * const { roots, blocks } = parseCarFrame(car)
+ * const commitData = blocks.get(roots[0])
+ * ```
+ */
 export function parseCarFrame(carBytes: Uint8Array): {
   roots: string[]
   blocks: Map<string, Uint8Array>

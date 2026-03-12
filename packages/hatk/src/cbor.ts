@@ -1,16 +1,51 @@
-// CBOR decoder from scratch (RFC 8949)
-// Returns { value, offset } so we can split firehose frames
-// (two concatenated CBOR values: header + body)
+/**
+ * Minimal CBOR (RFC 8949) decoder with DAG-CBOR CID support.
+ *
+ * Returns `{ value, offset }` so callers can decode concatenated CBOR values —
+ * the AT Protocol firehose sends frames as two back-to-back CBOR items
+ * (header + body).
+ *
+ * DAG-CBOR tag 42 (CID links) are decoded as `{ $link: "bafy..." }` objects,
+ * matching the convention used by the AT Protocol.
+ *
+ * @see https://www.rfc-editor.org/rfc/rfc8949 — CBOR spec
+ * @see https://ipld.io/specs/codecs/dag-cbor/spec/ — DAG-CBOR spec
+ * @module
+ */
 
 import { cidToString } from './cid.ts'
 
+/** CBOR tag number for DAG-CBOR CID links. */
 const CBOR_TAG_CID = 42
 
 interface DecodeResult {
+  /** The decoded JavaScript value. */
   value: any
+  /** Byte offset immediately after the decoded value — use as `startOffset` to decode the next item. */
   offset: number
 }
 
+/**
+ * Decodes a single CBOR value from a byte array.
+ *
+ * Supports all major types: unsigned/negative integers, byte/text strings,
+ * arrays, maps, tags (with special handling for CID tag 42), and simple
+ * values (true, false, null).
+ *
+ * @param bytes - Raw CBOR bytes
+ * @param startOffset - Byte position to start decoding from (default `0`)
+ * @returns The decoded value and the offset of the next byte after it
+ *
+ * @example
+ * ```ts
+ * // Decode a single value
+ * const { value } = cborDecode(bytes)
+ *
+ * // Decode two concatenated values (firehose frame)
+ * const { value: header, offset } = cborDecode(frameBytes)
+ * const { value: body } = cborDecode(frameBytes, offset)
+ * ```
+ */
 export function cborDecode(bytes: Uint8Array, startOffset = 0): DecodeResult {
   let offset = startOffset
 
