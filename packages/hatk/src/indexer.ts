@@ -30,7 +30,7 @@ const pendingBuffers = new Map<string, WriteBuffer[]>()
 
 // Track in-flight backfills to avoid duplicates
 const backfillInFlight = new Set<string>()
-const MAX_CONCURRENT_BACKFILLS = 5
+const pendingReschedule = new Set<string>()
 
 // In-memory cache of repo status to avoid flooding the DB read queue
 const repoStatusCache = new Map<string, string>()
@@ -41,6 +41,7 @@ let indexerSignalCollections: Set<string>
 let indexerPinnedRepos: Set<string> | null = null
 let indexerFetchTimeout: number
 let indexerMaxRetries: number
+let maxConcurrentBackfills = 3
 
 async function flushBuffer(): Promise<void> {
   if (buffer.length === 0) return
@@ -130,6 +131,16 @@ function bufferWrite(item: WriteBuffer): void {
 
 export async function triggerAutoBackfill(did: string, attempt = 0): Promise<void> {
   if (backfillInFlight.has(did)) return
+  if (backfillInFlight.size >= maxConcurrentBackfills) {
+    if (!pendingReschedule.has(did)) {
+      pendingReschedule.add(did)
+      setTimeout(() => {
+        pendingReschedule.delete(did)
+        triggerAutoBackfill(did, attempt)
+      }, 10_000)
+    }
+    return
+  }
   backfillInFlight.add(did)
   pendingBuffers.set(did, [])
   if (attempt === 0) await setRepoStatus(did, 'pending')
@@ -192,6 +203,7 @@ interface IndexerOpts {
   cursor?: string | null
   fetchTimeout: number
   maxRetries: number
+  parallelism?: number
   ftsRebuildInterval?: number
 }
 
@@ -226,6 +238,7 @@ export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
   indexerPinnedRepos = opts.pinnedRepos || null
   indexerFetchTimeout = fetchTimeout
   indexerMaxRetries = opts.maxRetries
+  maxConcurrentBackfills = opts.parallelism ?? 3
 
   // Pre-populate repo status cache from DB so non-signal updates
   // (e.g. profile changes) are processed for already-tracked DIDs
@@ -306,7 +319,7 @@ function processMessage(bytes: Uint8Array, collections: Set<string>): void {
   }
 
   if (hasSignalOp && (!indexerPinnedRepos || indexerPinnedRepos.has(did))) {
-    if (repoStatus === null && backfillInFlight.size < MAX_CONCURRENT_BACKFILLS) {
+    if (repoStatus === null && backfillInFlight.size < maxConcurrentBackfills) {
       repoStatusCache.set(did, 'pending')
       triggerAutoBackfill(did)
     } else if (repoStatus === null) {

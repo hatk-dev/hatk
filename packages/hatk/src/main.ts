@@ -164,6 +164,7 @@ startIndexer({
   cursor,
   fetchTimeout: config.backfill.fetchTimeout,
   maxRetries: config.backfill.maxRetries,
+  parallelism: config.backfill.parallelism,
   ftsRebuildInterval: config.ftsRebuildInterval,
 })
 
