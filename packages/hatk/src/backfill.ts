@@ -1,4 +1,4 @@
-import { parseCarFrame } from './car.ts'
+import { parseCarFrame, type LazyBlockMap } from './car.ts'
 import { cborDecode } from './cbor.ts'
 import { walkMst } from './mst.ts'
 import {
@@ -181,10 +181,9 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
       throw httpErr
     }
 
-    let carBytes: Uint8Array | null = new Uint8Array(await res.arrayBuffer())
+    const carBytes = new Uint8Array(await res.arrayBuffer())
     carSizeBytes = carBytes.length
-    let { roots, blocks }: { roots: string[]; blocks: Map<string, Uint8Array> | null } = parseCarFrame(carBytes)
-    carBytes = null // free CAR bytes before bulk insert
+    let { roots, blocks }: { roots: string[]; blocks: LazyBlockMap | null } = parseCarFrame(carBytes)
 
     // Decode commit to get MST root
     const rootData = blocks.get(roots[0])
@@ -216,8 +215,9 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
       const collection = entry.path.split('/')[0]
       if (!collections.has(collection)) continue
 
-      const blockData = blocks.get(entry.cid)
+      const blockData = blocks!.get(entry.cid)
       if (!blockData) continue
+      blocks!.delete(entry.cid) // free block data as we go
 
       try {
         const { value: record } = cborDecode(blockData)
@@ -240,7 +240,8 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
         })
       }
     }
-    blocks = null // free block map
+    blocks!.free()
+    blocks = null
     if (chunk.length > 0) {
       count += await bulkInsertRecords(chunk)
     }

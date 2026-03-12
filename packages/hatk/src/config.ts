@@ -78,7 +78,7 @@ export function loadConfig(configPath: string): HatkConfig {
       signalCollections: backfillRaw.signalCollections || undefined,
       repos: env.BACKFILL_REPOS ? env.BACKFILL_REPOS.split(',').map((s) => s.trim()) : backfillRaw.repos || undefined,
       fullNetwork: env.BACKFILL_FULL_NETWORK ? env.BACKFILL_FULL_NETWORK === 'true' : backfillRaw.fullNetwork || false,
-      parallelism: parseInt(env.BACKFILL_PARALLELISM || '') || backfillRaw.parallelism || 5,
+      parallelism: parseInt(env.BACKFILL_PARALLELISM || '') || backfillRaw.parallelism || 3,
       fetchTimeout: parseInt(env.BACKFILL_FETCH_TIMEOUT || '') || backfillRaw.fetchTimeout || 300,
       maxRetries: parseInt(env.BACKFILL_MAX_RETRIES || '') || backfillRaw.maxRetries || 5,
     },
