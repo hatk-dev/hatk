@@ -252,6 +252,11 @@ export async function setRepoStatus(
   }
 }
 
+export async function getRepoRev(did: string): Promise<string | null> {
+  const rows = await all(`SELECT rev FROM _repos WHERE did = $1`, did)
+  return rows[0]?.rev ?? null
+}
+
 export async function getRepoRetryInfo(did: string): Promise<{ retryCount: number; retryAfter: number } | null> {
   const rows = await all(`SELECT retry_count, retry_after FROM _repos WHERE did = $1`, did)
   if (rows.length === 0) return null

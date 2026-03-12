@@ -1,9 +1,10 @@
-import { parseCarFrame, type LazyBlockMap } from './car.ts'
+import { parseCarStream } from './car.ts'
 import { cborDecode } from './cbor.ts'
 import { walkMst } from './mst.ts'
 import {
   setRepoStatus,
   getRepoStatus,
+  getRepoRev,
   getRepoRetryInfo,
   listRetryEligibleRepos,
   listPendingRepos,
@@ -162,6 +163,7 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
   let error: string | undefined
   let resolvedPds: string | undefined
   let resolvedHandle: string | null = null
+  let resolvedSince: string | null = null
   let retryCount: number | undefined
   let retryAfter: number | undefined
 
@@ -172,18 +174,26 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
     resolvedPds = pdsUrl
     resolvedHandle = handle
     timeout = setTimeout(() => controller.abort(), fetchTimeout * 1000)
-    const res = await fetch(`${resolvedPds}/xrpc/com.atproto.sync.getRepo?did=${encodeURIComponent(did)}`, {
-      signal: controller.signal,
-    })
+    let lastRev = await getRepoRev(did)
+    const baseUrl = `${resolvedPds}/xrpc/com.atproto.sync.getRepo?did=${encodeURIComponent(did)}`
+    let repoUrl = lastRev ? `${baseUrl}&since=${encodeURIComponent(lastRev)}` : baseUrl
+    let res = await fetch(repoUrl, { signal: controller.signal })
+
+    // If the PDS rejected our `since` rev (compacted history), fall back to full import
+    if (res.status === 400 && lastRev) {
+      lastRev = null
+      res = await fetch(baseUrl, { signal: controller.signal })
+    }
+
     if (!res.ok) {
       const httpErr = new Error(`getRepo failed for ${did}: ${res.status}`) as Error & { httpStatus: number }
       httpErr.httpStatus = res.status
       throw httpErr
     }
 
-    const carBytes = new Uint8Array(await res.arrayBuffer())
-    carSizeBytes = carBytes.length
-    let { roots, blocks }: { roots: string[]; blocks: LazyBlockMap | null } = parseCarFrame(carBytes)
+    resolvedSince = lastRev
+    const { roots, blocks, byteLength } = await parseCarStream(res.body!)
+    carSizeBytes = byteLength
 
     // Decode commit to get MST root
     const rootData = blocks.get(roots[0])
@@ -194,16 +204,19 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
     const entries = walkMst(blocks, commit.data.$link)
 
     // Delete existing records for this DID before re-importing so deletions are reflected
-    for (const col of collections) {
-      const schema = getSchema(col)
-      if (!schema) continue
-      await runSQL(`DELETE FROM ${schema.tableName} WHERE did = $1`, did)
-      for (const child of schema.children) {
-        await runSQL(`DELETE FROM ${child.tableName} WHERE parent_did = $1`, did)
-      }
-      for (const union of schema.unions) {
-        for (const branch of union.branches) {
-          await runSQL(`DELETE FROM ${branch.tableName} WHERE parent_did = $1`, did)
+    // Only on full imports (no since) — diff CARs only contain changes
+    if (!lastRev) {
+      for (const col of collections) {
+        const schema = getSchema(col)
+        if (!schema) continue
+        await runSQL(`DELETE FROM ${schema.tableName} WHERE did = $1`, did)
+        for (const child of schema.children) {
+          await runSQL(`DELETE FROM ${child.tableName} WHERE parent_did = $1`, did)
+        }
+        for (const union of schema.unions) {
+          for (const branch of union.branches) {
+            await runSQL(`DELETE FROM ${branch.tableName} WHERE parent_did = $1`, did)
+          }
         }
       }
     }
@@ -215,9 +228,9 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
       const collection = entry.path.split('/')[0]
       if (!collections.has(collection)) continue
 
-      const blockData = blocks!.get(entry.cid)
+      const blockData = blocks.get(entry.cid)
       if (!blockData) continue
-      blocks!.delete(entry.cid) // free block data as we go
+      blocks.delete(entry.cid) // free block data as we go
 
       try {
         const { value: record } = cborDecode(blockData)
@@ -240,8 +253,6 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
         })
       }
     }
-    blocks!.free()
-    blocks = null
     if (chunk.length > 0) {
       count += await bulkInsertRecords(chunk)
     }
@@ -273,6 +284,8 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
       error,
       pds_url: resolvedPds,
       car_size_bytes: carSizeBytes,
+      import_mode: carSizeBytes !== undefined ? (resolvedSince ? 'diff' : 'full') : undefined,
+      since_rev: resolvedSince,
       retry_count: retryCount,
       retry_after: retryAfter,
       permanent_failure: retryCount === 999 ? true : undefined,

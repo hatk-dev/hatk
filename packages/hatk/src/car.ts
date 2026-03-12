@@ -92,6 +92,129 @@ export class LazyBlockMap {
 }
 
 /**
+ * Parses a CARv1 stream incrementally from a `ReadableStream`.
+ *
+ * Instead of buffering the entire CAR into a single ArrayBuffer, this reads
+ * chunks from the stream and parses blocks as they arrive. Each block's data
+ * is `.slice()`d into its own small `Uint8Array`, allowing V8 to GC individual
+ * blocks as they're consumed during the MST walk.
+ *
+ * This is critical for backfill where multiple workers download 30-90MB CARs
+ * concurrently — buffered downloads cause OOMs because `ArrayBuffer` memory
+ * is "external" to V8's heap and not controlled by `--max-old-space-size`.
+ *
+ * @param body - The response body stream (e.g. `res.body` from `fetch()`)
+ * @returns `roots` — root CID strings; `blocks` — map of CID → block data; `byteLength` — total bytes read
+ */
+export async function parseCarStream(body: ReadableStream<Uint8Array>): Promise<{
+  roots: string[]
+  blocks: Map<string, Uint8Array>
+  byteLength: number
+}> {
+  const reader = body.getReader()
+
+  // Growable buffer with position tracking. We reuse a single allocation and
+  // compact (shift data to front) when the read position passes the midpoint,
+  // avoiding per-chunk allocations and subarray references that pin old memory.
+  let buf = new Uint8Array(64 * 1024)
+  let pos = 0 // read cursor
+  let len = 0 // bytes of valid data in buf
+  let byteLength = 0
+
+  // Ensure at least `need` bytes are available at buf[pos..pos+need)
+  async function fill(need: number): Promise<boolean> {
+    while (len - pos < need) {
+      const { done, value } = await reader.read()
+      if (done) return (len - pos) >= need
+      byteLength += value.length
+
+      // Compact: shift remaining data to front when read cursor passes midpoint
+      if (pos > 0 && pos > buf.length >>> 1) {
+        buf.copyWithin(0, pos, len)
+        len -= pos
+        pos = 0
+      }
+
+      // Grow if needed
+      const required = len + value.length
+      if (required > buf.length) {
+        const newBuf = new Uint8Array(Math.max(required, buf.length * 2))
+        newBuf.set(buf.subarray(0, len))
+        buf = newBuf
+      }
+
+      buf.set(value, len)
+      len += value.length
+    }
+    return true
+  }
+
+  function consume(n: number): void {
+    pos += n
+  }
+
+  // Read a varint starting at buf[pos]
+  function readVarintFromBuf(): [number, number] {
+    let value = 0
+    let shift = 0
+    let p = pos
+    while (p < len) {
+      const byte = buf[p++]
+      value |= (byte & 0x7f) << shift
+      if ((byte & 0x80) === 0) return [value, p - pos]
+      shift += 7
+      if (shift > 35) throw new Error('Varint too long')
+    }
+    throw new Error('Unexpected end of varint')
+  }
+
+  // Parse header: varint(headerLen) + CBOR(header)
+  if (!(await fill(1))) throw new Error('Empty CAR stream')
+
+  // Prefetch up to 10 bytes for the varint; readVarintFromBuf bounds to `len`
+  await fill(10)
+  const [headerLen, headerVarintSize] = readVarintFromBuf()
+  consume(headerVarintSize)
+
+  if (!(await fill(headerLen))) throw new Error('Truncated CAR header')
+  // .slice() copies out of the reusable buffer
+  const headerSlice = buf.slice(pos, pos + headerLen)
+  const { value: header } = cborDecode(headerSlice)
+  consume(headerLen)
+
+  const roots = (header.roots || []).map((root: any) => root?.$link ?? cidToString(root))
+
+  // Parse blocks
+  const blocks = new Map<string, Uint8Array>()
+
+  while (true) {
+    if (!(await fill(1))) break
+
+    // Prefetch up to 10 bytes for the varint; readVarintFromBuf bounds to `len`
+    await fill(10)
+    const [blockLen, blockVarintSize] = readVarintFromBuf()
+    consume(blockVarintSize)
+    if (blockLen === 0) break
+
+    if (!(await fill(blockLen))) throw new Error('Truncated CAR block')
+
+    const [cidBytes, afterCid] = parseCidFromBytes(buf, pos)
+    const cid = cidToString(cidBytes)
+    const cidLen = afterCid - pos
+    // .slice() creates an independent copy — the buffer can be reused
+    const data = buf.slice(afterCid, afterCid + blockLen - cidLen)
+
+    blocks.set(cid, data)
+    consume(blockLen)
+  }
+
+  reader.releaseLock()
+  // Release the internal buffer
+  buf = null!
+  return { roots, blocks, byteLength }
+}
+
+/**
  * Parses a CARv1 binary frame into its root CIDs and a lazy block map.
  *
  * The block map stores byte offsets into `carBytes` rather than copying data,
