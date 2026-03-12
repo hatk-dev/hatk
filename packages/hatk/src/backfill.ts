@@ -192,11 +192,25 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
     }
 
     resolvedSince = lastRev
-    const { roots, blocks, byteLength } = await parseCarStream(res.body!)
+    let { roots, blocks, byteLength } = await parseCarStream(res.body!)
     carSizeBytes = byteLength
 
-    // Decode commit to get MST root
-    const rootData = blocks.get(roots[0])
+    // Decode commit to get MST root — if the diff CAR is missing the root block,
+    // fall back to a full import (the PDS compacted past our `since` rev)
+    let rootData = blocks.get(roots[0])
+    if (!rootData && lastRev) {
+      lastRev = null
+      resolvedSince = null
+      res = await fetch(baseUrl, { signal: controller.signal })
+      if (!res.ok) {
+        const httpErr = new Error(`getRepo failed for ${did}: ${res.status}`) as Error & { httpStatus: number }
+        httpErr.httpStatus = res.status
+        throw httpErr
+      }
+      ;({ roots, blocks, byteLength } = await parseCarStream(res.body!))
+      carSizeBytes = byteLength
+      rootData = blocks.get(roots[0])
+    }
     if (!rootData) throw new Error(`No root block for ${did}`)
     const { value: commit } = cborDecode(rootData)
 

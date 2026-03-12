@@ -195,3 +195,9 @@ runBackfill({
   .catch((err) => {
     console.error('[main] Backfill error:', err.message)
   })
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  log('[main] Received SIGTERM, shutting down...')
+  process.exit(0)
+})
