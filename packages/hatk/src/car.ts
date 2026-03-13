@@ -125,7 +125,7 @@ export async function parseCarStream(body: ReadableStream<Uint8Array>): Promise<
   async function fill(need: number): Promise<boolean> {
     while (len - pos < need) {
       const { done, value } = await reader.read()
-      if (done) return (len - pos) >= need
+      if (done) return len - pos >= need
       byteLength += value.length
 
       // Compact: shift remaining data to front when read cursor passes midpoint

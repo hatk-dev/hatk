@@ -28,7 +28,9 @@ import { initSetup } from './setup.ts'
 
 function logMemory(phase: string): void {
   const mem = process.memoryUsage()
-  log(`[mem] ${phase}: heap=${Math.round(mem.heapUsed / 1024 / 1024)}MB rss=${Math.round(mem.rss / 1024 / 1024)}MB external=${Math.round(mem.external / 1024 / 1024)}MB arrayBuffers=${Math.round(mem.arrayBuffers / 1024 / 1024)}MB`)
+  log(
+    `[mem] ${phase}: heap=${Math.round(mem.heapUsed / 1024 / 1024)}MB rss=${Math.round(mem.rss / 1024 / 1024)}MB external=${Math.round(mem.external / 1024 / 1024)}MB arrayBuffers=${Math.round(mem.arrayBuffers / 1024 / 1024)}MB`,
+  )
 }
 
 const configPath = process.argv[2] || 'hatk.config.ts'
@@ -100,7 +102,6 @@ if (config.database !== ':memory:') {
 await initDatabase(config.database, schemas, ddlStatements)
 logMemory('after-db-init')
 log(`[main] DuckDB initialized (${config.database === ':memory:' ? 'in-memory' : config.database})`)
-
 
 // 3b. Run setup hooks (after DB init, before server)
 await initSetup(resolve(configDir, 'setup'))

@@ -29,7 +29,6 @@ interface BackfillOpts {
   config: BackfillConfig
 }
 
-
 interface PdsResolution {
   /** The PDS service endpoint URL from the DID document. */
   pds: string
@@ -82,7 +81,6 @@ async function resolvePds(did: string): Promise<PdsResolution> {
   return result
 }
 
-
 /**
  * Paginates through all active repos on a relay/PDS using `com.atproto.sync.listRepos`.
  * Yields `{ did, rev }` for each active repo. Skips deactivated repos.
@@ -128,7 +126,6 @@ async function* listReposByCollection(
     cursor = data.cursor
   }
 }
-
 
 /**
  * Downloads and indexes a single user's repo via `com.atproto.sync.getRepo`.
@@ -307,7 +304,6 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
   }
 }
 
-
 /**
  * Processes items concurrently with a fixed number of workers.
  * Workers pull from a shared index so the pool stays saturated even when
@@ -335,7 +331,6 @@ async function runWorkerPool<T>(items: T[], parallelism: number, fn: (item: T) =
   const workers = Array.from({ length: Math.min(parallelism, items.length) }, () => worker())
   await Promise.all(workers)
 }
-
 
 /**
  * Orchestrates a full backfill run: enumerate repos, filter to pending, download, and index.

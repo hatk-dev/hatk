@@ -1554,4 +1554,3 @@ export async function filterTakendownDids(dids: string[]): Promise<Set<string>> 
   const rows = await all(`SELECT did FROM _repos WHERE did IN (${placeholders}) AND status = 'takendown'`, ...dids)
   return new Set(rows.map((r: any) => r.did))
 }
-

@@ -89,7 +89,7 @@ export function seed<R extends Record<string, unknown> = Record<string, unknown>
     collection: K,
     record: R[K] extends Record<string, unknown> ? R[K] : Record<string, unknown>,
     opts: { rkey: string },
-  ): Promise<{ uri: string; cid: string }> {
+  ): Promise<{ uri: string; cid: string; commit: { cid: string; rev: string }; validationStatus: string }> {
     const error = validateRecord(lexiconArray, collection, record)
     if (error) {
       throw new Error(
@@ -112,9 +112,14 @@ export function seed<R extends Record<string, unknown> = Record<string, unknown>
     if (!res.ok) {
       throw new Error(`[seed] [${session.handle}] failed to create ${collection}: ${await res.text()}`)
     }
-    const { uri, cid } = (await res.json()) as { uri: string; cid: string }
-    console.log(`[seed] [${session.handle}] ${collection} → ${uri}`)
-    return { uri, cid }
+    const result = (await res.json()) as {
+      uri: string
+      cid: string
+      commit: { cid: string; rev: string }
+      validationStatus: string
+    }
+    console.log(`[seed] [${session.handle}] ${collection} → ${result.uri}`)
+    return result
   }
 
   /** Upload a file to the PDS as a blob. MIME type is inferred from the file extension. */

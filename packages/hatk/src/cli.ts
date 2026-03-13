@@ -580,6 +580,14 @@ export default defineConfig({
                 properties: {
                   uri: { type: 'string', format: 'at-uri' },
                   cid: { type: 'string', format: 'cid' },
+                  commit: {
+                    type: 'object',
+                    properties: {
+                      cid: { type: 'string', format: 'cid' },
+                      rev: { type: 'string' },
+                    },
+                  },
+                  validationStatus: { type: 'string' },
                 },
               },
             },
@@ -651,6 +659,14 @@ export default defineConfig({
                 properties: {
                   uri: { type: 'string', format: 'at-uri' },
                   cid: { type: 'string', format: 'cid' },
+                  commit: {
+                    type: 'object',
+                    properties: {
+                      cid: { type: 'string', format: 'cid' },
+                      rev: { type: 'string' },
+                    },
+                  },
+                  validationStatus: { type: 'string' },
                 },
               },
             },
