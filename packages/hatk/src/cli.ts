@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { mkdirSync, writeFileSync, existsSync, unlinkSync, readdirSync, readFileSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import { resolve, join, dirname } from 'node:path'
 import { execSync, spawn } from 'node:child_process'
-import { loadLexicons } from './schema.ts'
+import { loadLexicons, discoverCollections, buildSchemas } from './schema.ts'
 import { loadConfig } from './config.ts'
 
 const args = process.argv.slice(2)
@@ -1961,10 +1961,20 @@ a {
     console.error('No database file configured (database is :memory:)')
     process.exit(1)
   }
+
+  // Init DB from lexicons if it doesn't exist yet
   if (!existsSync(config.database)) {
-    console.error(`Database not found: ${config.database}`)
-    console.error('Run "hatk dev" first to create it.')
-    process.exit(1)
+    const configDir = resolve('.')
+    const lexicons = loadLexicons(resolve(configDir, 'lexicons'))
+    const collections = config.collections.length > 0 ? config.collections : discoverCollections(lexicons)
+    if (collections.length === 0) {
+      console.error('No record collections found. Add record lexicons to the lexicons/ directory.')
+      process.exit(1)
+    }
+    mkdirSync(dirname(config.database), { recursive: true })
+    const { initDatabase } = await import('./db.ts')
+    const { schemas, ddlStatements } = buildSchemas(lexicons, collections)
+    await initDatabase(config.database, schemas, ddlStatements)
   }
 
   const { DuckDBInstance } = await import('@duckdb/node-api')

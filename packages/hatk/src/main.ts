@@ -7,8 +7,7 @@ import {
   loadLexicons,
   storeLexicons,
   discoverCollections,
-  generateTableSchema,
-  generateCreateTableSQL,
+  buildSchemas,
 } from './schema.ts'
 import { discoverViews } from './views.ts'
 import { initDatabase, getCursor, querySQL } from './db.ts'
@@ -68,31 +67,13 @@ log(`[main] Loaded config: ${collections.length} collections`)
 discoverViews()
 await loadOnLoginHook(resolve(configDir, 'hooks'))
 
-const schemas = []
-const ddlStatements = []
-
-for (const nsid of collections) {
-  const lexicon = lexicons.get(nsid)
-  if (!lexicon) {
-    log(`[main] No lexicon found for ${nsid}, using generic JSON storage`)
-    const genericDDL = `CREATE TABLE IF NOT EXISTS "${nsid}" (
-      uri TEXT PRIMARY KEY,
-      cid TEXT,
-      did TEXT NOT NULL,
-      indexed_at TIMESTAMP NOT NULL,
-      data JSON
-    );
-    CREATE INDEX IF NOT EXISTS idx_${nsid.replace(/\./g, '_')}_indexed ON "${nsid}"(indexed_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_${nsid.replace(/\./g, '_')}_author ON "${nsid}"(did);`
-    schemas.push({ collection: nsid, tableName: `"${nsid}"`, columns: [], refColumns: [], children: [], unions: [] })
-    ddlStatements.push(genericDDL)
-    continue
+const { schemas, ddlStatements } = buildSchemas(lexicons, collections)
+for (const s of schemas) {
+  if (s.columns.length === 0) {
+    log(`[main] No lexicon found for ${s.collection}, using generic JSON storage`)
+  } else {
+    log(`[main] Schema for ${s.collection}: ${s.columns.length} columns, ${s.unions.length} unions`)
   }
-
-  const schema = generateTableSchema(nsid, lexicon, lexicons)
-  schemas.push(schema)
-  ddlStatements.push(generateCreateTableSQL(schema))
-  log(`[main] Schema for ${nsid}: ${schema.columns.length} columns, ${schema.unions.length} unions`)
 }
 
 // 3. Ensure data directory exists and initialize DuckDB

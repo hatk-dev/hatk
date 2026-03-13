@@ -430,3 +430,39 @@ export function generateCreateTableSQL(schema: TableSchema): string {
 
   return [createTable, ...indexes, ...childDDL].join('\n')
 }
+
+/**
+ * Build table schemas and DDL from lexicons and collections.
+ * Shared by main.ts (server boot) and cli.ts (hatk schema command).
+ */
+export function buildSchemas(
+  lexicons: Map<string, any>,
+  collections: string[],
+): { schemas: TableSchema[]; ddlStatements: string[] } {
+  const schemas: TableSchema[] = []
+  const ddlStatements: string[] = []
+
+  for (const nsid of collections) {
+    const lexicon = lexicons.get(nsid)
+    if (!lexicon) {
+      const genericDDL = `CREATE TABLE IF NOT EXISTS "${nsid}" (
+      uri TEXT PRIMARY KEY,
+      cid TEXT,
+      did TEXT NOT NULL,
+      indexed_at TIMESTAMP NOT NULL,
+      data JSON
+    );
+    CREATE INDEX IF NOT EXISTS idx_${nsid.replace(/\./g, '_')}_indexed ON "${nsid}"(indexed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_${nsid.replace(/\./g, '_')}_author ON "${nsid}"(did);`
+      schemas.push({ collection: nsid, tableName: `"${nsid}"`, columns: [], refColumns: [], children: [], unions: [] })
+      ddlStatements.push(genericDDL)
+      continue
+    }
+
+    const schema = generateTableSchema(nsid, lexicon, lexicons)
+    schemas.push(schema)
+    ddlStatements.push(generateCreateTableSQL(schema))
+  }
+
+  return { schemas, ddlStatements }
+}
