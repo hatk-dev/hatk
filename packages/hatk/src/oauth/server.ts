@@ -33,7 +33,7 @@ import {
 } from './db.ts'
 import { emit } from '../logger.ts'
 import { querySQL } from '../db.ts'
-import { fireOnLoginHook } from './hooks.ts'
+import { fireOnLoginHook } from '../hooks.ts'
 
 const SERVER_KEY_KID = 'appview-oauth-key'
 

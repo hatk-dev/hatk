@@ -23,7 +23,7 @@ import { validateLexicons } from '@bigmoves/lexicon'
 import { relayHttpUrl } from './config.ts'
 import { runBackfill } from './backfill.ts'
 import { initOAuth } from './oauth/server.ts'
-import { loadOnLoginHook } from './oauth/hooks.ts'
+import { loadOnLoginHook } from './hooks.ts'
 import { initSetup } from './setup.ts'
 
 function logMemory(phase: string): void {

@@ -1,3 +1,31 @@
+/**
+ * Label system for applying moderation labels to records as they are indexed.
+ *
+ * Place label modules in the `labels/` directory. Each module default-exports
+ * an object with a `definition` (label metadata) and/or an `evaluate` function
+ * (rule that returns label values for a given record).
+ *
+ * @example
+ * ```ts
+ * // labels/nsfw.ts
+ * import type { LabelRuleContext } from '@hatk/hatk/labels'
+ *
+ * export default {
+ *   definition: {
+ *     identifier: 'nsfw',
+ *     severity: 'alert',
+ *     blurs: 'media',
+ *     defaultSetting: 'warn',
+ *     locales: [{ lang: 'en', name: 'NSFW', description: 'Not safe for work' }],
+ *   },
+ *
+ *   async evaluate(ctx: LabelRuleContext): Promise<string[]> {
+ *     if (ctx.record.value.nsfw === true) return ['nsfw']
+ *     return []
+ *   },
+ * }
+ * ```
+ */
 import { resolve } from 'node:path'
 import { readdirSync } from 'node:fs'
 import type { LabelDefinition } from './config.ts'
@@ -19,6 +47,7 @@ export interface LabelRuleContext {
   }
 }
 
+/** Internal representation of a loaded label rule module. */
 interface LabelRule {
   name: string
   evaluate: (ctx: LabelRuleContext) => Promise<string[]>
@@ -28,6 +57,15 @@ const rules: LabelRule[] = []
 let labelDefs: LabelDefinition[] = []
 let labelSrc = 'self'
 
+/**
+ * Discover and load label rule modules from the `labels/` directory.
+ *
+ * Each module should default-export an object with an optional `definition`
+ * (label metadata like severity and blur behavior) and an optional `evaluate`
+ * function that returns label values to apply to a record.
+ *
+ * @param labelsDir - Absolute path to the `labels/` directory
+ */
 export async function initLabels(labelsDir: string): Promise<void> {
   let files: string[]
   try {
@@ -65,6 +103,10 @@ export async function initLabels(labelsDir: string): Promise<void> {
   }
 }
 
+/**
+ * Evaluate all loaded label rules against a record and persist any resulting labels.
+ * Called after each record is indexed. Rule errors are logged but never block indexing.
+ */
 export async function runLabelRules(record: {
   uri: string
   cid: string
@@ -98,6 +140,12 @@ export async function runLabelRules(record: {
   }
 }
 
+/**
+ * Re-evaluate all label rules against every existing record in the given collections.
+ * Used by `/admin/rescan-labels` to apply new or updated rules retroactively.
+ *
+ * @returns Count of records scanned and new labels applied
+ */
 export async function rescanLabels(collections: string[]): Promise<{ scanned: number; labeled: number }> {
   const beforeRows = await querySQL(`SELECT COUNT(*) as count FROM _labels`)
   const beforeCount = Number(beforeRows[0]?.count || 0)
@@ -139,6 +187,7 @@ export async function rescanLabels(collections: string[]): Promise<{ scanned: nu
   return { scanned, labeled: afterCount - beforeCount }
 }
 
+/** Return all label definitions discovered during {@link initLabels}. */
 export function getLabelDefinitions(): LabelDefinition[] {
   return labelDefs
 }

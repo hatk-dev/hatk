@@ -8,6 +8,7 @@ import { runLabelRules } from './labels.ts'
 import { getLexiconArray } from './schema.ts'
 import { validateRecord } from '@bigmoves/lexicon'
 
+/** A record pending insertion, buffered to enable batched writes. */
 interface WriteBuffer {
   collection: string
   uri: string
@@ -43,6 +44,11 @@ let indexerFetchTimeout: number
 let indexerMaxRetries: number
 let maxConcurrentBackfills = 3
 
+/**
+ * Flush the write buffer — insert all buffered records, update the relay cursor,
+ * run label rules on inserted records, and trigger FTS rebuilds when the write
+ * threshold is reached. Emits a wide event with batch stats.
+ */
 async function flushBuffer(): Promise<void> {
   if (buffer.length === 0) return
   const elapsed = timer()
@@ -108,6 +114,7 @@ async function flushBuffer(): Promise<void> {
   }
 }
 
+/** Schedule a flush after FLUSH_INTERVAL_MS if one isn't already pending. */
 function scheduleFlush(): void {
   if (flushTimer) return
   flushTimer = setTimeout(async () => {
@@ -116,6 +123,7 @@ function scheduleFlush(): void {
   }, FLUSH_INTERVAL_MS)
 }
 
+/** Add a record to the write buffer. Flushes immediately if BATCH_SIZE is reached. */
 function bufferWrite(item: WriteBuffer): void {
   buffer.push(item)
   if (buffer.length >= BATCH_SIZE) {
@@ -129,6 +137,14 @@ function bufferWrite(item: WriteBuffer): void {
   }
 }
 
+/**
+ * Auto-backfill a DID's repo when first seen on the firehose.
+ *
+ * Fetches the full repo via CAR export, inserts all records, then replays any
+ * firehose events that arrived during the backfill. Concurrency is capped at
+ * `maxConcurrentBackfills`. Failed backfills retry with exponential delay up
+ * to `maxRetries`.
+ */
 export async function triggerAutoBackfill(did: string, attempt = 0): Promise<void> {
   if (backfillInFlight.has(did)) return
   if (backfillInFlight.size >= maxConcurrentBackfills) {
@@ -195,6 +211,7 @@ export async function triggerAutoBackfill(did: string, attempt = 0): Promise<voi
   }
 }
 
+/** Configuration for the firehose indexer. */
 interface IndexerOpts {
   relayUrl: string
   collections: Set<string>
@@ -207,7 +224,7 @@ interface IndexerOpts {
   ftsRebuildInterval?: number
 }
 
-// Periodic memory diagnostics
+/** Emit a memory diagnostics wide event every 30s for observability. */
 function startMemoryDiagnostics(): void {
   setInterval(() => {
     const mem = process.memoryUsage()
@@ -230,6 +247,16 @@ function startMemoryDiagnostics(): void {
   }, 30_000)
 }
 
+/**
+ * Connect to the AT Protocol relay firehose and begin indexing.
+ *
+ * Opens a WebSocket to `subscribeRepos`, processes commit messages synchronously
+ * on the event loop to minimize backpressure, and batches writes through
+ * {@link flushBuffer}. New DIDs trigger auto-backfill via {@link triggerAutoBackfill}.
+ * Reconnects automatically on disconnect after a 3s delay.
+ *
+ * @returns The WebSocket connection (for shutdown coordination)
+ */
 export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
   const { relayUrl, collections, cursor, fetchTimeout } = opts
   if (opts.ftsRebuildInterval != null) ftsRebuildInterval = opts.ftsRebuildInterval
@@ -283,6 +310,11 @@ export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
   return ws
 }
 
+/**
+ * Process a single firehose message. Decodes the CBOR header/body, filters
+ * for relevant collections, validates records against lexicons, and routes
+ * writes to the buffer (or pending buffer if the DID is mid-backfill).
+ */
 function processMessage(bytes: Uint8Array, collections: Set<string>): void {
   const header = cborDecode(bytes, 0)
   const body = cborDecode(bytes, header.offset)

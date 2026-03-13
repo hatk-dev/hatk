@@ -1,3 +1,23 @@
+/**
+ * XRPC method handler system for serving AT Protocol endpoints.
+ *
+ * Place handler modules in the `xrpc/` directory, nested by NSID segments
+ * (e.g. `xrpc/app/bsky/feed/getAuthorFeed.ts` → `app.bsky.feed.getAuthorFeed`).
+ * Each module default-exports a `{ handler }` function that receives an
+ * {@link XrpcContext} with database access, query params, pagination, and
+ * viewer auth.
+ *
+ * @example
+ * ```ts
+ * // xrpc/xyz/statusphere/getStatuses.ts
+ * import { defineXrpc } from '../../hatk.generated.ts'
+ *
+ * export default defineXrpc('xyz.statusphere.getStatuses', async (ctx) => {
+ *   const rows = await ctx.db.query('SELECT * FROM statusphere_status LIMIT ?', [ctx.limit])
+ *   return { statuses: rows }
+ * })
+ * ```
+ */
 import { resolve, relative } from 'node:path'
 import { readdirSync, statSync } from 'node:fs'
 import { log } from './logger.ts'
@@ -20,6 +40,7 @@ import type { Row, FlatRow } from './lex-types.ts'
 
 export type { Row, FlatRow }
 
+/** Thrown from XRPC handlers to return a 400 response with an error message. */
 export class InvalidRequestError extends Error {
   status = 400
   errorName?: string
@@ -28,6 +49,7 @@ export class InvalidRequestError extends Error {
     this.errorName = errorName
   }
 }
+/** Thrown from XRPC handlers to return a 404 response. */
 export class NotFoundError extends InvalidRequestError {
   status = 404
   constructor(message = 'Not found') {
@@ -35,6 +57,15 @@ export class NotFoundError extends InvalidRequestError {
   }
 }
 
+/**
+ * Context passed to every XRPC handler. Provides database access, pagination
+ * helpers, viewer auth, record resolution, full-text search, label queries,
+ * and blob URL generation.
+ *
+ * @typeParam P - Query parameter types (derived from lexicon)
+ * @typeParam Records - Map of collection NSID → record type (from generated types)
+ * @typeParam I - Input body type for procedure calls
+ */
 export interface XrpcContext<
   P = Record<string, string>,
   Records extends Record<string, any> = Record<string, any>,
@@ -70,6 +101,7 @@ export interface XrpcContext<
   ) => string | undefined
 }
 
+/** Internal representation of a loaded XRPC handler module. */
 interface XrpcHandler {
   name: string
   execute: (
@@ -83,10 +115,15 @@ interface XrpcHandler {
 
 let _relayUrl = ''
 
+/** Set the relay URL used for blob URL generation. Called once during boot. */
 export function configureRelay(relay: string) {
   _relayUrl = relay
 }
 
+/**
+ * Generate a CDN URL for a blob ref. Uses the PDS directly in local dev,
+ * or the Bluesky CDN (`cdn.bsky.app`) in production.
+ */
 export function blobUrl(
   did: string,
   ref: unknown,
@@ -103,6 +140,7 @@ export function blobUrl(
 
 const handlers = new Map<string, XrpcHandler>()
 
+/** Recursively collect .ts/.js files in a directory, skipping files prefixed with `_`. */
 function walkDir(dir: string): string[] {
   const results: string[] = []
   try {
@@ -118,6 +156,11 @@ function walkDir(dir: string): string[] {
   return results.sort()
 }
 
+/**
+ * Discover and load XRPC handler modules from the `xrpc/` directory.
+ * Directory nesting maps to NSID segments. Parameters are validated and
+ * coerced against the matching lexicon definition.
+ */
 export async function initXrpc(xrpcDir: string): Promise<void> {
   const files = walkDir(xrpcDir)
   if (files.length === 0) return
@@ -190,6 +233,7 @@ export async function initXrpc(xrpcDir: string): Promise<void> {
   }
 }
 
+/** Execute a registered XRPC handler by name. Returns null if no handler matches. */
 export async function executeXrpc(
   name: string,
   params: Record<string, string>,
@@ -203,6 +247,7 @@ export async function executeXrpc(
   return handler.execute(params, cursor, limit, viewer || null, input)
 }
 
+/** Return all registered XRPC method names. */
 export function listXrpc(): string[] {
   return Array.from(handlers.keys())
 }

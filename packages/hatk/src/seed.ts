@@ -1,18 +1,60 @@
+/**
+ * Test data seeding helpers for populating a local PDS.
+ *
+ * Place a seed script at `seeds/seed.ts`. It runs during `hatk dev` to create
+ * accounts and records against your local PDS. Records are validated against
+ * your project's lexicons before being written.
+ *
+ * @example
+ * ```ts
+ * // seeds/seed.ts
+ * import { seed } from '../hatk.generated.ts'
+ *
+ * const { createAccount, createRecord } = seed()
+ *
+ * const alice = await createAccount('alice.test')
+ * const bob = await createAccount('bob.test')
+ *
+ * await createRecord(
+ *   alice,
+ *   'xyz.statusphere.status',
+ *   { status: '👍', createdAt: new Date().toISOString() },
+ *   { rkey: 'status1' },
+ * )
+ * ```
+ */
 import { loadLexicons } from './schema.ts'
 import { validateRecord } from '@bigmoves/lexicon'
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 
+/** Authenticated PDS session — returned by {@link seed.createAccount}. */
 export type Session = { did: string; accessJwt: string; handle: string }
+
+/** AT Protocol blob reference, as returned by `com.atproto.repo.uploadBlob`. */
 export type BlobRef = { $type: 'blob'; ref: { $link: string }; mimeType: string; size: number }
+
+/** Options for the seed helper. All fields fall back to env vars or sensible defaults. */
 export type SeedOpts = { pds?: string; password?: string; lexicons?: string }
 
+/**
+ * Create a seed helper for populating a local PDS with test data.
+ *
+ * Returns `createAccount`, `createRecord`, and `uploadBlob` functions bound to
+ * the target PDS. Records are validated against the project's lexicons before
+ * being written. Generic parameter `R` maps collection NSIDs to their record types
+ * for type-safe seeding.
+ *
+ * @typeParam R - Map of collection NSID → record type (defaults to untyped)
+ * @param opts - PDS URL, password, and lexicon directory overrides
+ */
 export function seed<R extends Record<string, unknown> = Record<string, unknown>>(opts?: SeedOpts) {
   const pdsUrl = opts?.pds || process.env.PDS_URL || 'http://localhost:2583'
   const password = opts?.password || process.env.SEED_PASSWORD || 'password'
   const lexiconsDir = resolve(opts?.lexicons || 'lexicons')
   const lexiconArray = [...loadLexicons(lexiconsDir).values()]
 
+  /** Create a PDS account (or reuse an existing one) and return an authenticated session. */
   async function createAccount(handle: string): Promise<Session> {
     const res = await fetch(`${pdsUrl}/xrpc/com.atproto.server.createAccount`, {
       method: 'POST',
@@ -41,6 +83,7 @@ export function seed<R extends Record<string, unknown> = Record<string, unknown>
     return { ...session, handle }
   }
 
+  /** Validate a record against its lexicon and write it to the PDS via `putRecord`. */
   async function createRecord<K extends keyof R & string>(
     session: Session,
     collection: K,
@@ -74,6 +117,7 @@ export function seed<R extends Record<string, unknown> = Record<string, unknown>
     return { uri, cid }
   }
 
+  /** Upload a file to the PDS as a blob. MIME type is inferred from the file extension. */
   async function uploadBlob(session: Session, filePath: string): Promise<BlobRef> {
     const data = readFileSync(resolve(filePath))
     const ext = filePath.split('.').pop()?.toLowerCase() || ''
