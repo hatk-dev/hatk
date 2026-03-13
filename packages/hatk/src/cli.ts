@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { mkdirSync, writeFileSync, existsSync, unlinkSync, readdirSync, readFileSync } from 'node:fs'
 import { resolve, join } from 'node:path'
-import { execSync } from 'node:child_process'
+import { execSync, spawn } from 'node:child_process'
 import { loadLexicons } from './schema.ts'
 import { loadConfig } from './config.ts'
 
@@ -31,6 +31,29 @@ async function ensurePds() {
   }
   console.error('[dev] PDS failed to start')
   process.exit(1)
+}
+
+/** Spawn a long-running process and forward SIGINT/SIGTERM for clean shutdown. */
+function spawnForward(cmd: string, args: string[], env?: Record<string, string | undefined>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, {
+      stdio: 'inherit',
+      cwd: process.cwd(),
+      env: { ...process.env, ...env },
+    })
+    const onSignal = (sig: NodeJS.Signals) => {
+      child.kill(sig)
+    }
+    process.on('SIGINT', onSignal)
+    process.on('SIGTERM', onSignal)
+    child.on('close', (code, signal) => {
+      process.removeListener('SIGINT', onSignal)
+      process.removeListener('SIGTERM', onSignal)
+      if (signal === 'SIGINT' || signal === 'SIGTERM') process.exit(0)
+      if (code === 0 || code === null) resolve()
+      else reject(new Error(`Process exited with code ${code}`))
+    })
+  })
 }
 
 function runSeed() {
@@ -1734,22 +1757,13 @@ a {
   await ensurePds()
   runSeed()
 
-  try {
-    if (existsSync(resolve('svelte.config.js')) && existsSync(resolve('src/app.html'))) {
-      // SvelteKit project — vite dev starts the hatk server via the plugin
-      execSync('npx vite dev', { stdio: 'inherit', cwd: process.cwd() })
-    } else {
-      // No frontend — just run the hatk server directly
-      const mainPath = resolve(import.meta.dirname!, 'main.js')
-      execSync(`npx tsx ${mainPath} hatk.config.ts`, {
-        stdio: 'inherit',
-        cwd: process.cwd(),
-        env: { ...process.env, DEV_MODE: '1' },
-      })
-    }
-  } catch (e: any) {
-    if (e.signal === 'SIGINT' || e.signal === 'SIGTERM') process.exit(0)
-    throw e
+  if (existsSync(resolve('svelte.config.js')) && existsSync(resolve('src/app.html'))) {
+    // SvelteKit project — vite dev starts the hatk server via the plugin
+    await spawnForward('npx', ['vite', 'dev'])
+  } else {
+    // No frontend — just run the hatk server directly
+    const mainPath = resolve(import.meta.dirname!, 'main.js')
+    await spawnForward('npx', ['tsx', mainPath, 'hatk.config.ts'], { DEV_MODE: '1' })
   }
 } else if (command === 'format' || command === 'fmt') {
   try {
@@ -1962,13 +1976,8 @@ a {
     console.log()
   }
 } else if (command === 'start') {
-  try {
-    const mainPath = resolve(import.meta.dirname!, 'main.js')
-    execSync(`npx tsx ${mainPath} hatk.config.ts`, { stdio: 'inherit', cwd: process.cwd() })
-  } catch (e: any) {
-    if (e.signal === 'SIGINT' || e.signal === 'SIGTERM') process.exit(0)
-    throw e
-  }
+  const mainPath = resolve(import.meta.dirname!, 'main.js')
+  await spawnForward('npx', ['tsx', mainPath, 'hatk.config.ts'])
 } else {
   usage()
 }
