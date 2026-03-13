@@ -1336,6 +1336,47 @@ a {
     )
   }
 
+  writeFileSync(
+    join(dir, 'AGENTS.md'),
+    `# hatk project
+
+This is an AT Protocol application built with [hatk](https://github.com/hatk-dev/hatk).
+Read the project's lexicons in \`lexicons/\` to understand the data model.
+Types are generated from lexicons into \`hatk.generated.ts\` — never edit this file directly.
+
+## Project structure
+
+| Directory    | Purpose                                              |
+|-------------|------------------------------------------------------|
+| \`lexicons/\`  | AT Protocol lexicon schemas (JSON). Defines collections and XRPC methods |
+| \`feeds/\`     | Feed generators — each file exports a feed via \`defineFeed\` |
+| \`xrpc/\`      | XRPC method handlers — directory nesting maps to NSID segments |
+| \`labels/\`    | Label definitions and rules for moderation            |
+| \`setup/\`     | Boot-time scripts (run before server starts). Prefix with numbers for ordering |
+| \`seeds/\`     | Test data seeding scripts for local development       |
+| \`hooks/\`     | Lifecycle hooks (e.g. \`on-login.ts\`)                  |
+| \`og/\`        | OpenGraph image routes                                |
+| \`jobs/\`      | Periodic background tasks                             |
+| \`test/\`      | Test files (vitest). Run with \`hatk test\`              |
+| \`public/\`    | Static files served at the root                       |
+
+## Key files
+
+- \`hatk.config.ts\` — project configuration (see \`defineConfig\` for type info)
+- \`hatk.generated.ts\` — auto-generated types and typed helpers. Regenerate with \`hatk generate types\`
+
+## Commands
+
+Run \`npx hatk --help\` for the full list of commands.
+
+Use \`npx hatk generate\` to scaffold new feeds, xrpc handlers, labels, and lexicons
+rather than creating files manually. These generate files with the correct imports
+from \`hatk.generated.ts\`.
+
+After modifying lexicons, always run \`npx hatk generate types\` to update the generated types.
+`,
+  )
+
   console.log(`Created ${name}/`)
   console.log(`  hatk.config.ts`)
   console.log(`  lexicons/   — lexicon JSON files (core + your own)`)
