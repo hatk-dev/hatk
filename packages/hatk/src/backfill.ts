@@ -16,6 +16,8 @@ import {
 import type { BulkRecord } from './database/db.ts'
 import { emit, timer } from './logger.ts'
 import type { BackfillConfig } from './config.ts'
+import { validateRecord } from '@bigmoves/lexicon'
+import { getLexiconArray } from './database/schema.ts'
 
 /** Options passed to {@link runBackfill}. */
 interface BackfillOpts {
@@ -249,6 +251,18 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
 
         const rkey = entry.path.split('/').slice(1).join('/')
         const uri = `at://${did}/${collection}/${rkey}`
+
+        const validationError = validateRecord(getLexiconArray(), collection, record)
+        if (validationError) {
+          emit('backfill', 'validation_skip', {
+            uri,
+            collection,
+            path: validationError.path,
+            error: validationError.message,
+          })
+          continue
+        }
+
         chunk.push({ collection, uri, cid: entry.cid, did, record })
 
         if (chunk.length >= CHUNK_SIZE) {
