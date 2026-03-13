@@ -12,8 +12,8 @@ import {
   runSQL,
   getSchema,
   bulkInsertRecords,
-} from './db.ts'
-import type { BulkRecord } from './db.ts'
+} from './database/db.ts'
+import type { BulkRecord } from './database/db.ts'
 import { emit, timer } from './logger.ts'
 import type { BackfillConfig } from './config.ts'
 

@@ -6,7 +6,7 @@ import {
   reshapeRow,
   queryLabelsForUris,
   filterTakendownDids,
-} from './db.ts'
+} from './database/db.ts'
 import { blobUrl } from './xrpc.ts'
 import type { Row } from './lex-types.ts'
 

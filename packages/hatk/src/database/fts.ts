@@ -1,6 +1,7 @@
-import { getSchema, runSQL } from './db.ts'
+import { getSchema, runSQL, getSqlDialect } from './db.ts'
 import { getLexicon } from './schema.ts'
-import { emit, timer } from './logger.ts'
+import { emit, timer } from '../logger.ts'
+import type { SearchPort } from './ports.ts'
 
 interface SearchColumn {
   expr: string // SQL expression for the shadow table SELECT
@@ -21,7 +22,7 @@ function resolveRef(ref: string, lexicon: any): any | null {
  * Given a JSON column and its lexicon property definition, produce
  * search column expressions that extract searchable text.
  */
-function jsonSearchColumns(colName: string, prop: any, lexicon: any): SearchColumn[] {
+function jsonSearchColumns(colName: string, prop: any, lexicon: any, dialect: import('./dialect.ts').SqlDialect): SearchColumn[] {
   const columns: SearchColumn[] = []
   // Strip table qualifier (e.g. "t.artists" → "artists") for use in aliases
   const aliasBase = colName.includes('.') ? colName.split('.').pop()! : colName
@@ -34,7 +35,7 @@ function jsonSearchColumns(colName: string, prop: any, lexicon: any): SearchColu
     if (itemDef.type === 'string') {
       // array of strings — join into one text column
       columns.push({
-        expr: `list_string_agg(json_extract_string(${colName}, '$[*]'))`,
+        expr: dialect.jsonArrayStringAgg(colName, '$[*]'),
         alias: `${aliasBase}_text`,
       })
     } else if (itemDef.type === 'object' && itemDef.properties) {
@@ -42,7 +43,7 @@ function jsonSearchColumns(colName: string, prop: any, lexicon: any): SearchColu
       for (const [field, fieldProp] of Object.entries(itemDef.properties as Record<string, any>)) {
         if (fieldProp.type === 'string') {
           columns.push({
-            expr: `list_string_agg(json_extract_string(${colName}, '$[*].${field}'))`,
+            expr: dialect.jsonArrayStringAgg(colName, `$[*].${field}`),
             alias: `${aliasBase}_${field}`,
           })
         }
@@ -53,7 +54,7 @@ function jsonSearchColumns(colName: string, prop: any, lexicon: any): SearchColu
     for (const [field, fieldProp] of Object.entries(prop.properties as Record<string, any>)) {
       if ((fieldProp as any).type === 'string') {
         columns.push({
-          expr: `json_extract_string(${colName}, '$.${field}')`,
+          expr: dialect.jsonExtractString(colName, `$.${field}`),
           alias: `${aliasBase}_${field}`,
         })
       }
@@ -62,6 +63,20 @@ function jsonSearchColumns(colName: string, prop: any, lexicon: any): SearchColu
   // blob, union, unknown — skip (no useful text to extract)
 
   return columns
+}
+
+let searchPort: SearchPort | null = null
+
+export function setSearchPort(port: SearchPort | null): void {
+  searchPort = port
+}
+
+export function hasSearchPort(): boolean {
+  return searchPort !== null
+}
+
+export function getSearchPort(): SearchPort | null {
+  return searchPort
 }
 
 // Tracks when each collection's FTS index was last rebuilt
@@ -92,6 +107,8 @@ export function ftsTableName(collection: string): string {
  * using Porter stemmer with English stopwords.
  */
 export async function buildFtsIndex(collection: string): Promise<void> {
+  if (!searchPort) return // No FTS support for this adapter
+
   const schema = getSchema(collection)
   if (!schema) throw new Error(`Unknown collection: ${collection}`)
 
@@ -99,18 +116,19 @@ export async function buildFtsIndex(collection: string): Promise<void> {
   const record = lexicon?.defs?.main?.record
 
   // Build column list for shadow table
+  const dialect = getSqlDialect()
   const selectExprs: string[] = ['t.uri', 't.cid', 't.did', 't.indexed_at']
   const searchColNames: string[] = []
 
   for (const col of schema.columns) {
-    if (col.duckdbType === 'TEXT') {
+    if (col.sqlType === 'TEXT') {
       selectExprs.push(`t.${col.name}`)
       searchColNames.push(col.name)
-    } else if (col.duckdbType === 'JSON' && record?.properties) {
+    } else if ((col.sqlType === 'JSON' || col.sqlType === 'TEXT') && record?.properties) {
       const prop = record.properties[col.originalName]
       if (prop?.type === 'blob') continue // skip blobs
       if (prop && lexicon) {
-        const derived = jsonSearchColumns(`t.${col.name}`, prop, lexicon)
+        const derived = jsonSearchColumns(`t.${col.name}`, prop, lexicon, dialect)
         if (derived.length > 0) {
           for (const d of derived) {
             selectExprs.push(`${d.expr} AS ${d.alias}`)
@@ -128,10 +146,11 @@ export async function buildFtsIndex(collection: string): Promise<void> {
   // Include searchable text from child tables (decomposed array fields)
   for (const child of schema.children) {
     for (const col of child.columns) {
-      if (col.duckdbType === 'TEXT') {
+      if (col.sqlType === 'TEXT') {
         const alias = `${child.fieldName}_${col.name}`
+        const agg = dialect.stringAgg(`c.${col.name}`, "' '")
         selectExprs.push(
-          `(SELECT string_agg(c.${col.name}, ' ') FROM ${child.tableName} c WHERE c.parent_uri = t.uri) AS ${alias}`,
+          `(SELECT ${agg} FROM ${child.tableName} c WHERE c.parent_uri = t.uri) AS ${alias}`,
         )
         searchColNames.push(alias)
       }
@@ -142,10 +161,11 @@ export async function buildFtsIndex(collection: string): Promise<void> {
   for (const union of schema.unions) {
     for (const branch of union.branches) {
       for (const col of branch.columns) {
-        if (col.duckdbType === 'TEXT') {
+        if (col.sqlType === 'TEXT') {
           const alias = `${union.fieldName}_${branch.branchName}_${col.name}`
+          const agg = dialect.stringAgg(`c.${col.name}`, "' '")
           selectExprs.push(
-            `(SELECT string_agg(c.${col.name}, ' ') FROM ${branch.tableName} c WHERE c.parent_uri = t.uri) AS ${alias}`,
+            `(SELECT ${agg} FROM ${branch.tableName} c WHERE c.parent_uri = t.uri) AS ${alias}`,
           )
           searchColNames.push(alias)
         }
@@ -162,22 +182,9 @@ export async function buildFtsIndex(collection: string): Promise<void> {
   }
 
   const safeName = ftsTableName(collection)
+  const sourceQuery = `SELECT ${selectExprs.join(', ')} FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did`
 
-  // Build shadow table with derived text columns, joining _repos for handle
-  await runSQL(
-    `CREATE OR REPLACE TABLE ${safeName} AS SELECT ${selectExprs.join(', ')} FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did`,
-  )
-
-  // Drop existing index (ignore error if none exists)
-  try {
-    await runSQL(`PRAGMA drop_fts_index('${safeName}')`)
-  } catch {}
-
-  // Build FTS index over all search columns
-  const colList = searchColNames.map((c) => `'${c}'`).join(', ')
-  await runSQL(
-    `PRAGMA create_fts_index('${safeName}', 'uri', ${colList}, stemmer='porter', stopwords='english', strip_accents=1, lower=1, overwrite=1)`,
-  )
+  await searchPort.buildIndex(safeName, sourceQuery, searchColNames)
 
   searchColumnCache.set(collection, searchColNames)
   lastRebuiltAt.set(collection, new Date().toISOString())
@@ -785,9 +792,11 @@ export async function rebuildAllIndexes(collections: string[]): Promise<void> {
     }
   }
 
-  // Compact WAL to free DuckDB memory after heavy FTS operations
+  // Compact WAL to free memory after heavy FTS operations (DuckDB only)
   try {
-    await runSQL('CHECKPOINT')
+    const { getSqlDialect } = await import('./db.ts')
+    const d = getSqlDialect()
+    if (d.checkpointSQL) await runSQL(d.checkpointSQL)
   } catch {}
 
   emit('fts', 'rebuild', {

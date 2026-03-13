@@ -22,7 +22,7 @@
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { log } from './logger.ts'
-import { setRepoStatus } from './db.ts'
+import { setRepoStatus } from './database/db.ts'
 import { triggerAutoBackfill } from './indexer.ts'
 
 /** Context passed to the on-login hook after a successful OAuth login. */

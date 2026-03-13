@@ -29,7 +29,7 @@
 import { resolve } from 'node:path'
 import { readdirSync } from 'node:fs'
 import type { LabelDefinition } from './config.ts'
-import { querySQL, runSQL, insertLabels, getSchema } from './db.ts'
+import { querySQL, runSQL, insertLabels, getSchema } from './database/db.ts'
 import { log, emit } from './logger.ts'
 
 /** Context passed to label rule evaluate() functions */
@@ -163,7 +163,7 @@ export async function rescanLabels(collections: string[]): Promise<{ scanned: nu
       for (const col of schema.columns) {
         let v = row[col.name]
         if (v === null || v === undefined) continue
-        if (col.duckdbType === 'JSON' && typeof v === 'string') {
+        if (col.sqlType === 'JSON' && typeof v === 'string') {
           try {
             v = JSON.parse(v)
           } catch {}

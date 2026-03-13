@@ -9,8 +9,10 @@ import {
   discoverCollections,
   generateTableSchema,
   generateCreateTableSQL,
-} from './schema.ts'
-import { initDatabase, querySQL, runSQL, insertRecord, closeDatabase } from './db.ts'
+} from './database/schema.ts'
+import { initDatabase, querySQL, runSQL, insertRecord, closeDatabase } from './database/db.ts'
+import { createAdapter } from './database/adapter-factory.ts'
+import { setSearchPort } from './database/fts.ts'
 import { initFeeds, executeFeed, listFeeds, createPaginate } from './feeds.ts'
 import { initXrpc, executeXrpc, listXrpc, configureRelay } from './xrpc.ts'
 import { initOpengraph } from './opengraph.ts'
@@ -18,7 +20,7 @@ import { initLabels } from './labels.ts'
 import { discoverViews } from './views.ts'
 import { loadOnLoginHook } from './hooks.ts'
 import { validateLexicons } from '@bigmoves/lexicon'
-import { packCursor, unpackCursor, isTakendownDid, filterTakendownDids } from './db.ts'
+import { packCursor, unpackCursor, isTakendownDid, filterTakendownDids } from './database/db.ts'
 import { seed as createSeedHelpers, type SeedOpts } from './seed.ts'
 import type { FeedContext } from './feeds.ts'
 
@@ -99,8 +101,10 @@ export async function createTestContext(): Promise<TestContext> {
     ddlStatements.push(generateCreateTableSQL(schema))
   }
 
-  // In-memory DuckDB
-  await initDatabase(':memory:', schemas, ddlStatements)
+  // In-memory database
+  const { adapter, searchPort } = await createAdapter('duckdb')
+  setSearchPort(searchPort)
+  await initDatabase(adapter, ':memory:', schemas, ddlStatements)
 
   // Discover views + hooks
   discoverViews()

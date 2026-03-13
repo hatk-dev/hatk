@@ -33,9 +33,9 @@ import {
   lookupByFieldBatch,
   countByFieldBatch,
   queryLabelsForUris,
-} from './db.ts'
+} from './database/db.ts'
 import { resolveRecords } from './hydrate.ts'
-import { getLexicon } from './schema.ts'
+import { getLexicon } from './database/schema.ts'
 import type { Row, FlatRow } from './lex-types.ts'
 
 export type { Row, FlatRow }

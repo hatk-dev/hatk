@@ -4,7 +4,7 @@
 //   2. Defs views: defined in a defs lexicon, associated by naming convention (e.g., profileView)
 
 import { log } from './logger.ts'
-import { getAllLexicons, getLexicon } from './schema.ts'
+import { getAllLexicons, getLexicon } from './database/schema.ts'
 
 // --- Types ---
 

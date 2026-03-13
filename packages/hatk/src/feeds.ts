@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { readdirSync } from 'node:fs'
 import { log } from './logger.ts'
-import { querySQL, packCursor, unpackCursor, isTakendownDid, filterTakendownDids } from './db.ts'
+import { querySQL, packCursor, unpackCursor, isTakendownDid, filterTakendownDids } from './database/db.ts'
 import { resolveRecords, buildHydrateContext } from './hydrate.ts'
 import type { HydrateContext, Row } from './hydrate.ts'
 import type { Checked } from './lex-types.ts'

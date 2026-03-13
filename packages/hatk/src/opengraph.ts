@@ -15,7 +15,7 @@ import {
   lookupByFieldBatch,
   countByFieldBatch,
   queryLabelsForUris,
-} from './db.ts'
+} from './database/db.ts'
 import { resolveRecords } from './hydrate.ts'
 import { blobUrl } from './xrpc.ts'
 import type { XrpcContext } from './xrpc.ts'

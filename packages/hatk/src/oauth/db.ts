@@ -1,6 +1,6 @@
 // packages/hatk/src/oauth/db.ts
 
-import { querySQL, runSQL } from '../db.ts'
+import { querySQL, runSQL } from '../database/db.ts'
 
 // --- DDL ---
 

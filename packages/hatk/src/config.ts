@@ -41,7 +41,8 @@ export interface HatkConfig {
   relay: string
   plc: string // PLC directory URL for DID resolution
   port: number
-  database: string // DuckDB file path (replaces :memory:)
+  databaseEngine: 'duckdb' | 'sqlite' // which database adapter to use
+  database: string // database file path (replaces :memory:)
   publicDir: string | null // static file directory (null to disable)
   collections: string[] // optional — auto-derived from lexicons if empty
   backfill: BackfillConfig
@@ -95,6 +96,7 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
     relay: env.RELAY || parsed.relay || 'ws://localhost:2583',
     plc: env.DID_PLC_URL || parsed.plc || 'https://plc.directory',
     port: parseInt(env.PORT || '') || parsed.port || 3000,
+    databaseEngine: ((env.DATABASE_ENGINE || parsed.databaseEngine || 'duckdb') as HatkConfig['databaseEngine']),
     database: database ? resolve(configDir, database) : ':memory:',
     publicDir: parsed.publicDir === null ? null : resolve(configDir, parsed.publicDir || './public'),
     collections: parsed.collections || [],

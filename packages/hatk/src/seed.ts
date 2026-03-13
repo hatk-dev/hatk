@@ -23,7 +23,7 @@
  * )
  * ```
  */
-import { loadLexicons } from './schema.ts'
+import { loadLexicons } from './database/schema.ts'
 import { validateRecord } from '@bigmoves/lexicon'
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'

@@ -25,7 +25,7 @@
 import { resolve, relative } from 'node:path'
 import { readdirSync, statSync } from 'node:fs'
 import { log } from './logger.ts'
-import { querySQL, runSQL } from './db.ts'
+import { querySQL, runSQL } from './database/db.ts'
 
 /** Context passed to each setup script's handler function. */
 export interface SetupContext {

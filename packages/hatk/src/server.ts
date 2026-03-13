@@ -24,10 +24,10 @@ import {
   getSchemaDump,
   getPreferences,
   putPreference,
-} from './db.ts'
+} from './database/db.ts'
 import { executeFeed, listFeeds } from './feeds.ts'
 import { executeXrpc, InvalidRequestError } from './xrpc.ts'
-import { getLexiconArray } from './schema.ts'
+import { getLexiconArray } from './database/schema.ts'
 import { validateRecord } from '@bigmoves/lexicon'
 import { resolveRecords } from './hydrate.ts'
 import { handleOpengraphRequest, buildOgMeta } from './opengraph.ts'
@@ -264,7 +264,7 @@ export function startServer(
             columns: schema?.columns.map((col) => ({
               name: col.name,
               originalName: col.originalName,
-              type: col.duckdbType,
+              type: col.sqlType,
               required: col.notNull,
             })),
           }
@@ -604,7 +604,7 @@ export function startServer(
       // GET /admin/schema — full DuckDB DDL dump + lexicons
       if (url.pathname === '/admin/schema') {
         if (!requireAdmin(viewer, res)) return
-        const { getAllLexicons } = await import('./schema.ts')
+        const { getAllLexicons } = await import('./database/schema.ts')
         const ddl = await getSchemaDump()
         jsonResponse(res, { ddl, lexicons: getAllLexicons() })
         return

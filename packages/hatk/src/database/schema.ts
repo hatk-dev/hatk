@@ -1,10 +1,12 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import type { SqlDialect } from './dialect.ts'
+import { DUCKDB_DIALECT } from './dialect.ts'
 
 export interface ColumnDef {
   name: string // snake_case column name
   originalName: string // camelCase lexicon field name
-  duckdbType: string // DuckDB type
+  sqlType: string // DuckDB type
   notNull: boolean
   isRef: boolean // true if this column holds an AT URI referencing another record
 }
@@ -45,33 +47,33 @@ export function toSnakeCase(str: string): string {
   return str.replace(/([A-Z])/g, '_$1').toLowerCase()
 }
 
-// Map lexicon property type to DuckDB type
+// Map lexicon property type to SQL type using dialect config
 interface TypeMapping {
-  duckdbType: string
+  sqlType: string
   isRef: boolean
 }
 
-function mapType(prop: any): TypeMapping {
+function mapType(prop: any, dialect: SqlDialect): TypeMapping {
   if (prop.type === 'string') {
-    if (prop.format === 'datetime') return { duckdbType: 'TIMESTAMP', isRef: false }
-    if (prop.format === 'at-uri') return { duckdbType: 'TEXT', isRef: true }
-    return { duckdbType: 'TEXT', isRef: false }
+    if (prop.format === 'datetime') return { sqlType: dialect.typeMap.timestamp, isRef: false }
+    if (prop.format === 'at-uri') return { sqlType: dialect.typeMap.text, isRef: true }
+    return { sqlType: dialect.typeMap.text, isRef: false }
   }
-  if (prop.type === 'integer') return { duckdbType: 'INTEGER', isRef: false }
-  if (prop.type === 'boolean') return { duckdbType: 'BOOLEAN', isRef: false }
-  if (prop.type === 'bytes') return { duckdbType: 'BLOB', isRef: false }
-  if (prop.type === 'cid-link') return { duckdbType: 'TEXT', isRef: false }
-  if (prop.type === 'array') return { duckdbType: 'JSON', isRef: false }
-  if (prop.type === 'blob') return { duckdbType: 'JSON', isRef: false }
-  if (prop.type === 'union') return { duckdbType: 'JSON', isRef: false }
-  if (prop.type === 'unknown') return { duckdbType: 'JSON', isRef: false }
-  if (prop.type === 'object') return { duckdbType: 'JSON', isRef: false }
+  if (prop.type === 'integer') return { sqlType: dialect.typeMap.integer, isRef: false }
+  if (prop.type === 'boolean') return { sqlType: dialect.typeMap.boolean, isRef: false }
+  if (prop.type === 'bytes') return { sqlType: dialect.typeMap.blob, isRef: false }
+  if (prop.type === 'cid-link') return { sqlType: dialect.typeMap.text, isRef: false }
+  if (prop.type === 'array') return { sqlType: dialect.jsonType, isRef: false }
+  if (prop.type === 'blob') return { sqlType: dialect.jsonType, isRef: false }
+  if (prop.type === 'union') return { sqlType: dialect.jsonType, isRef: false }
+  if (prop.type === 'unknown') return { sqlType: dialect.jsonType, isRef: false }
+  if (prop.type === 'object') return { sqlType: dialect.jsonType, isRef: false }
   if (prop.type === 'ref') {
     // strongRef contains { uri, cid } — handled specially in generateTableSchema
-    if (prop.ref === 'com.atproto.repo.strongRef') return { duckdbType: 'STRONG_REF', isRef: true }
-    return { duckdbType: 'JSON', isRef: false }
+    if (prop.ref === 'com.atproto.repo.strongRef') return { sqlType: 'STRONG_REF', isRef: true }
+    return { sqlType: dialect.jsonType, isRef: false }
   }
-  return { duckdbType: 'TEXT', isRef: false }
+  return { sqlType: dialect.typeMap.text, isRef: false }
 }
 
 // Recursively find all .json files in a directory
@@ -173,7 +175,8 @@ function resolveUnionBranch(
   collection: string,
   fieldName: string,
   defs: Record<string, any>,
-  lexicons?: Map<string, any>,
+  lexicons: Map<string, any> | undefined,
+  dialect: SqlDialect,
 ): UnionBranchSchema | null {
   let branchDef: any = null
   let branchName: string
@@ -236,13 +239,13 @@ function resolveUnionBranch(
 
   const columns: ColumnDef[] = []
   for (const [propName, prop] of Object.entries(propSource)) {
-    const { duckdbType, isRef } = mapType(prop as any)
+    const { sqlType, isRef } = mapType(prop as any, dialect)
     // Skip STRONG_REF expansion in branch tables — treat as JSON
-    const finalType = duckdbType === 'STRONG_REF' ? 'JSON' : duckdbType
+    const finalType = sqlType === 'STRONG_REF' ? dialect.jsonType : sqlType
     columns.push({
       name: toSnakeCase(propName),
       originalName: propName,
-      duckdbType: finalType,
+      sqlType: finalType,
       notNull: branchRequired.has(propName),
       isRef: finalType !== 'JSON' && isRef,
     })
@@ -252,7 +255,7 @@ function resolveUnionBranch(
 }
 
 // Generate a TableSchema from a lexicon record definition
-export function generateTableSchema(nsid: string, lexicon: any, lexicons?: Map<string, any>): TableSchema {
+export function generateTableSchema(nsid: string, lexicon: any, lexicons?: Map<string, any>, dialect: SqlDialect = DUCKDB_DIALECT): TableSchema {
   const mainDef = lexicon.defs?.main
   if (!mainDef || mainDef.type !== 'record') {
     throw new Error(`Lexicon ${nsid} does not define a record type`)
@@ -275,7 +278,7 @@ export function generateTableSchema(nsid: string, lexicon: any, lexicons?: Map<s
     if (p.type === 'union' && p.refs) {
       const branches: UnionBranchSchema[] = []
       for (const ref of p.refs) {
-        const branch = resolveUnionBranch(ref, nsid, fieldName, lexicon.defs, lexicons)
+        const branch = resolveUnionBranch(ref, nsid, fieldName, lexicon.defs, lexicons, dialect)
         if (branch) branches.push(branch)
       }
       if (branches.length > 0) {
@@ -285,7 +288,7 @@ export function generateTableSchema(nsid: string, lexicon: any, lexicons?: Map<s
       columns.push({
         name: toSnakeCase(fieldName),
         originalName: fieldName,
-        duckdbType: 'JSON',
+        sqlType: dialect.jsonType,
         notNull: required.has(fieldName),
         isRef: false,
       })
@@ -299,11 +302,11 @@ export function generateTableSchema(nsid: string, lexicon: any, lexicons?: Map<s
         const childColumns: ColumnDef[] = []
         const itemRequired = new Set(p.items?.required || lexicon.defs?.[p.items?.ref?.slice(1)]?.required || [])
         for (const [itemField, itemProp] of Object.entries(itemProps)) {
-          const { duckdbType, isRef } = mapType(itemProp as any)
+          const { sqlType, isRef } = mapType(itemProp as any, dialect)
           childColumns.push({
             name: toSnakeCase(itemField),
             originalName: itemField,
-            duckdbType,
+            sqlType,
             notNull: itemRequired.has(itemField),
             isRef,
           })
@@ -319,21 +322,21 @@ export function generateTableSchema(nsid: string, lexicon: any, lexicons?: Map<s
       }
     }
 
-    const { duckdbType, isRef } = mapType(p)
+    const { sqlType, isRef } = mapType(p, dialect)
 
-    if (duckdbType === 'STRONG_REF') {
+    if (sqlType === 'STRONG_REF') {
       // Expand strongRef into two columns: {name}_uri and {name}_cid
       columns.push({
         name: toSnakeCase(fieldName) + '_uri',
         originalName: fieldName,
-        duckdbType: 'TEXT',
+        sqlType: dialect.typeMap.text,
         notNull: required.has(fieldName),
         isRef: true,
       })
       columns.push({
         name: toSnakeCase(fieldName) + '_cid',
         originalName: fieldName + '__cid',
-        duckdbType: 'TEXT',
+        sqlType: dialect.typeMap.text,
         notNull: required.has(fieldName),
         isRef: false,
       })
@@ -341,7 +344,7 @@ export function generateTableSchema(nsid: string, lexicon: any, lexicons?: Map<s
       columns.push({
         name: toSnakeCase(fieldName),
         originalName: fieldName,
-        duckdbType,
+        sqlType,
         notNull: required.has(fieldName),
         isRef,
       })
@@ -361,17 +364,17 @@ export function generateTableSchema(nsid: string, lexicon: any, lexicons?: Map<s
 }
 
 // Generate CREATE TABLE SQL from a TableSchema
-export function generateCreateTableSQL(schema: TableSchema): string {
+export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect = DUCKDB_DIALECT): string {
   const lines: string[] = [
     '  uri TEXT PRIMARY KEY',
     '  cid TEXT',
     '  did TEXT NOT NULL',
-    '  indexed_at TIMESTAMP NOT NULL',
+    `  indexed_at ${dialect.timestampType} NOT NULL`,
   ]
 
   for (const col of schema.columns) {
     const nullable = col.notNull ? ' NOT NULL' : ''
-    lines.push(`  ${col.name} ${col.duckdbType}${nullable}`)
+    lines.push(`  ${col.name} ${col.sqlType}${nullable}`)
   }
 
   const createTable = `CREATE TABLE IF NOT EXISTS ${schema.tableName} (\n${lines.join(',\n')}\n);`
@@ -393,7 +396,7 @@ export function generateCreateTableSQL(schema: TableSchema): string {
     const childLines: string[] = ['  parent_uri TEXT NOT NULL', '  parent_did TEXT NOT NULL']
     for (const col of child.columns) {
       const nullable = col.notNull ? ' NOT NULL' : ''
-      childLines.push(`  ${col.name} ${col.duckdbType}${nullable}`)
+      childLines.push(`  ${col.name} ${col.sqlType}${nullable}`)
     }
     childDDL.push(`CREATE TABLE IF NOT EXISTS ${child.tableName} (\n${childLines.join(',\n')}\n);`)
 
@@ -402,7 +405,7 @@ export function generateCreateTableSQL(schema: TableSchema): string {
     childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${childPrefix}_did ON ${child.tableName}(parent_did);`)
 
     for (const col of child.columns) {
-      if (col.duckdbType === 'JSON' || col.duckdbType === 'BLOB') continue
+      if (col.sqlType === 'JSON' || col.sqlType === 'BLOB') continue
       childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${childPrefix}_${col.name} ON ${child.tableName}(${col.name});`)
     }
   }
@@ -413,7 +416,7 @@ export function generateCreateTableSQL(schema: TableSchema): string {
       const branchLines: string[] = ['  parent_uri TEXT NOT NULL', '  parent_did TEXT NOT NULL']
       for (const col of branch.columns) {
         const nullable = col.notNull ? ' NOT NULL' : ''
-        branchLines.push(`  ${col.name} ${col.duckdbType}${nullable}`)
+        branchLines.push(`  ${col.name} ${col.sqlType}${nullable}`)
       }
       childDDL.push(`CREATE TABLE IF NOT EXISTS ${branch.tableName} (\n${branchLines.join(',\n')}\n);`)
 
@@ -422,7 +425,7 @@ export function generateCreateTableSQL(schema: TableSchema): string {
       childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${branchPrefix}_did ON ${branch.tableName}(parent_did);`)
 
       for (const col of branch.columns) {
-        if (col.duckdbType === 'JSON' || col.duckdbType === 'BLOB') continue
+        if (col.sqlType === 'JSON' || col.sqlType === 'BLOB') continue
         childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${branchPrefix}_${col.name} ON ${branch.tableName}(${col.name});`)
       }
     }
@@ -438,6 +441,7 @@ export function generateCreateTableSQL(schema: TableSchema): string {
 export function buildSchemas(
   lexicons: Map<string, any>,
   collections: string[],
+  dialect: SqlDialect = DUCKDB_DIALECT,
 ): { schemas: TableSchema[]; ddlStatements: string[] } {
   const schemas: TableSchema[] = []
   const ddlStatements: string[] = []
@@ -449,8 +453,8 @@ export function buildSchemas(
       uri TEXT PRIMARY KEY,
       cid TEXT,
       did TEXT NOT NULL,
-      indexed_at TIMESTAMP NOT NULL,
-      data JSON
+      indexed_at ${dialect.timestampType} NOT NULL,
+      data ${dialect.jsonType}
     );
     CREATE INDEX IF NOT EXISTS idx_${nsid.replace(/\./g, '_')}_indexed ON "${nsid}"(indexed_at DESC);
     CREATE INDEX IF NOT EXISTS idx_${nsid.replace(/\./g, '_')}_author ON "${nsid}"(did);`
@@ -459,9 +463,9 @@ export function buildSchemas(
       continue
     }
 
-    const schema = generateTableSchema(nsid, lexicon, lexicons)
+    const schema = generateTableSchema(nsid, lexicon, lexicons, dialect)
     schemas.push(schema)
-    ddlStatements.push(generateCreateTableSQL(schema))
+    ddlStatements.push(generateCreateTableSQL(schema, dialect))
   }
 
   return { schemas, ddlStatements }

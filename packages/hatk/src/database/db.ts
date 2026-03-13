@@ -1,140 +1,63 @@
-import { DuckDBInstance } from '@duckdb/node-api'
 import { type TableSchema, toSnakeCase } from './schema.ts'
-import type { Row } from './lex-types.ts'
-import { getSearchColumns, stripStopWords } from './fts.ts'
-import { emit, timer } from './logger.ts'
-import { OAUTH_DDL } from './oauth/db.ts'
+import type { Row } from '../lex-types.ts'
+import { getSearchColumns, stripStopWords, hasSearchPort, getSearchPort } from './fts.ts'
+import { emit, timer } from '../logger.ts'
+import { OAUTH_DDL } from '../oauth/db.ts'
+import type { DatabasePort } from './ports.ts'
+import { getDialect, type SqlDialect } from './dialect.ts'
 
-let instance: DuckDBInstance
-let con: Awaited<ReturnType<DuckDBInstance['connect']>>
-let readCon: Awaited<ReturnType<DuckDBInstance['connect']>>
+let port: DatabasePort
+let dialect: SqlDialect
 const schemas = new Map<string, TableSchema>()
 
+export function getDatabasePort(): DatabasePort { return port }
+export function getSqlDialect(): SqlDialect { return dialect }
+
 export function closeDatabase(): void {
-  try {
-    readCon?.closeSync()
-  } catch {}
-  try {
-    con?.closeSync()
-  } catch {}
-  try {
-    instance?.closeSync()
-  } catch {}
-}
-
-let writeQueue = Promise.resolve()
-let readQueue = Promise.resolve()
-
-function enqueue<T>(queue: 'read' | 'write', fn: () => Promise<T>): Promise<T> {
-  if (queue === 'write') {
-    const p = writeQueue.then(fn)
-    writeQueue = p.then(
-      () => {},
-      () => {},
-    )
-    return p
-  } else {
-    const p = readQueue.then(fn)
-    readQueue = p.then(
-      () => {},
-      () => {},
-    )
-    return p
-  }
-}
-
-function bindParams(prepared: any, params: any[]): void {
-  for (let i = 0; i < params.length; i++) {
-    const idx = i + 1
-    const value = params[i]
-    if (value === null || value === undefined) {
-      prepared.bindNull(idx)
-    } else if (typeof value === 'string') {
-      prepared.bindVarchar(idx, value)
-    } else if (typeof value === 'number') {
-      if (Number.isInteger(value)) {
-        prepared.bindInteger(idx, value)
-      } else {
-        prepared.bindDouble(idx, value)
-      }
-    } else if (typeof value === 'boolean') {
-      prepared.bindBoolean(idx, value)
-    } else if (typeof value === 'bigint') {
-      prepared.bindBigInt(idx, value)
-    } else if (value instanceof Uint8Array) {
-      prepared.bindBlob(idx, value)
-    } else {
-      prepared.bindVarchar(idx, String(value))
-    }
-  }
-}
-
-async function runDirect(sql: string, ...params: any[]): Promise<void> {
-  if (params.length === 0) {
-    await con.run(sql)
-    return
-  }
-  const prepared = await con.prepare(sql)
-  bindParams(prepared, params)
-  await prepared.run()
+  port?.close()
 }
 
 async function run(sql: string, ...params: any[]): Promise<void> {
-  return enqueue('write', () => runDirect(sql, ...params))
+  return port.execute(sql, params)
 }
 
 export async function runBatch(operations: Array<{ sql: string; params: any[] }>): Promise<void> {
-  return enqueue('write', async () => {
-    await con.run('BEGIN TRANSACTION')
+  await port.beginTransaction()
+  try {
     for (const op of operations) {
       try {
-        if (op.params.length === 0) {
-          await con.run(op.sql)
-        } else {
-          const prepared = await con.prepare(op.sql)
-          bindParams(prepared, op.params)
-          await prepared.run()
-        }
+        await port.execute(op.sql, op.params)
       } catch {
         // Skip bad records, continue with rest of batch
       }
     }
-    await con.run('COMMIT')
-  })
-}
-
-async function allDirect(sql: string, ...params: any[]): Promise<any[]> {
-  if (params.length === 0) {
-    const reader = await readCon.runAndReadAll(sql)
-    return reader.getRowObjects()
+    await port.commit()
+  } catch {
+    await port.rollback()
   }
-  const prepared = await readCon.prepare(sql)
-  bindParams(prepared, params)
-  const reader = await prepared.runAndReadAll()
-  return reader.getRowObjects()
 }
 
 async function all(sql: string, ...params: any[]): Promise<any[]> {
-  return enqueue('read', () => allDirect(sql, ...params))
+  return port.query(sql, params)
 }
 
 export async function initDatabase(
+  adapter: DatabasePort,
   dbPath: string,
   tableSchemas: TableSchema[],
   ddlStatements: string[],
 ): Promise<void> {
-  instance = await DuckDBInstance.create(dbPath === ':memory:' ? undefined : dbPath)
-  con = await instance.connect()
-  readCon = await instance.connect()
+  port = adapter
+  dialect = getDialect(adapter.dialect)
+
+  await port.open(dbPath)
 
   for (const schema of tableSchemas) {
     schemas.set(schema.collection, schema)
   }
 
   for (const ddl of ddlStatements) {
-    for (const statement of ddl.split(';').filter((s) => s.trim())) {
-      await run(statement)
-    }
+    await port.executeMultiple(ddl)
   }
 
   // Internal tables for backfill state
@@ -142,7 +65,7 @@ export async function initDatabase(
     did TEXT PRIMARY KEY,
     status TEXT NOT NULL DEFAULT 'pending',
     handle TEXT,
-    backfilled_at TIMESTAMP,
+    backfilled_at ${dialect.timestampType},
     rev TEXT,
     retry_count INTEGER NOT NULL DEFAULT 0,
     retry_after INTEGER NOT NULL DEFAULT 0
@@ -161,16 +84,28 @@ export async function initDatabase(
   )`)
 
   // Labels table (atproto-compatible)
-  await run(`CREATE SEQUENCE IF NOT EXISTS _labels_seq START 1`)
-  await run(`CREATE TABLE IF NOT EXISTS _labels (
-    id INTEGER PRIMARY KEY DEFAULT nextval('_labels_seq'),
-    src TEXT NOT NULL,
-    uri TEXT NOT NULL,
-    val TEXT NOT NULL,
-    neg BOOLEAN DEFAULT FALSE,
-    cts TIMESTAMP NOT NULL,
-    exp TIMESTAMP
-  )`)
+  if (dialect.supportsSequences) {
+    await run(`CREATE SEQUENCE IF NOT EXISTS _labels_seq START 1`)
+    await run(`CREATE TABLE IF NOT EXISTS _labels (
+      id INTEGER PRIMARY KEY DEFAULT nextval('_labels_seq'),
+      src TEXT NOT NULL,
+      uri TEXT NOT NULL,
+      val TEXT NOT NULL,
+      neg ${dialect.typeMap.boolean} DEFAULT FALSE,
+      cts ${dialect.timestampType} NOT NULL,
+      exp ${dialect.timestampType}
+    )`)
+  } else {
+    await run(`CREATE TABLE IF NOT EXISTS _labels (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      src TEXT NOT NULL,
+      uri TEXT NOT NULL,
+      val TEXT NOT NULL,
+      neg INTEGER DEFAULT 0,
+      cts TEXT NOT NULL,
+      exp TEXT
+    )`)
+  }
   await run(`CREATE INDEX IF NOT EXISTS idx_labels_uri ON _labels(uri)`)
   await run(`CREATE INDEX IF NOT EXISTS idx_labels_src ON _labels(src)`)
 
@@ -178,15 +113,13 @@ export async function initDatabase(
   await run(`CREATE TABLE IF NOT EXISTS _preferences (
     did TEXT NOT NULL,
     key TEXT NOT NULL,
-    value JSON NOT NULL,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    value ${dialect.jsonType} NOT NULL,
+    updated_at ${dialect.timestampType} DEFAULT ${dialect.currentTimestamp},
     PRIMARY KEY (did, key)
   )`)
 
   // OAuth tables
-  for (const statement of OAUTH_DDL.split(';').filter((s) => s.trim())) {
-    await run(statement)
-  }
+  await port.executeMultiple(OAUTH_DDL)
 }
 
 export async function getCursor(key: string): Promise<string | null> {
@@ -300,18 +233,18 @@ export async function listReposPaginated(
     params.push(status)
   }
   if (q) {
-    conditions.push(`(did ILIKE $${paramIdx} OR handle ILIKE $${paramIdx})`)
+    conditions.push(`(did ${dialect.ilike} $${paramIdx} OR handle ${dialect.ilike} $${paramIdx})`)
     params.push(`%${q}%`)
     paramIdx++
   }
 
   const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : ''
 
-  const countRows = await all(`SELECT COUNT(*)::INTEGER as total FROM _repos${where}`, ...params)
+  const countRows = await all(`SELECT ${dialect.countAsInteger} as total FROM _repos${where}`, ...params)
   const total = Number(countRows[0]?.total || 0)
 
   const rows = await all(
-    `SELECT did, handle, status, backfilled_at, rev FROM _repos${where} ORDER BY backfilled_at DESC NULLS LAST, did LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
+    `SELECT did, handle, status, backfilled_at, rev FROM _repos${where} ORDER BY CASE WHEN backfilled_at IS NULL THEN 1 ELSE 0 END, backfilled_at DESC, did LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
     ...params,
     limit,
     offset,
@@ -323,15 +256,39 @@ export async function listReposPaginated(
 export async function getCollectionCounts(): Promise<Record<string, number>> {
   const counts: Record<string, number> = {}
   for (const [collection, schema] of schemas) {
-    const rows = await all(`SELECT COUNT(*)::INTEGER as count FROM ${schema.tableName}`)
+    const rows = await all(`SELECT ${dialect.countAsInteger} as count FROM ${schema.tableName}`)
     counts[collection] = Number(rows[0]?.count || 0)
   }
   return counts
 }
 
 export async function getSchemaDump(): Promise<string> {
-  const rows = await all(`SELECT sql FROM duckdb_tables() ORDER BY table_name`)
-  return rows.map((r: any) => r.sql + ';').join('\n\n')
+  let rows: any[]
+  if (dialect.supportsSequences) {
+    // DuckDB: use duckdb_tables() for full DDL
+    rows = await all(`SELECT sql FROM duckdb_tables() ORDER BY table_name`)
+  } else {
+    // SQLite: use sqlite_master, skip FTS shadow/internal tables
+    rows = await all(
+      `SELECT sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_fts_%' AND sql IS NOT NULL ORDER BY name`,
+    )
+  }
+  // Normalize indentation
+  return rows
+    .map((r: any) => {
+      let sql = (r.sql as string).trim()
+      // Split into lines and re-indent consistently
+      const lines = sql.split('\n').map((l) => l.trim())
+      sql = lines
+        .map((line, i) => {
+          if (i === 0) return line // CREATE TABLE line
+          if (line.startsWith(')')) return ')' // closing paren at top level
+          return '  ' + line // indent columns
+        })
+        .join('\n')
+      return sql + ';'
+    })
+    .join('\n\n')
 }
 
 export function buildInsertOp(
@@ -362,7 +319,7 @@ export function buildInsertOp(
 
     if (rawValue === undefined || rawValue === null) {
       values.push(null)
-    } else if (col.duckdbType === 'JSON') {
+    } else if (col.sqlType === 'JSON') {
       values.push(JSON.stringify(rawValue))
     } else {
       values.push(rawValue)
@@ -405,7 +362,7 @@ export async function insertRecord(
         const raw = item[col.originalName]
         if (raw === undefined || raw === null) {
           values.push(null)
-        } else if (col.duckdbType === 'JSON') {
+        } else if (col.sqlType === 'JSON') {
           values.push(JSON.stringify(raw))
         } else {
           values.push(raw)
@@ -447,7 +404,7 @@ export async function insertRecord(
           const raw = item[col.originalName]
           if (raw === undefined || raw === null) {
             values.push(null)
-          } else if (col.duckdbType === 'JSON') {
+          } else if (col.sqlType === 'JSON') {
             values.push(JSON.stringify(raw))
           } else {
             values.push(raw)
@@ -471,7 +428,7 @@ export async function insertRecord(
         const raw = branchData[col.originalName]
         if (raw === undefined || raw === null) {
           values.push(null)
-        } else if (col.duckdbType === 'JSON') {
+        } else if (col.sqlType === 'JSON') {
           values.push(JSON.stringify(raw))
         } else {
           values.push(raw)
@@ -592,247 +549,230 @@ export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> 
       'cid TEXT',
       'did TEXT',
       'indexed_at TEXT',
-      ...schema.columns.map((c) => `${c.name} ${c.duckdbType === 'TIMESTAMP' ? 'TEXT' : c.duckdbType}`),
+      ...schema.columns.map((c) => {
+        const t = c.sqlType
+        // Use TEXT for timestamp columns in staging (will cast on merge)
+        return `${c.name} ${t === 'TIMESTAMP' || t === 'TIMESTAMPTZ' ? 'TEXT' : t}`
+      }),
     ]
 
-    // Create staging table + appender + merge all in one write queue slot
-    await enqueue('write', async () => {
-      await con.run(`DROP TABLE IF EXISTS ${stagingTable}`)
-      await con.run(`CREATE TABLE ${stagingTable} (${colDefs.join(', ')})`)
+    await port.execute(`DROP TABLE IF EXISTS ${stagingTable}`, [])
+    await port.execute(`CREATE TABLE ${stagingTable} (${colDefs.join(', ')})`, [])
 
-      const appender = await con.createAppender(stagingTable)
-      const now = new Date().toISOString()
+    const inserter = await port.createBulkInserter(stagingTable, allCols)
+    const now = new Date().toISOString()
+
+    for (const rec of recs) {
+      try {
+        const values: unknown[] = [rec.uri, rec.cid, rec.did, now]
+
+        for (const col of schema.columns) {
+          values.push(resolveColumnValue(col, rec.record))
+        }
+        inserter.append(values)
+        inserted++
+      } catch {
+        // Skip bad records
+      }
+    }
+
+    await inserter.close()
+
+    // Merge into target, filtering rows that would violate NOT NULL
+    const selectCols = allCols.map((name) => {
+      const col = schema.columns.find((c) => c.name === name)
+      if (name === 'indexed_at' || (col && (col.sqlType === 'TIMESTAMP' || col.sqlType === 'TIMESTAMPTZ'))) {
+        return `${dialect.tryCastTimestamp(name)} AS ${name}`
+      }
+      return name
+    })
+    const notNullChecks: string[] = ['uri IS NOT NULL', 'did IS NOT NULL']
+    for (const col of schema.columns) {
+      if (col.notNull) {
+        if (col.sqlType === 'TIMESTAMP' || col.sqlType === 'TIMESTAMPTZ') {
+          notNullChecks.push(`${dialect.tryCastTimestamp(col.name)} IS NOT NULL`)
+        } else {
+          notNullChecks.push(`${col.name} IS NOT NULL`)
+        }
+      }
+    }
+    const whereClause = notNullChecks.length ? ` WHERE ${notNullChecks.join(' AND ')}` : ''
+    await port.execute(
+      `INSERT OR REPLACE INTO ${schema.tableName} (${allCols.join(', ')}) SELECT ${selectCols.join(', ')} FROM ${stagingTable}${whereClause}`,
+      [],
+    )
+    await port.execute(`DROP TABLE ${stagingTable}`, [])
+
+    // Populate child tables
+    for (const child of schema.children) {
+      const childStagingTable = `_staging_${collection.replace(/\./g, '_')}__${child.fieldName}`
+      const childColDefs = [
+        'parent_uri TEXT',
+        'parent_did TEXT',
+        ...child.columns.map((c) => {
+          const t = c.sqlType
+          return `${c.name} ${t === 'TIMESTAMP' || t === 'TIMESTAMPTZ' ? 'TEXT' : t}`
+        }),
+      ]
+      const childAllCols = ['parent_uri', 'parent_did', ...child.columns.map((c) => c.name)]
+
+      await port.execute(`DROP TABLE IF EXISTS ${childStagingTable}`, [])
+      await port.execute(`CREATE TABLE ${childStagingTable} (${childColDefs.join(', ')})`, [])
+
+      const childInserter = await port.createBulkInserter(childStagingTable, childAllCols)
 
       for (const rec of recs) {
-        try {
-          appender.appendVarchar(rec.uri)
-          appender.appendVarchar(rec.cid)
-          appender.appendVarchar(rec.did)
-          appender.appendVarchar(now)
+        const items = rec.record[child.fieldName]
+        if (!Array.isArray(items)) continue
 
-          for (const col of schema.columns) {
-            let rawValue = rec.record[col.originalName]
-            if (rawValue && typeof rawValue === 'object' && col.name.endsWith('_uri') && col.isRef) {
-              rawValue = rawValue.uri
-            } else if (col.originalName.endsWith('__cid') && rec.record[col.originalName.replace('__cid', '')]) {
-              rawValue = rec.record[col.originalName.replace('__cid', '')].cid
+        for (const item of items) {
+          try {
+            const values: unknown[] = [rec.uri, rec.did]
+            for (const col of child.columns) {
+              values.push(resolveRawColumnValue(col, item))
             }
-
-            if (rawValue === undefined || rawValue === null) {
-              appender.appendNull()
-            } else if (col.duckdbType === 'JSON') {
-              appender.appendVarchar(JSON.stringify(rawValue))
-            } else if (col.duckdbType === 'INTEGER') {
-              appender.appendInteger(typeof rawValue === 'number' ? rawValue : parseInt(rawValue))
-            } else if (col.duckdbType === 'BOOLEAN') {
-              appender.appendBoolean(!!rawValue)
-            } else {
-              appender.appendVarchar(String(rawValue))
-            }
+            childInserter.append(values)
+          } catch {
+            // Skip bad items
           }
-          appender.endRow()
-          inserted++
-        } catch {
-          // Skip bad records
         }
       }
 
-      appender.flushSync()
-      appender.closeSync()
+      await childInserter.close()
 
-      // Merge into target with TRY_CAST for TIMESTAMP columns, filtering rows that would violate NOT NULL
-      const selectCols = allCols.map((name) => {
-        const col = schema.columns.find((c) => c.name === name)
-        if (name === 'indexed_at' || (col && col.duckdbType === 'TIMESTAMP')) {
-          return `TRY_CAST(${name} AS TIMESTAMP) AS ${name}`
+      // Delete existing child rows for these URIs, then merge staging
+      const uriPlaceholders = recs.map((_, i) => `$${i + 1}`).join(',')
+      await port.execute(
+        `DELETE FROM ${child.tableName} WHERE parent_uri IN (${uriPlaceholders})`,
+        recs.map((r) => r.uri),
+      )
+
+      const childSelectCols = childAllCols.map((name) => {
+        const col = child.columns.find((c) => c.name === name)
+        if (col && (col.sqlType === 'TIMESTAMP' || col.sqlType === 'TIMESTAMPTZ')) {
+          return `${dialect.tryCastTimestamp(name)} AS ${name}`
         }
         return name
       })
-      // Build WHERE clause to exclude rows missing NOT NULL fields
-      const notNullChecks: string[] = ['uri IS NOT NULL', 'did IS NOT NULL']
-      for (const col of schema.columns) {
-        if (col.notNull) {
-          if (col.duckdbType === 'TIMESTAMP') {
-            notNullChecks.push(`TRY_CAST(${col.name} AS TIMESTAMP) IS NOT NULL`)
-          } else {
-            notNullChecks.push(`${col.name} IS NOT NULL`)
-          }
-        }
-      }
-      const whereClause = notNullChecks.length ? ` WHERE ${notNullChecks.join(' AND ')}` : ''
-      await con.run(
-        `INSERT OR REPLACE INTO ${schema.tableName} (${allCols.join(', ')}) SELECT ${selectCols.join(', ')} FROM ${stagingTable}${whereClause}`,
+      await port.execute(
+        `INSERT INTO ${child.tableName} (${childAllCols.join(', ')}) SELECT ${childSelectCols.join(', ')} FROM ${childStagingTable} WHERE parent_uri IS NOT NULL`,
+        [],
       )
-      await con.run(`DROP TABLE ${stagingTable}`)
+      await port.execute(`DROP TABLE ${childStagingTable}`, [])
+    }
 
-      // Populate child tables
-      for (const child of schema.children) {
-        const childStagingTable = `_staging_${collection.replace(/\./g, '_')}__${child.fieldName}`
-        const childColDefs = [
+    // Populate union branch tables
+    for (const union of schema.unions) {
+      for (const branch of union.branches) {
+        const branchStagingTable = `_staging_${collection.replace(/\./g, '_')}__${toSnakeCase(union.fieldName)}_${branch.branchName}`
+        const branchColDefs = [
           'parent_uri TEXT',
           'parent_did TEXT',
-          ...child.columns.map((c) => `${c.name} ${c.duckdbType === 'TIMESTAMP' ? 'TEXT' : c.duckdbType}`),
+          ...branch.columns.map((c) => {
+            const t = c.sqlType
+            return `${c.name} ${t === 'TIMESTAMP' || t === 'TIMESTAMPTZ' ? 'TEXT' : t}`
+          }),
         ]
-        const childAllCols = ['parent_uri', 'parent_did', ...child.columns.map((c) => c.name)]
+        const branchAllCols = ['parent_uri', 'parent_did', ...branch.columns.map((c) => c.name)]
 
-        await con.run(`DROP TABLE IF EXISTS ${childStagingTable}`)
-        await con.run(`CREATE TABLE ${childStagingTable} (${childColDefs.join(', ')})`)
+        await port.execute(`DROP TABLE IF EXISTS ${branchStagingTable}`, [])
+        await port.execute(`CREATE TABLE ${branchStagingTable} (${branchColDefs.join(', ')})`, [])
 
-        const childAppender = await con.createAppender(childStagingTable)
+        const branchInserter = await port.createBulkInserter(branchStagingTable, branchAllCols)
 
         for (const rec of recs) {
-          const items = rec.record[child.fieldName]
-          if (!Array.isArray(items)) continue
+          const unionValue = rec.record[union.fieldName]
+          if (!unionValue || typeof unionValue !== 'object') continue
+          if (unionValue.$type !== branch.type) continue
 
-          for (const item of items) {
-            try {
-              childAppender.appendVarchar(rec.uri)
-              childAppender.appendVarchar(rec.did)
-
-              for (const col of child.columns) {
-                const rawValue = item[col.originalName]
-                if (rawValue === undefined || rawValue === null) {
-                  childAppender.appendNull()
-                } else if (col.duckdbType === 'JSON') {
-                  childAppender.appendVarchar(JSON.stringify(rawValue))
-                } else if (col.duckdbType === 'INTEGER') {
-                  childAppender.appendInteger(typeof rawValue === 'number' ? rawValue : parseInt(rawValue))
-                } else if (col.duckdbType === 'BOOLEAN') {
-                  childAppender.appendBoolean(!!rawValue)
-                } else {
-                  childAppender.appendVarchar(String(rawValue))
+          if (branch.isArray && branch.arrayField) {
+            const items = resolveBranchData(unionValue, branch)[branch.arrayField]
+            if (!Array.isArray(items)) continue
+            for (const item of items) {
+              try {
+                const values: unknown[] = [rec.uri, rec.did]
+                for (const col of branch.columns) {
+                  values.push(resolveRawColumnValue(col, item))
                 }
+                branchInserter.append(values)
+              } catch {
+                // Skip bad items
               }
-              childAppender.endRow()
+            }
+          } else {
+            try {
+              const branchData = resolveBranchData(unionValue, branch)
+              const values: unknown[] = [rec.uri, rec.did]
+              for (const col of branch.columns) {
+                values.push(resolveRawColumnValue(col, branchData))
+              }
+              branchInserter.append(values)
             } catch {
-              // Skip bad items
+              // Skip bad records
             }
           }
         }
 
-        childAppender.flushSync()
-        childAppender.closeSync()
+        await branchInserter.close()
 
-        // Delete existing child rows for these URIs, then merge staging
+        // Delete existing branch rows for these URIs, then merge staging
         const uriPlaceholders = recs.map((_, i) => `$${i + 1}`).join(',')
-        const delStmt = await con.prepare(`DELETE FROM ${child.tableName} WHERE parent_uri IN (${uriPlaceholders})`)
-        bindParams(
-          delStmt,
+        await port.execute(
+          `DELETE FROM ${branch.tableName} WHERE parent_uri IN (${uriPlaceholders})`,
           recs.map((r) => r.uri),
         )
-        await delStmt.run()
 
-        const childSelectCols = childAllCols.map((name) => {
-          const col = child.columns.find((c) => c.name === name)
-          if (col && col.duckdbType === 'TIMESTAMP') return `TRY_CAST(${name} AS TIMESTAMP) AS ${name}`
+        const branchSelectCols = branchAllCols.map((name) => {
+          const col = branch.columns.find((c) => c.name === name)
+          if (col && (col.sqlType === 'TIMESTAMP' || col.sqlType === 'TIMESTAMPTZ')) {
+            return `${dialect.tryCastTimestamp(name)} AS ${name}`
+          }
           return name
         })
-        await con.run(
-          `INSERT INTO ${child.tableName} (${childAllCols.join(', ')}) SELECT ${childSelectCols.join(', ')} FROM ${childStagingTable} WHERE parent_uri IS NOT NULL`,
+        await port.execute(
+          `INSERT INTO ${branch.tableName} (${branchAllCols.join(', ')}) SELECT ${branchSelectCols.join(', ')} FROM ${branchStagingTable} WHERE parent_uri IS NOT NULL`,
+          [],
         )
-        await con.run(`DROP TABLE ${childStagingTable}`)
+        await port.execute(`DROP TABLE ${branchStagingTable}`, [])
       }
-
-      // Populate union branch tables
-      for (const union of schema.unions) {
-        for (const branch of union.branches) {
-          const branchStagingTable = `_staging_${collection.replace(/\./g, '_')}__${toSnakeCase(union.fieldName)}_${branch.branchName}`
-          const branchColDefs = [
-            'parent_uri TEXT',
-            'parent_did TEXT',
-            ...branch.columns.map((c) => `${c.name} ${c.duckdbType === 'TIMESTAMP' ? 'TEXT' : c.duckdbType}`),
-          ]
-          const branchAllCols = ['parent_uri', 'parent_did', ...branch.columns.map((c) => c.name)]
-
-          await con.run(`DROP TABLE IF EXISTS ${branchStagingTable}`)
-          await con.run(`CREATE TABLE ${branchStagingTable} (${branchColDefs.join(', ')})`)
-
-          const branchAppender = await con.createAppender(branchStagingTable)
-
-          for (const rec of recs) {
-            const unionValue = rec.record[union.fieldName]
-            if (!unionValue || typeof unionValue !== 'object') continue
-            if (unionValue.$type !== branch.type) continue
-
-            if (branch.isArray && branch.arrayField) {
-              const items = resolveBranchData(unionValue, branch)[branch.arrayField]
-              if (!Array.isArray(items)) continue
-              for (const item of items) {
-                try {
-                  branchAppender.appendVarchar(rec.uri)
-                  branchAppender.appendVarchar(rec.did)
-                  for (const col of branch.columns) {
-                    const rawValue = item[col.originalName]
-                    if (rawValue === undefined || rawValue === null) {
-                      branchAppender.appendNull()
-                    } else if (col.duckdbType === 'JSON') {
-                      branchAppender.appendVarchar(JSON.stringify(rawValue))
-                    } else if (col.duckdbType === 'INTEGER') {
-                      branchAppender.appendInteger(typeof rawValue === 'number' ? rawValue : parseInt(rawValue))
-                    } else if (col.duckdbType === 'BOOLEAN') {
-                      branchAppender.appendBoolean(!!rawValue)
-                    } else {
-                      branchAppender.appendVarchar(String(rawValue))
-                    }
-                  }
-                  branchAppender.endRow()
-                } catch {
-                  // Skip bad items
-                }
-              }
-            } else {
-              try {
-                const branchData = resolveBranchData(unionValue, branch)
-                branchAppender.appendVarchar(rec.uri)
-                branchAppender.appendVarchar(rec.did)
-                for (const col of branch.columns) {
-                  const rawValue = branchData[col.originalName]
-                  if (rawValue === undefined || rawValue === null) {
-                    branchAppender.appendNull()
-                  } else if (col.duckdbType === 'JSON') {
-                    branchAppender.appendVarchar(JSON.stringify(rawValue))
-                  } else if (col.duckdbType === 'INTEGER') {
-                    branchAppender.appendInteger(typeof rawValue === 'number' ? rawValue : parseInt(rawValue))
-                  } else if (col.duckdbType === 'BOOLEAN') {
-                    branchAppender.appendBoolean(!!rawValue)
-                  } else {
-                    branchAppender.appendVarchar(String(rawValue))
-                  }
-                }
-                branchAppender.endRow()
-              } catch {
-                // Skip bad records
-              }
-            }
-          }
-
-          branchAppender.flushSync()
-          branchAppender.closeSync()
-
-          // Delete existing branch rows for these URIs, then merge staging
-          const uriPlaceholders = recs.map((_, i) => `$${i + 1}`).join(',')
-          const delStmt = await con.prepare(`DELETE FROM ${branch.tableName} WHERE parent_uri IN (${uriPlaceholders})`)
-          bindParams(
-            delStmt,
-            recs.map((r) => r.uri),
-          )
-          await delStmt.run()
-
-          const branchSelectCols = branchAllCols.map((name) => {
-            const col = branch.columns.find((c) => c.name === name)
-            if (col && col.duckdbType === 'TIMESTAMP') return `TRY_CAST(${name} AS TIMESTAMP) AS ${name}`
-            return name
-          })
-          await con.run(
-            `INSERT INTO ${branch.tableName} (${branchAllCols.join(', ')}) SELECT ${branchSelectCols.join(', ')} FROM ${branchStagingTable} WHERE parent_uri IS NOT NULL`,
-          )
-          await con.run(`DROP TABLE ${branchStagingTable}`)
-        }
-      }
-    })
+    }
   }
 
   return inserted
+}
+
+/** Extract a column value from a record, handling strongRef expansion and type coercion for bulk insert */
+function resolveColumnValue(col: { name: string; originalName: string; sqlType: string; isRef: boolean }, record: Record<string, any>): unknown {
+  let rawValue = record[col.originalName]
+  if (rawValue && typeof rawValue === 'object' && col.name.endsWith('_uri') && col.isRef) {
+    rawValue = rawValue.uri
+  } else if (col.originalName.endsWith('__cid') && record[col.originalName.replace('__cid', '')]) {
+    rawValue = record[col.originalName.replace('__cid', '')].cid
+  }
+  return coerceValue(col.sqlType, rawValue)
+}
+
+/** Extract a raw column value from a data object and coerce for bulk insert */
+function resolveRawColumnValue(col: { originalName: string; sqlType: string }, data: Record<string, any>): unknown {
+  return coerceValue(col.sqlType, data[col.originalName])
+}
+
+/** Coerce a value to the appropriate type for insertion */
+function coerceValue(sqlType: string, rawValue: any): unknown {
+  if (rawValue === undefined || rawValue === null) return null
+  // Objects and arrays always need JSON stringification regardless of sqlType
+  // (on SQLite, JSON columns map to TEXT but still need stringification)
+  if (typeof rawValue === 'object' && !(rawValue instanceof Uint8Array)) {
+    return JSON.stringify(rawValue)
+  }
+  if (sqlType === 'JSON' || sqlType === 'TEXT') {
+    return String(rawValue)
+  }
+  if (sqlType === 'INTEGER' || sqlType === 'BIGINT') {
+    return typeof rawValue === 'number' ? rawValue : parseInt(rawValue)
+  }
+  if (sqlType === 'BOOLEAN') return !!rawValue
+  return String(rawValue)
 }
 
 interface QueryOpts {
@@ -1030,7 +970,7 @@ export async function searchRecords(
 
   const elapsed = timer()
   const { limit = 20, cursor, fuzzy = true } = opts
-  const textCols = schema.columns.filter((c) => c.duckdbType === 'TEXT')
+  const textCols = schema.columns.filter((c) => c.sqlType === 'TEXT')
 
   // Also check if FTS has indexed any columns (including derived JSON columns)
   const ftsSearchCols = getSearchColumns(collection)
@@ -1045,38 +985,34 @@ export async function searchRecords(
   const phaseErrors: string[] = []
   const phasesUsed: string[] = []
 
-  // Phase 1: BM25 ranked search on FTS shadow table
+  // Phase 1: BM25 ranked search via SearchPort
   let bm25Results: any[] = []
-  try {
-    let paramIdx = 1
-
+  const sp = getSearchPort()
+  if (sp) try {
     const ftsQuery = stripStopWords(query)
-    const isMultiWord = ftsQuery.split(/\s+/).length > 1
-    const conjunctiveFlag = isMultiWord ? ', conjunctive := 1' : ''
-    let sql = `SELECT m.*, ${ftsSchema}.match_bm25(s.uri, $${paramIdx++}${conjunctiveFlag}) AS score
-      FROM ${safeName} s
-      JOIN ${schema.tableName} m ON m.uri = s.uri
-      LEFT JOIN _repos r ON m.did = r.did
-      WHERE score IS NOT NULL
-      AND (r.status IS NULL OR r.status != 'takendown')`
+    const ftsSearchColNames = getSearchColumns(collection)
 
-    const params: any[] = [ftsQuery]
+    // Get ranked URIs from the search port
+    const hits = await sp.search(safeName, ftsQuery, ftsSearchColNames, limit + 1, 0)
+    if (hits.length > 0) {
+      const uriList = hits.map((h) => h.uri)
+      const scoreMap = new Map(hits.map((h) => [h.uri, h.score]))
 
-    if (cursor) {
-      const parsed = unpackCursor(cursor)
-      if (parsed) {
-        const pScore1 = `$${paramIdx++}`
-        const pScore2 = `$${paramIdx++}`
-        const pCid = `$${paramIdx++}`
-        sql += ` AND (score > ${pScore1} OR (score = ${pScore2} AND m.cid < ${pCid}))`
-        params.push(parsed.primary, parsed.primary, parsed.cid)
-      }
+      // Fetch full records for matched URIs
+      const placeholders = uriList.map((_, i) => `$${i + 1}`).join(', ')
+      const rows = await all(
+        `SELECT m.* FROM ${schema.tableName} m
+          LEFT JOIN _repos r ON m.did = r.did
+          WHERE m.uri IN (${placeholders})
+          AND (r.status IS NULL OR r.status != 'takendown')`,
+        ...uriList,
+      )
+
+      // Re-attach scores and sort
+      bm25Results = rows
+        .map((r: any) => ({ ...r, score: scoreMap.get(r.uri) ?? 0 }))
+        .sort((a: any, b: any) => b.score - a.score)
     }
-
-    sql += ` ORDER BY score, m.cid DESC LIMIT $${paramIdx++}`
-    params.push(limit + 1)
-
-    bm25Results = await all(sql, ...params)
     phasesUsed.push('bm25')
   } catch (err: any) {
     phaseErrors.push(`bm25: ${err.message}`)
@@ -1095,21 +1031,22 @@ export async function searchRecords(
     const ilikeConds: string[] = []
     const params: any[] = []
 
-    // TEXT columns — direct ILIKE
+    // TEXT columns — direct ILIKE/LIKE
     for (const c of textCols) {
-      ilikeConds.push(`t.${c.name} ILIKE $${paramIdx++}`)
+      ilikeConds.push(`t.${c.name} ${dialect.ilike} $${paramIdx++}`)
       params.push(searchParam)
     }
 
-    // JSON columns — cast to text then ILIKE
-    const jsonCols = schema.columns.filter((c) => c.duckdbType === 'JSON')
+    // JSON columns — cast to text then ILIKE/LIKE
+    const jsonCols = schema.columns.filter((c) => c.sqlType === 'JSON' || c.sqlType === 'TEXT')
     for (const c of jsonCols) {
-      ilikeConds.push(`CAST(t.${c.name} AS TEXT) ILIKE $${paramIdx++}`)
+      if (textCols.some((tc) => tc.name === c.name)) continue // skip already-added TEXT cols
+      ilikeConds.push(`CAST(t.${c.name} AS TEXT) ${dialect.ilike} $${paramIdx++}`)
       params.push(searchParam)
     }
 
     // Handle from _repos table
-    ilikeConds.push(`r.handle ILIKE $${paramIdx++}`)
+    ilikeConds.push(`r.handle ${dialect.ilike} $${paramIdx++}`)
     params.push(searchParam)
 
     if (ilikeConds.length > 0) {
@@ -1148,8 +1085,8 @@ export async function searchRecords(
     const remaining = limit - bm25Results.length
     const searchParam = `%${query}%`
     let paramIdx = 1
-    const ilikeParts = textCols.map((c) => `t.${c.name} ILIKE $${paramIdx++}`)
-    ilikeParts.push(`r.handle ILIKE $${paramIdx++}`)
+    const ilikeParts = textCols.map((c) => `t.${c.name} ${dialect.ilike} $${paramIdx++}`)
+    ilikeParts.push(`r.handle ${dialect.ilike} $${paramIdx++}`)
     const ilikeConds = ilikeParts.join(' OR ')
     const params: any[] = [...textCols.map(() => searchParam), searchParam]
 
@@ -1176,24 +1113,26 @@ export async function searchRecords(
   }
 
   // Phase 4: Fuzzy fallback for typo tolerance (if still under limit)
+  // Only available on dialects with jaro_winkler_similarity (DuckDB)
   let fuzzyCount = 0
-  if (fuzzy && bm25Results.length < limit) {
+  if (fuzzy && dialect.jaroWinklerSimilarity && bm25Results.length < limit) {
     const remaining = limit - bm25Results.length
+    const jwFn = dialect.jaroWinklerSimilarity
     const simExprs = [
-      ...textCols.map((c) => `jaro_winkler_similarity(lower(t.${c.name}), lower($1))`),
-      `jaro_winkler_similarity(lower(r.handle), lower($1))`,
+      ...textCols.map((c) => `${jwFn}(lower(t.${c.name}), lower($1))`),
+      `${jwFn}(lower(r.handle), lower($1))`,
     ]
     // Include child table TEXT columns via correlated subquery
     for (const child of schema.children) {
       for (const col of child.columns) {
-        if (col.duckdbType === 'TEXT') {
+        if (col.sqlType === 'TEXT') {
           simExprs.push(
-            `COALESCE((SELECT MAX(jaro_winkler_similarity(lower(c.${col.name}), lower($1))) FROM ${child.tableName} c WHERE c.parent_uri = t.uri), 0)`,
+            `COALESCE((SELECT MAX(${jwFn}(lower(c.${col.name}), lower($1))) FROM ${child.tableName} c WHERE c.parent_uri = t.uri), 0)`,
           )
         }
       }
     }
-    const greatestExpr = `GREATEST(${simExprs.join(', ')})`
+    const greatestExpr = dialect.greatest(simExprs)
     const fuzzySQL = `SELECT t.*, ${greatestExpr} AS fuzzy_score
       FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did
       WHERE ${greatestExpr} >= 0.8
@@ -1383,7 +1322,7 @@ export function reshapeRow(
   if (schema) {
     for (const col of schema.columns) {
       nameMap.set(col.name, col.originalName)
-      if (col.duckdbType === 'JSON') jsonCols.add(col.name)
+      if (col.sqlType === 'JSON') jsonCols.add(col.name)
     }
   }
 
@@ -1496,7 +1435,7 @@ export async function queryLabelsByDid(did: string): Promise<any[]> {
 
 export async function searchAccounts(query: string, limit: number = 20): Promise<any[]> {
   return all(
-    `SELECT did, handle, status FROM _repos WHERE did ILIKE $1 OR handle ILIKE $1 ORDER BY handle LIMIT $2`,
+    `SELECT did, handle, status FROM _repos WHERE did ${dialect.ilike} $1 OR handle ${dialect.ilike} $1 ORDER BY handle LIMIT $2`,
     `%${query}%`,
     limit,
   )

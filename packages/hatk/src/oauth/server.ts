@@ -32,7 +32,7 @@ import {
   revokeRefreshToken,
 } from './db.ts'
 import { emit } from '../logger.ts'
-import { querySQL } from '../db.ts'
+import { querySQL } from '../database/db.ts'
 import { fireOnLoginHook } from '../hooks.ts'
 
 const SERVER_KEY_KID = 'appview-oauth-key'
@@ -328,7 +328,7 @@ export async function handleCallback(
   iss: string | null,
 ): Promise<{ requestUri: string; clientRedirectUri: string; clientState: string | null }> {
   // Find the matching OAuth request by pds_state (unique per PAR)
-  const { querySQL } = await import('../db.ts')
+  const { querySQL } = await import('../database/db.ts')
   let request: any = null
 
   if (state) {
@@ -437,7 +437,7 @@ export async function handleCallback(
 
   // Update the request with the DID (in case it wasn't set during PAR)
   if (!request.did && did) {
-    const { runSQL } = await import('../db.ts')
+    const { runSQL } = await import('../database/db.ts')
     await runSQL('UPDATE _oauth_requests SET did = $1 WHERE request_uri = $2', did, request.request_uri)
   }
 

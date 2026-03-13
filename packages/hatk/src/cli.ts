@@ -2,7 +2,7 @@
 import { mkdirSync, writeFileSync, existsSync, unlinkSync, readdirSync, readFileSync } from 'node:fs'
 import { resolve, join, dirname } from 'node:path'
 import { execSync, spawn } from 'node:child_process'
-import { loadLexicons, discoverCollections, buildSchemas } from './schema.ts'
+import { loadLexicons, discoverCollections, buildSchemas } from './database/schema.ts'
 import { loadConfig } from './config.ts'
 
 const args = process.argv.slice(2)
@@ -333,7 +333,7 @@ const dirs: Record<string, string> = {
 if (command === 'new') {
   const name = args[1]
   if (!name) {
-    console.error('Usage: hatk new <name> [--svelte] [--template <template-name>]')
+    console.error('Usage: hatk new <name> [--svelte] [--sqlite] [--template <template-name>]')
     process.exit(1)
   }
 
@@ -374,6 +374,8 @@ if (command === 'new') {
   }
 
   const withSvelte = args.includes('--svelte')
+  const withSqlite = args.includes('--sqlite')
+  const dbEngine = withSqlite ? 'sqlite' : 'duckdb'
   mkdirSync(dir)
   const subs = [
     'lexicons',
@@ -405,6 +407,7 @@ export default defineConfig({
   relay: 'ws://localhost:2583',
   plc: 'http://localhost:2582',
   port: 3000,
+  databaseEngine: '${dbEngine}',
   database: 'data/hatk.db',
   admins: [],
   backfill: {
@@ -1033,6 +1036,9 @@ CMD ["node", "--experimental-strip-types", "--max-old-space-size=512", "node_mod
   )
 
   const pkgDeps: Record<string, string> = { '@hatk/oauth-client': '*', hatk: '*' }
+  if (withSqlite) {
+    pkgDeps['better-sqlite3'] = '^11'
+  }
   const pkgDevDeps: Record<string, string> = {
     '@playwright/test': '^1',
     oxfmt: '^0.35.0',
@@ -1838,7 +1844,7 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
   const config = await loadConfig(resolve('hatk.config.ts'))
 
   if (config.database !== ':memory:') {
-    for (const suffix of ['', '.wal']) {
+    for (const suffix of ['', '.wal', '-shm', '-wal']) {
       const file = config.database + suffix
       if (existsSync(file)) {
         unlinkSync(file)
@@ -1998,50 +2004,22 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
   execSync('npx hatk generate types', { stdio: 'inherit', cwd: process.cwd() })
 } else if (command === 'schema') {
   const config = await loadConfig(resolve('hatk.config.ts'))
-  if (config.database === ':memory:') {
-    console.error('No database file configured (database is :memory:)')
-    process.exit(1)
-  }
 
-  // Init DB from lexicons if it doesn't exist yet
-  if (!existsSync(config.database)) {
-    const configDir = resolve('.')
-    const lexicons = loadLexicons(resolve(configDir, 'lexicons'))
-    const collections = config.collections.length > 0 ? config.collections : discoverCollections(lexicons)
-    if (collections.length === 0) {
-      console.error('No record collections found. Add record lexicons to the lexicons/ directory.')
-      process.exit(1)
-    }
+  const { initDatabase, getSchemaDump } = await import('./database/db.ts')
+  const { createAdapter } = await import('./database/adapter-factory.ts')
+  const { getDialect } = await import('./database/dialect.ts')
+  const configDir2 = resolve('.')
+  const lexicons2 = loadLexicons(resolve(configDir2, 'lexicons'))
+  const collections2 = config.collections.length > 0 ? config.collections : discoverCollections(lexicons2)
+  const { schemas: schemas2, ddlStatements: ddl2 } = buildSchemas(lexicons2, collections2, getDialect(config.databaseEngine))
+
+  if (config.database !== ':memory:') {
     mkdirSync(dirname(config.database), { recursive: true })
-    const { initDatabase } = await import('./db.ts')
-    const { schemas, ddlStatements } = buildSchemas(lexicons, collections)
-    await initDatabase(config.database, schemas, ddlStatements)
   }
+  const { adapter: adapter2 } = await createAdapter(config.databaseEngine)
+  await initDatabase(adapter2, config.database, schemas2, ddl2)
 
-  const { DuckDBInstance } = await import('@duckdb/node-api')
-  const instance = await DuckDBInstance.create(config.database)
-  const con = await instance.connect()
-
-  const tables = (await (
-    await con.runAndReadAll(
-      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' ORDER BY table_name`,
-    )
-  ).getRowObjects()) as { table_name: string }[]
-
-  for (const { table_name } of tables) {
-    console.log(`"${table_name}"`)
-    const cols = (await (
-      await con.runAndReadAll(
-        `SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = '${table_name}' ORDER BY ordinal_position`,
-      )
-    ).getRowObjects()) as { column_name: string; data_type: string; is_nullable: string }[]
-
-    for (const col of cols) {
-      const nullable = col.is_nullable === 'YES' ? '' : ' NOT NULL'
-      console.log(`  ${col.column_name.padEnd(20)} ${col.data_type}${nullable}`)
-    }
-    console.log()
-  }
+  console.log(await getSchemaDump())
 } else if (command === 'start') {
   const mainPath = resolve(import.meta.dirname!, 'main.js')
   await spawnForward('npx', ['tsx', mainPath, 'hatk.config.ts'])

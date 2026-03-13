@@ -1,11 +1,11 @@
 import { cborDecode } from './cbor.ts'
 import { parseCarFrame } from './car.ts'
-import { insertRecord, deleteRecord, setCursor, setRepoStatus, getRepoRetryInfo, listAllRepoStatuses } from './db.ts'
+import { insertRecord, deleteRecord, setCursor, setRepoStatus, getRepoRetryInfo, listAllRepoStatuses } from './database/db.ts'
 import { backfillRepo } from './backfill.ts'
-import { rebuildAllIndexes } from './fts.ts'
+import { rebuildAllIndexes } from './database/fts.ts'
 import { log, emit, timer } from './logger.ts'
 import { runLabelRules } from './labels.ts'
-import { getLexiconArray } from './schema.ts'
+import { getLexiconArray } from './database/schema.ts'
 import { validateRecord } from '@bigmoves/lexicon'
 
 /** A record pending insertion, buffered to enable batched writes. */
