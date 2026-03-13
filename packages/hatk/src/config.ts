@@ -50,8 +50,14 @@ export interface HatkConfig {
   admins: string[] // DIDs allowed to access /admin/* endpoints
 }
 
+/** Input type for defineConfig — fields that have defaults are optional. */
+export type HatkConfigInput = Partial<Omit<HatkConfig, 'oauth' | 'backfill'>> & {
+  oauth?: (Partial<OAuthConfig> & { clients: OAuthClientConfig[] }) | null
+  backfill?: Partial<BackfillConfig>
+}
+
 /** Identity function that provides type inference for hatk config files. */
-export function defineConfig(config: Partial<HatkConfig>): Partial<HatkConfig> {
+export function defineConfig(config: HatkConfigInput): HatkConfigInput {
   return config
 }
 
@@ -79,7 +85,7 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
     console.error(err.message || err)
     process.exit(1)
   }
-  const parsed: Partial<HatkConfig> & Record<string, any> = mod.default || {}
+  const parsed: HatkConfigInput & Record<string, any> = mod.default || {}
 
   const backfillRaw = parsed.backfill || ({} as Partial<BackfillConfig>)
   const env = process.env

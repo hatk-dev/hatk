@@ -1047,7 +1047,7 @@ CMD ["node", "--experimental-strip-types", "--max-old-space-size=512", "node_mod
           allowImportingTsExtensions: true,
           resolveJsonModule: true,
         },
-        include: ['feeds', 'xrpc', 'og', 'seeds', 'labels', 'jobs', 'setup', 'hatk.generated.ts'],
+        include: ['feeds', 'xrpc', 'og', 'seeds', 'labels', 'jobs', 'setup', 'hatk.generated.ts', 'hatk.config.ts'],
       },
       null,
       2,
