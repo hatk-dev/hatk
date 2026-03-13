@@ -73,7 +73,7 @@ export class DuckDBAdapter implements DatabasePort {
     })
   }
 
-  async createBulkInserter(table: string, columns: string[]): Promise<BulkInserter> {
+  async createBulkInserter(table: string, columns: string[], _options?: { onConflict?: 'ignore' | 'replace'; batchSize?: number }): Promise<BulkInserter> {
     const appender = await this.writeCon.createAppender(table.replace(/"/g, ''))
     return {
       append(values: unknown[]) {

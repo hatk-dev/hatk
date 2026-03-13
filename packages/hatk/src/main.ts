@@ -10,7 +10,7 @@ import {
   buildSchemas,
 } from './database/schema.ts'
 import { discoverViews } from './views.ts'
-import { initDatabase, getCursor, querySQL, getSqlDialect, getSchemaDump } from './database/db.ts'
+import { initDatabase, getCursor, querySQL, getSqlDialect, getSchemaDump, migrateSchema } from './database/db.ts'
 import { createAdapter } from './database/adapter-factory.ts'
 import { getDialect } from './database/dialect.ts'
 import { setSearchPort } from './database/fts.ts'
@@ -90,7 +90,16 @@ await initDatabase(adapter, config.database, schemas, ddlStatements)
 logMemory('after-db-init')
 log(`[main] Database initialized (${config.databaseEngine}, ${config.database === ':memory:' ? 'in-memory' : config.database})`)
 
-// Write db/schema.sql
+// Auto-migrate schema if lexicons changed
+const migrationChanges = await migrateSchema(schemas)
+if (migrationChanges.length > 0) {
+  log(`[main] Applied ${migrationChanges.length} schema migration(s)`)
+}
+
+// 3b. Run setup hooks (after DB init, before server)
+await initSetup(resolve(configDir, 'setup'))
+
+// Write db/schema.sql (after setup, so setup-created tables are included)
 try {
   const schemaDir = resolve(configDir, 'db')
   mkdirSync(schemaDir, { recursive: true })
@@ -101,9 +110,6 @@ try {
   )
   log(`[main] Schema written to db/schema.sql`)
 } catch {}
-
-// 3b. Run setup hooks (after DB init, before server)
-await initSetup(resolve(configDir, 'setup'))
 
 // Detect orphaned tables
 try {
@@ -163,7 +169,7 @@ function runBackfillAndRestart() {
     })
     .then((recordCount) => {
       log('[main] FTS indexes ready')
-      if (recordCount > 0) {
+      if (recordCount > 0 && !process.env.DEV_MODE) {
         logMemory('after-backfill')
         log('[main] Restarting to reclaim memory...')
         process.exit(1)

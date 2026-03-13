@@ -54,6 +54,9 @@ export interface SqlDialect {
 
   /** CREATE SEQUENCE support */
   supportsSequences: boolean
+
+  /** SQL to get columns for a table. Returns rows with column_name/name and data_type/type. */
+  introspectColumnsQuery(tableName: string): string
 }
 
 export const DUCKDB_DIALECT: SqlDialect = {
@@ -84,6 +87,8 @@ export const DUCKDB_DIALECT: SqlDialect = {
   jaroWinklerSimilarity: 'jaro_winkler_similarity',
   stringAgg: (col, sep) => `string_agg(${col}, ${sep})`,
   supportsSequences: true,
+  introspectColumnsQuery: (tableName) =>
+    `SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '${tableName}'`,
 }
 
 export const SQLITE_DIALECT: SqlDialect = {
@@ -116,6 +121,8 @@ export const SQLITE_DIALECT: SqlDialect = {
   jaroWinklerSimilarity: null,
   stringAgg: (col, sep) => `group_concat(${col}, ${sep})`,
   supportsSequences: false,
+  introspectColumnsQuery: (tableName) =>
+    `PRAGMA table_info("${tableName}")`,
 }
 
 export function getDialect(dialect: Dialect): SqlDialect {

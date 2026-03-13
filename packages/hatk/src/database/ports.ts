@@ -29,7 +29,7 @@ export interface DatabasePort {
   rollback(): Promise<void>
 
   /** Create a bulk inserter for high-throughput writes */
-  createBulkInserter(table: string, columns: string[]): Promise<BulkInserter>
+  createBulkInserter(table: string, columns: string[], options?: { onConflict?: 'ignore' | 'replace'; batchSize?: number }): Promise<BulkInserter>
 }
 
 export interface BulkInserter {

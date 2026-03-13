@@ -438,7 +438,7 @@ export async function handleCallback(
   // Update the request with the DID (in case it wasn't set during PAR)
   if (!request.did && did) {
     const { runSQL } = await import('../database/db.ts')
-    await runSQL('UPDATE _oauth_requests SET did = $1 WHERE request_uri = $2', did, request.request_uri)
+    await runSQL('UPDATE _oauth_requests SET did = $1 WHERE request_uri = $2', [did, request.request_uri])
   }
 
   // Build redirect back to client

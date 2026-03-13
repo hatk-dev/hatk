@@ -20,6 +20,9 @@ export function hatk(opts?: { port?: number }): Plugin {
         server: {
           host: '127.0.0.1',
           port: devPort,
+          watch: {
+            ignored: ['**/db/**', '**/data/**'],
+          },
           proxy: {
             '/xrpc': rule,
             '/oauth/par': rule,
@@ -78,6 +81,13 @@ export function hatk(opts?: { port?: number }): Plugin {
           DEV_MODE: '1',
         },
       })
+
+      // Suppress ECONNREFUSED proxy errors while backend is booting
+      const origError = server.config.logger.error
+      server.config.logger.error = (msg: string, opts?: any) => {
+        if (typeof msg === 'string' && msg.includes('ECONNREFUSED')) return
+        origError(msg, opts)
+      }
 
       server.httpServer?.on('close', () => {
         serverProcess?.kill()

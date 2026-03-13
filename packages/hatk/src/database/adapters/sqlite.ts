@@ -63,49 +63,34 @@ export class SQLiteAdapter implements DatabasePort {
     this.db.exec('ROLLBACK')
   }
 
-  async createBulkInserter(table: string, columns: string[]): Promise<BulkInserter> {
+  async createBulkInserter(table: string, columns: string[], options?: { onConflict?: 'ignore' | 'replace'; batchSize?: number }): Promise<BulkInserter> {
     const placeholders = columns.map(() => '?').join(', ')
-    const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`
+    const conflict = options?.onConflict === 'ignore' ? ' OR IGNORE' : options?.onConflict === 'replace' ? ' OR REPLACE' : ''
+    const sql = `INSERT${conflict} INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`
     const stmt = this.db.prepare(sql)
     const buffer: unknown[][] = []
-    const BATCH_SIZE = 500
+    const batchSize = options?.batchSize ?? 5000
 
-    const self = this
+    const flushBuffer = this.db.transaction(() => {
+      for (const row of buffer) {
+        stmt.run(...row)
+      }
+    })
+
+    const flush = () => {
+      if (buffer.length > 0) {
+        flushBuffer()
+        buffer.length = 0
+      }
+    }
+
     return {
       append(values: unknown[]) {
         buffer.push(values)
-        if (buffer.length >= BATCH_SIZE) {
-          const tx = self.db.transaction(() => {
-            for (const row of buffer) {
-              stmt.run(...row)
-            }
-          })
-          tx()
-          buffer.length = 0
-        }
+        if (buffer.length >= batchSize) flush()
       },
-      async flush() {
-        if (buffer.length > 0) {
-          const tx = self.db.transaction(() => {
-            for (const row of buffer) {
-              stmt.run(...row)
-            }
-          })
-          tx()
-          buffer.length = 0
-        }
-      },
-      async close() {
-        if (buffer.length > 0) {
-          const tx = self.db.transaction(() => {
-            for (const row of buffer) {
-              stmt.run(...row)
-            }
-          })
-          tx()
-          buffer.length = 0
-        }
-      },
+      async flush() { flush() },
+      async close() { flush() },
     }
   }
 }

@@ -220,13 +220,13 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
       for (const col of collections) {
         const schema = getSchema(col)
         if (!schema) continue
-        await runSQL(`DELETE FROM ${schema.tableName} WHERE did = $1`, did)
+        await runSQL(`DELETE FROM ${schema.tableName} WHERE did = $1`, [did])
         for (const child of schema.children) {
-          await runSQL(`DELETE FROM ${child.tableName} WHERE parent_did = $1`, did)
+          await runSQL(`DELETE FROM ${child.tableName} WHERE parent_did = $1`, [did])
         }
         for (const union of schema.unions) {
           for (const branch of union.branches) {
-            await runSQL(`DELETE FROM ${branch.tableName} WHERE parent_did = $1`, did)
+            await runSQL(`DELETE FROM ${branch.tableName} WHERE parent_did = $1`, [did])
           }
         }
       }

@@ -27,7 +27,7 @@ import type { FeedContext } from './feeds.ts'
 export interface TestContext {
   db: {
     query: (sql: string, params?: any[]) => Promise<any[]>
-    run: (sql: string, ...params: any[]) => Promise<void>
+    run: (sql: string, params?: any[]) => Promise<void>
   }
   loadFixtures: (dir?: string) => Promise<void>
   loadFeed: (name: string) => { generate: (ctx: FeedContext) => Promise<any> }
@@ -143,10 +143,7 @@ export async function createTestContext(): Promise<TestContext> {
             const row = interpolateHelpers(rec)
             await runSQL(
               `INSERT OR IGNORE INTO _repos (did, status, handle, backfilled_at) VALUES ($1, $2, $3, $4)`,
-              row.did,
-              row.status || 'active',
-              row.handle || row.did.split(':').pop() + '.test',
-              new Date().toISOString(),
+              [row.did, row.status || 'active', row.handle || row.did.split(':').pop() + '.test', new Date().toISOString()],
             )
           }
         }
@@ -174,7 +171,7 @@ export async function createTestContext(): Promise<TestContext> {
             const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ')
             await runSQL(
               `INSERT INTO "${tableName}" (${keys.map((k) => `"${k}"`).join(', ')}) VALUES (${placeholders})`,
-              ...vals,
+              vals,
             )
           }
           continue
@@ -194,10 +191,7 @@ export async function createTestContext(): Promise<TestContext> {
             seenDids.add(did)
             await runSQL(
               `INSERT OR IGNORE INTO _repos (did, status, handle, backfilled_at) VALUES ($1, $2, $3, $4)`,
-              did,
-              'active',
-              did.split(':').pop() + '.test',
-              new Date().toISOString(),
+              [did, 'active', did.split(':').pop() + '.test', new Date().toISOString()],
             )
           }
           await insertRecord(tableName, uri, cid, did, fields)

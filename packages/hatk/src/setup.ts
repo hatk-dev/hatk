@@ -25,13 +25,16 @@
 import { resolve, relative } from 'node:path'
 import { readdirSync, statSync } from 'node:fs'
 import { log } from './logger.ts'
-import { querySQL, runSQL } from './database/db.ts'
+import { querySQL, runSQL, runBatch, createBulkInserterSQL } from './database/db.ts'
+import type { BulkInserter } from './database/ports.ts'
 
 /** Context passed to each setup script's handler function. */
 export interface SetupContext {
   db: {
     query: (sql: string, params?: any[]) => Promise<any[]>
-    run: (sql: string, ...params: any[]) => Promise<void>
+    run: (sql: string, params?: any[]) => Promise<void>
+    runBatch: (operations: Array<{ sql: string; params: any[] }>) => Promise<void>
+    createBulkInserter: (table: string, columns: string[], options?: { onConflict?: 'ignore' | 'replace'; batchSize?: number }) => Promise<BulkInserter>
   }
 }
 
@@ -75,7 +78,7 @@ export async function initSetup(setupDir: string): Promise<void> {
     }
 
     const ctx: SetupContext = {
-      db: { query: querySQL, run: runSQL },
+      db: { query: querySQL, run: runSQL, runBatch, createBulkInserter: createBulkInserterSQL },
     }
 
     log(`[setup] running: ${name}`)

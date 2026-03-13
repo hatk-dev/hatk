@@ -17,7 +17,7 @@ export function closeDatabase(): void {
   port?.close()
 }
 
-async function run(sql: string, ...params: any[]): Promise<void> {
+async function run(sql: string, params: any[] = []): Promise<void> {
   return port.execute(sql, params)
 }
 
@@ -37,7 +37,7 @@ export async function runBatch(operations: Array<{ sql: string; params: any[] }>
   }
 }
 
-async function all(sql: string, ...params: any[]): Promise<any[]> {
+async function all(sql: string, params: any[] = []): Promise<any[]> {
   return port.query(sql, params)
 }
 
@@ -122,17 +122,217 @@ export async function initDatabase(
   await port.executeMultiple(OAUTH_DDL)
 }
 
+interface MigrationChange {
+  table: string
+  action: 'add' | 'drop' | 'retype'
+  column: string
+  type?: string
+}
+
+/** Normalize SQL type names to handle dialect differences (e.g. VARCHAR → TEXT) */
+function normalizeType(type: string): string {
+  const upper = type.toUpperCase()
+  if (upper === 'VARCHAR' || upper === 'CHARACTER VARYING') return 'TEXT'
+  if (upper === 'TIMESTAMP WITH TIME ZONE') return 'TIMESTAMPTZ'
+  if (upper === 'BOOLEAN' || upper === 'BOOL') return 'BOOLEAN'
+  if (upper === 'INT' || upper === 'INT4' || upper === 'INT8' || upper === 'BIGINT' || upper === 'SMALLINT') return 'INTEGER'
+  return upper
+}
+
+async function getExistingColumns(tableName: string): Promise<Map<string, string>> {
+  if (!/^[a-zA-Z0-9._]+$/.test(tableName)) {
+    throw new Error(`Invalid table name for introspection: ${tableName}`)
+  }
+  const cols = new Map<string, string>()
+  try {
+    const query = dialect.introspectColumnsQuery(tableName)
+    const rows = await all(query)
+    for (const row of rows) {
+      // SQLite PRAGMA returns { name, type }, DuckDB returns { column_name, data_type }
+      const name = (row.column_name || row.name) as string
+      const type = normalizeType((row.data_type || row.type || 'TEXT') as string)
+      cols.set(name, type)
+    }
+  } catch {
+    // Table doesn't exist yet
+  }
+  return cols
+}
+
+function diffColumns(
+  tableName: string,
+  existingCols: Map<string, string>,
+  expectedCols: Map<string, string>,
+  changes: MigrationChange[],
+): void {
+  for (const [colName, colType] of expectedCols) {
+    if (!existingCols.has(colName)) {
+      changes.push({ table: tableName, action: 'add', column: colName, type: colType })
+    }
+  }
+  for (const [colName] of existingCols) {
+    if (!expectedCols.has(colName)) {
+      changes.push({ table: tableName, action: 'drop', column: colName })
+    }
+  }
+  for (const [colName, colType] of expectedCols) {
+    const existingType = existingCols.get(colName)
+    if (existingType && normalizeType(existingType) !== normalizeType(colType)) {
+      changes.push({ table: tableName, action: 'retype', column: colName, type: colType })
+    }
+  }
+}
+
+/** Build expected columns map for a child/union table */
+function buildChildExpectedCols(columns: { name: string; sqlType: string }[]): Map<string, string> {
+  const expected = new Map<string, string>()
+  expected.set('parent_uri', 'TEXT')
+  expected.set('parent_did', 'TEXT')
+  for (const col of columns) {
+    expected.set(col.name, normalizeType(col.sqlType))
+  }
+  return expected
+}
+
+export async function migrateSchema(tableSchemas: TableSchema[]): Promise<MigrationChange[]> {
+  const changes: MigrationChange[] = []
+
+  for (const schema of tableSchemas) {
+    if (schema.columns.length === 0) continue // generic JSON storage, skip
+
+    const tableName = schema.collection
+    const existingCols = await getExistingColumns(tableName)
+    if (existingCols.size === 0) continue // table just created, nothing to migrate
+
+    // Expected columns: base columns (uri, cid, did, indexed_at) + schema columns
+    const expectedCols = new Map<string, string>()
+    expectedCols.set('uri', 'TEXT')
+    expectedCols.set('cid', 'TEXT')
+    expectedCols.set('did', 'TEXT')
+    expectedCols.set('indexed_at', normalizeType(dialect.timestampType))
+    for (const col of schema.columns) {
+      expectedCols.set(col.name, normalizeType(col.sqlType))
+    }
+
+    diffColumns(tableName, existingCols, expectedCols, changes)
+
+    // Diff child tables
+    for (const child of schema.children) {
+      const childTable = child.tableName.replace(/"/g, '')
+      const existingChildCols = await getExistingColumns(childTable)
+      if (existingChildCols.size === 0) continue
+      diffColumns(childTable, existingChildCols, buildChildExpectedCols(child.columns), changes)
+    }
+
+    // Diff union branch tables
+    for (const union of schema.unions) {
+      for (const branch of union.branches) {
+        const branchTable = branch.tableName.replace(/"/g, '')
+        const existingBranchCols = await getExistingColumns(branchTable)
+        if (existingBranchCols.size === 0) continue
+        diffColumns(branchTable, existingBranchCols, buildChildExpectedCols(branch.columns), changes)
+      }
+    }
+  }
+
+  // Detect and drop orphaned child/union tables (query table list once)
+  let allTableNames: string[] | null = null
+  try {
+    const rows = await all(dialect.listTablesQuery)
+    allTableNames = rows.map((r: any) => r.table_name as string)
+  } catch {}
+
+  if (allTableNames) {
+    for (const schema of tableSchemas) {
+      if (schema.columns.length === 0) continue
+
+      const expectedTables = new Set<string>()
+      for (const child of schema.children) {
+        expectedTables.add(child.tableName.replace(/"/g, ''))
+      }
+      for (const union of schema.unions) {
+        for (const branch of union.branches) {
+          expectedTables.add(branch.tableName.replace(/"/g, ''))
+        }
+      }
+
+      for (const name of allTableNames) {
+        if (name.startsWith(schema.collection + '__') && !expectedTables.has(name)) {
+          await run(`DROP TABLE IF EXISTS "${name}"`)
+          emit('migration', 'drop_table', { table: name })
+        }
+      }
+    }
+  }
+
+  if (changes.length > 0) {
+    await applyMigrationChanges(changes)
+  }
+
+  // Check for empty collection tables — these are newly added and need backfill
+  // Skip on fresh DB (no repos yet) since backfill runs naturally
+  const [hasRepos] = await all(`SELECT 1 FROM _repos LIMIT 1`)
+  if (hasRepos) {
+    for (const schema of tableSchemas) {
+      if (schema.columns.length === 0) continue
+      try {
+        const [row] = await all(`SELECT 1 FROM ${schema.tableName} LIMIT 1`)
+        if (!row) {
+          await run(`UPDATE _repos SET status = 'pending' WHERE status = 'active'`)
+          emit('migration', 'new_collection', { collection: schema.collection })
+          break // only need to mark once
+        }
+      } catch {}
+    }
+  }
+
+  return changes
+}
+
+async function applyMigrationChanges(changes: MigrationChange[]): Promise<void> {
+  for (const change of changes) {
+    const quotedTable = `"${change.table}"`
+    const quotedColumn = `"${change.column}"`
+    try {
+      switch (change.action) {
+        case 'add': {
+          await run(`ALTER TABLE ${quotedTable} ADD COLUMN ${quotedColumn} ${change.type}`)
+          emit('migration', 'add_column', { table: change.table, column: change.column, type: change.type })
+          const schema = schemas.get(change.table)
+          if (schema?.refColumns.includes(change.column)) {
+            const prefix = change.table.replace(/\./g, '_')
+            await run(`CREATE INDEX IF NOT EXISTS idx_${prefix}_${change.column} ON ${quotedTable}(${quotedColumn})`)
+          }
+          break
+        }
+        case 'drop':
+          await run(`ALTER TABLE ${quotedTable} DROP COLUMN ${quotedColumn}`)
+          emit('migration', 'drop_column', { table: change.table, column: change.column })
+          break
+        case 'retype':
+          await run(`ALTER TABLE ${quotedTable} DROP COLUMN ${quotedColumn}`)
+          await run(`ALTER TABLE ${quotedTable} ADD COLUMN ${quotedColumn} ${change.type}`)
+          emit('migration', 'retype_column', { table: change.table, column: change.column, type: change.type })
+          break
+      }
+    } catch (err: any) {
+      console.warn(`[migration] failed to ${change.action} column "${change.column}" on "${change.table}": ${err.message}`)
+      emit('migration', 'error', { action: change.action, table: change.table, column: change.column, error: err.message })
+    }
+  }
+}
+
 export async function getCursor(key: string): Promise<string | null> {
-  const rows = await all(`SELECT value FROM _cursor WHERE key = $1`, key)
+  const rows = await all(`SELECT value FROM _cursor WHERE key = $1`, [key])
   return rows[0]?.value || null
 }
 
 export async function setCursor(key: string, value: string): Promise<void> {
-  await run(`INSERT OR REPLACE INTO _cursor (key, value) VALUES ($1, $2)`, key, value)
+  await run(`INSERT OR REPLACE INTO _cursor (key, value) VALUES ($1, $2)`, [key, value])
 }
 
 export async function getRepoStatus(did: string): Promise<string | null> {
-  const rows = await all(`SELECT status FROM _repos WHERE did = $1`, did)
+  const rows = await all(`SELECT status FROM _repos WHERE did = $1`, [did])
   return rows[0]?.status || null
 }
 
@@ -146,52 +346,36 @@ export async function setRepoStatus(
     // Update existing row preserving handle if not provided
     await run(
       `UPDATE _repos SET status = $1, handle = COALESCE($2, handle), backfilled_at = $3, rev = COALESCE($4, rev), retry_count = 0, retry_after = 0 WHERE did = $5`,
-      status,
-      opts?.handle || null,
-      new Date().toISOString(),
-      rev || null,
-      did,
+      [status, opts?.handle || null, new Date().toISOString(), rev || null, did],
     )
     // Insert if row didn't exist yet
     await run(
       `INSERT OR IGNORE INTO _repos (did, status, handle, backfilled_at, rev, retry_count, retry_after) VALUES ($1, $2, $3, $4, $5, 0, 0)`,
-      did,
-      status,
-      opts?.handle || null,
-      new Date().toISOString(),
-      rev || null,
+      [did, status, opts?.handle || null, new Date().toISOString(), rev || null],
     )
   } else if (status === 'failed' && opts) {
     await run(
       `UPDATE _repos SET status = $1, retry_count = $2, retry_after = $3, handle = COALESCE($4, handle) WHERE did = $5`,
-      status,
-      opts.retryCount ?? 0,
-      opts.retryAfter ?? 0,
-      opts.handle || null,
-      did,
+      [status, opts.retryCount ?? 0, opts.retryAfter ?? 0, opts.handle || null, did],
     )
     // If row didn't exist yet, insert it
     await run(
       `INSERT OR IGNORE INTO _repos (did, status, handle, retry_count, retry_after) VALUES ($1, $2, $3, $4, $5)`,
-      did,
-      status,
-      opts.handle || null,
-      opts.retryCount ?? 0,
-      opts.retryAfter ?? 0,
+      [did, status, opts.handle || null, opts.retryCount ?? 0, opts.retryAfter ?? 0],
     )
   } else {
-    await run(`UPDATE _repos SET status = $1 WHERE did = $2`, status, did)
-    await run(`INSERT OR IGNORE INTO _repos (did, status) VALUES ($1, $2)`, did, status)
+    await run(`UPDATE _repos SET status = $1 WHERE did = $2`, [status, did])
+    await run(`INSERT OR IGNORE INTO _repos (did, status) VALUES ($1, $2)`, [did, status])
   }
 }
 
 export async function getRepoRev(did: string): Promise<string | null> {
-  const rows = await all(`SELECT rev FROM _repos WHERE did = $1`, did)
+  const rows = await all(`SELECT rev FROM _repos WHERE did = $1`, [did])
   return rows[0]?.rev ?? null
 }
 
 export async function getRepoRetryInfo(did: string): Promise<{ retryCount: number; retryAfter: number } | null> {
-  const rows = await all(`SELECT retry_count, retry_after FROM _repos WHERE did = $1`, did)
+  const rows = await all(`SELECT retry_count, retry_after FROM _repos WHERE did = $1`, [did])
   if (rows.length === 0) return null
   return { retryCount: Number(rows[0].retry_count), retryAfter: Number(rows[0].retry_after) }
 }
@@ -200,8 +384,7 @@ export async function listRetryEligibleRepos(maxRetries: number): Promise<string
   const now = Math.floor(Date.now() / 1000)
   const rows = await all(
     `SELECT did FROM _repos WHERE status = 'failed' AND retry_after <= $1 AND retry_count < $2`,
-    now,
-    maxRetries,
+    [now, maxRetries],
   )
   return rows.map((r: any) => r.did)
 }
@@ -240,14 +423,12 @@ export async function listReposPaginated(
 
   const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : ''
 
-  const countRows = await all(`SELECT ${dialect.countAsInteger} as total FROM _repos${where}`, ...params)
+  const countRows = await all(`SELECT ${dialect.countAsInteger} as total FROM _repos${where}`, params)
   const total = Number(countRows[0]?.total || 0)
 
   const rows = await all(
     `SELECT did, handle, status, backfilled_at, rev FROM _repos${where} ORDER BY CASE WHEN backfilled_at IS NULL THEN 1 ELSE 0 END, backfilled_at DESC, did LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
-    ...params,
-    limit,
-    offset,
+    [...params, limit, offset],
   )
 
   return { repos: rows, total }
@@ -340,7 +521,7 @@ export async function insertRecord(
   const schema = schemas.get(collection)
   if (!schema) throw new Error(`Unknown collection: ${collection}`)
   const { sql, params } = buildInsertOp(collection, uri, cid, authorDid, record)
-  await run(sql, ...params)
+  await run(sql, params)
 
   // Insert child table rows
   for (const child of schema.children) {
@@ -348,7 +529,7 @@ export async function insertRecord(
     if (!Array.isArray(items)) continue
 
     // Delete existing child rows (handles INSERT OR REPLACE on main table)
-    await run(`DELETE FROM ${child.tableName} WHERE parent_uri = $1`, uri)
+    await run(`DELETE FROM ${child.tableName} WHERE parent_uri = $1`, [uri])
 
     for (const item of items) {
       const colNames = ['parent_uri', 'parent_did']
@@ -371,7 +552,7 @@ export async function insertRecord(
 
       await run(
         `INSERT INTO ${child.tableName} (${colNames.join(', ')}) VALUES (${placeholders.join(', ')})`,
-        ...values,
+        values,
       )
     }
   }
@@ -386,7 +567,7 @@ export async function insertRecord(
 
     // Delete existing branch rows (handles INSERT OR REPLACE)
     for (const b of union.branches) {
-      await run(`DELETE FROM ${b.tableName} WHERE parent_uri = $1`, uri)
+      await run(`DELETE FROM ${b.tableName} WHERE parent_uri = $1`, [uri])
     }
 
     if (branch.isArray && branch.arrayField) {
@@ -412,7 +593,7 @@ export async function insertRecord(
         }
         await run(
           `INSERT INTO ${branch.tableName} (${colNames.join(', ')}) VALUES (${placeholders.join(', ')})`,
-          ...values,
+          values,
         )
       }
     } else {
@@ -436,7 +617,7 @@ export async function insertRecord(
       }
       await run(
         `INSERT INTO ${branch.tableName} (${colNames.join(', ')}) VALUES (${placeholders.join(', ')})`,
-        ...values,
+        values,
       )
     }
   }
@@ -455,14 +636,14 @@ export async function deleteRecord(collection: string, uri: string): Promise<voi
   const schema = schemas.get(collection)
   if (!schema) return
   for (const child of schema.children) {
-    await run(`DELETE FROM ${child.tableName} WHERE parent_uri = $1`, uri)
+    await run(`DELETE FROM ${child.tableName} WHERE parent_uri = $1`, [uri])
   }
   for (const union of schema.unions) {
     for (const branch of union.branches) {
-      await run(`DELETE FROM ${branch.tableName} WHERE parent_uri = $1`, uri)
+      await run(`DELETE FROM ${branch.tableName} WHERE parent_uri = $1`, [uri])
     }
   }
-  await run(`DELETE FROM ${schema.tableName} WHERE uri = $1`, uri)
+  await run(`DELETE FROM ${schema.tableName} WHERE uri = $1`, [uri])
 }
 
 export async function insertLabels(
@@ -473,20 +654,13 @@ export async function insertLabels(
     // Skip if an active (non-negated, non-expired, not-superseded-by-negation) label already exists
     const existing = await all(
       `SELECT 1 FROM _labels l1 WHERE l1.src = $1 AND l1.uri = $2 AND l1.val = $3 AND l1.neg = false AND (l1.exp IS NULL OR l1.exp > CURRENT_TIMESTAMP) AND NOT EXISTS (SELECT 1 FROM _labels l2 WHERE l2.uri = l1.uri AND l2.val = l1.val AND l2.neg = true AND l2.id > l1.id) LIMIT 1`,
-      label.src,
-      label.uri,
-      label.val,
+      [label.src, label.uri, label.val],
     )
     if (!label.neg && existing.length > 0) continue
 
     await run(
       `INSERT INTO _labels (src, uri, val, neg, cts, exp) VALUES ($1, $2, $3, $4, $5, $6)`,
-      label.src,
-      label.uri,
-      label.val,
-      label.neg || false,
-      label.cts || new Date().toISOString(),
-      label.exp || null,
+      [label.src, label.uri, label.val, label.neg || false, label.cts || new Date().toISOString(), label.exp || null],
     )
   }
 }
@@ -500,7 +674,7 @@ export async function queryLabelsForUris(
   const placeholders = uris.map((_, i) => `$${i + 1}`).join(',')
   const rows = await all(
     `SELECT src, uri, val, neg, cts, exp FROM _labels l1 WHERE uri IN (${placeholders}) AND (exp IS NULL OR exp > CURRENT_TIMESTAMP) AND neg = false AND NOT EXISTS (SELECT 1 FROM _labels l2 WHERE l2.uri = l1.uri AND l2.val = l1.val AND l2.neg = true AND l2.id > l1.id)`,
-    ...uris,
+    uris,
   )
   const result = new Map<string, Array<any>>()
   for (const row of rows) {
@@ -832,7 +1006,7 @@ export async function queryRecords(
   sql += ` ORDER BY t.${sortName} ${order.toUpperCase()}, t.cid ${order.toUpperCase()} LIMIT $${paramIdx++}`
   params.push(limit + 1) // fetch one extra for cursor
 
-  const rows = await all(sql, ...params)
+  const rows = await all(sql, params)
   const hasMore = rows.length > limit
   if (hasMore) rows.pop()
 
@@ -876,7 +1050,7 @@ export async function getRecordByUri(uri: string): Promise<any | null> {
   for (const [_collection, schema] of schemas) {
     const rows = await all(
       `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE t.uri = $1 AND (r.status IS NULL OR r.status != 'takendown')`,
-      uri,
+      [uri],
     )
     if (rows.length > 0) {
       const row = rows[0]
@@ -913,7 +1087,7 @@ export async function getRecordsByUris(collection: string, uris: string[]): Prom
   const placeholders = uris.map((_, i) => `$${i + 1}`).join(',')
   const rows = await all(
     `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE t.uri IN (${placeholders}) AND (r.status IS NULL OR r.status != 'takendown')`,
-    ...uris,
+    uris,
   )
 
   // Batch-fetch child rows for all URIs
@@ -1005,7 +1179,7 @@ export async function searchRecords(
           LEFT JOIN _repos r ON m.did = r.did
           WHERE m.uri IN (${placeholders})
           AND (r.status IS NULL OR r.status != 'takendown')`,
-        ...uriList,
+        uriList,
       )
 
       // Re-attach scores and sort
@@ -1056,7 +1230,7 @@ export async function searchRecords(
         LIMIT $${paramIdx++}`
       params.push(limit)
 
-      const rows = await all(exactSQL, ...params)
+      const rows = await all(exactSQL, params)
       phasesUsed.push('exact')
       for (const row of rows) {
         if (!bm25Uris.has(row.uri)) {
@@ -1097,7 +1271,7 @@ export async function searchRecords(
     params.push(rebuiltAt, remaining + existingUris.size)
 
     try {
-      const recentRows = await all(recentSQL, ...params)
+      const recentRows = await all(recentSQL, params)
       phasesUsed.push('recent')
       for (const row of recentRows) {
         if (bm25Results.length >= limit) break
@@ -1140,7 +1314,7 @@ export async function searchRecords(
       LIMIT $2`
 
     try {
-      const fuzzyRows = await all(fuzzySQL, query, remaining + existingUris.size)
+      const fuzzyRows = await all(fuzzySQL, [query, remaining + existingUris.size])
       phasesUsed.push('fuzzy')
       for (const row of fuzzyRows) {
         if (bm25Results.length >= limit) break
@@ -1178,11 +1352,15 @@ export async function searchRecords(
 
 // Raw SQL for script feeds
 export async function querySQL(sql: string, params: any[] = []): Promise<any[]> {
-  return all(sql, ...params)
+  return all(sql, params)
 }
 
-export async function runSQL(sql: string, ...params: any[]): Promise<void> {
-  return run(sql, ...params)
+export async function runSQL(sql: string, params: any[] = []): Promise<void> {
+  return run(sql, params)
+}
+
+export async function createBulkInserterSQL(table: string, columns: string[], options?: { onConflict?: 'ignore' | 'replace'; batchSize?: number }): Promise<import('./ports.ts').BulkInserter> {
+  return port.createBulkInserter(table, columns, options)
 }
 
 export function getSchema(collection: string): TableSchema | undefined {
@@ -1192,7 +1370,7 @@ export function getSchema(collection: string): TableSchema | undefined {
 export async function countByField(collection: string, field: string, value: string): Promise<number> {
   const schema = schemas.get(collection)
   if (!schema) return 0
-  const rows = await all(`SELECT COUNT(*) as count FROM ${schema.tableName} WHERE ${field} = $1`, value)
+  const rows = await all(`SELECT COUNT(*) as count FROM ${schema.tableName} WHERE ${field} = $1`, [value])
   return Number(rows[0]?.count || 0)
 }
 
@@ -1207,7 +1385,7 @@ export async function countByFieldBatch(
   const placeholders = values.map((_, i) => `$${i + 1}`).join(',')
   const rows = await all(
     `SELECT ${field}, COUNT(*) as count FROM ${schema.tableName} WHERE ${field} IN (${placeholders}) GROUP BY ${field}`,
-    ...values,
+    values,
   )
   const result = new Map<string, number>()
   for (const row of rows) {
@@ -1219,7 +1397,7 @@ export async function countByFieldBatch(
 export async function findByField(collection: string, field: string, value: string): Promise<any | null> {
   const schema = schemas.get(collection)
   if (!schema) return null
-  const rows = await all(`SELECT * FROM ${schema.tableName} WHERE ${field} = $1 LIMIT 1`, value)
+  const rows = await all(`SELECT * FROM ${schema.tableName} WHERE ${field} = $1 LIMIT 1`, [value])
   return rows[0] || null
 }
 
@@ -1234,7 +1412,7 @@ export async function findByFieldBatch(
   const placeholders = values.map((_, i) => `$${i + 1}`).join(',')
   const rows = await all(
     `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE t.${field} IN (${placeholders})`,
-    ...values,
+    values,
   )
   // Attach child data if this collection has decomposed arrays
   if (schema.children.length > 0 && rows.length > 0) {
@@ -1281,7 +1459,7 @@ export async function findUriByFields(
   if (!schema) return null
   const where = conditions.map((c, i) => `${c.field} = $${i + 1}`).join(' AND ')
   const params = conditions.map((c) => c.value)
-  const rows = await all(`SELECT uri FROM ${schema.tableName} WHERE ${where} LIMIT 1`, ...params)
+  const rows = await all(`SELECT uri FROM ${schema.tableName} WHERE ${where} LIMIT 1`, params)
   return rows[0]?.uri || null
 }
 
@@ -1297,7 +1475,7 @@ export function normalizeValue(v: any): any {
 export async function getChildRows(childTableName: string, parentUris: string[]): Promise<Map<string, any[]>> {
   if (parentUris.length === 0) return new Map()
   const placeholders = parentUris.map((_, i) => `$${i + 1}`).join(',')
-  const rows = await all(`SELECT * FROM ${childTableName} WHERE parent_uri IN (${placeholders})`, ...parentUris)
+  const rows = await all(`SELECT * FROM ${childTableName} WHERE parent_uri IN (${placeholders})`, parentUris)
   const result = new Map<string, any[]>()
   for (const row of rows) {
     const key = row.parent_uri as string
@@ -1429,22 +1607,21 @@ export function unpackCursor(cursor: string): { primary: string; cid: string } |
 export async function queryLabelsByDid(did: string): Promise<any[]> {
   return all(
     `SELECT * FROM _labels WHERE uri LIKE $1 AND neg = false AND (exp IS NULL OR exp > CURRENT_TIMESTAMP)`,
-    `at://${did}/%`,
+    [`at://${did}/%`],
   )
 }
 
 export async function searchAccounts(query: string, limit: number = 20): Promise<any[]> {
   return all(
     `SELECT did, handle, status FROM _repos WHERE did ${dialect.ilike} $1 OR handle ${dialect.ilike} $1 ORDER BY handle LIMIT $2`,
-    `%${query}%`,
-    limit,
+    [`%${query}%`, limit],
   )
 }
 
 export async function getAccountRecordCount(did: string): Promise<number> {
   let total = 0
   for (const [, schema] of schemas) {
-    const rows = await all(`SELECT COUNT(*) as count FROM ${schema.tableName} WHERE did = $1`, did)
+    const rows = await all(`SELECT COUNT(*) as count FROM ${schema.tableName} WHERE did = $1`, [did])
     total += Number(rows[0]?.count || 0)
   }
   return total
@@ -1453,19 +1630,19 @@ export async function getAccountRecordCount(did: string): Promise<number> {
 export async function getAllRecordUrisForDid(did: string): Promise<string[]> {
   const uris: string[] = []
   for (const [, schema] of schemas) {
-    const rows = await all(`SELECT uri FROM ${schema.tableName} WHERE did = $1`, did)
+    const rows = await all(`SELECT uri FROM ${schema.tableName} WHERE did = $1`, [did])
     uris.push(...rows.map((r: any) => r.uri))
   }
   return uris
 }
 
 export async function isTakendownDid(did: string): Promise<boolean> {
-  const rows = await all(`SELECT 1 FROM _repos WHERE did = $1 AND status = 'takendown' LIMIT 1`, did)
+  const rows = await all(`SELECT 1 FROM _repos WHERE did = $1 AND status = 'takendown' LIMIT 1`, [did])
   return rows.length > 0
 }
 
 export async function getPreferences(did: string): Promise<Record<string, any>> {
-  const rows = await all(`SELECT key, value FROM _preferences WHERE did = $1`, did)
+  const rows = await all(`SELECT key, value FROM _preferences WHERE did = $1`, [did])
   const prefs: Record<string, any> = {}
   for (const row of rows) {
     try {
@@ -1480,16 +1657,13 @@ export async function getPreferences(did: string): Promise<Record<string, any>> 
 export async function putPreference(did: string, key: string, value: any): Promise<void> {
   await run(
     `INSERT OR REPLACE INTO _preferences (did, key, value, updated_at) VALUES ($1, $2, $3, $4)`,
-    did,
-    key,
-    JSON.stringify(value),
-    new Date().toISOString(),
+    [did, key, JSON.stringify(value), new Date().toISOString()],
   )
 }
 
 export async function filterTakendownDids(dids: string[]): Promise<Set<string>> {
   if (dids.length === 0) return new Set()
   const placeholders = dids.map((_, i) => `$${i + 1}`).join(',')
-  const rows = await all(`SELECT did FROM _repos WHERE did IN (${placeholders}) AND status = 'takendown'`, ...dids)
+  const rows = await all(`SELECT did FROM _repos WHERE did IN (${placeholders}) AND status = 'takendown'`, dids)
   return new Set(rows.map((r: any) => r.did))
 }
