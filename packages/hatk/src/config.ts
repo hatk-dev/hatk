@@ -96,7 +96,7 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
     relay: env.RELAY || parsed.relay || 'ws://localhost:2583',
     plc: env.DID_PLC_URL || parsed.plc || 'https://plc.directory',
     port: parseInt(env.PORT || '') || parsed.port || 3000,
-    databaseEngine: ((env.DATABASE_ENGINE || parsed.databaseEngine || 'duckdb') as HatkConfig['databaseEngine']),
+    databaseEngine: ((env.DATABASE_ENGINE || parsed.databaseEngine || 'sqlite') as HatkConfig['databaseEngine']),
     database: database ? resolve(configDir, database) : ':memory:',
     publicDir: parsed.publicDir === null ? null : resolve(configDir, parsed.publicDir || './public'),
     collections: parsed.collections || [],

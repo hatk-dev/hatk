@@ -67,7 +67,7 @@ function usage() {
   Usage: hatk <command> [options]
 
   Getting Started
-    new <name> [--svelte] [--template <t>] Create a new hatk project
+    new <name> [--svelte] [--duckdb] [--template <t>] Create a new hatk project
 
   Running
     start                                  Start the hatk server
@@ -333,7 +333,7 @@ const dirs: Record<string, string> = {
 if (command === 'new') {
   const name = args[1]
   if (!name) {
-    console.error('Usage: hatk new <name> [--svelte] [--sqlite] [--template <template-name>]')
+    console.error('Usage: hatk new <name> [--svelte] [--duckdb] [--template <template-name>]')
     process.exit(1)
   }
 
@@ -374,8 +374,8 @@ if (command === 'new') {
   }
 
   const withSvelte = args.includes('--svelte')
-  const withSqlite = args.includes('--sqlite')
-  const dbEngine = withSqlite ? 'sqlite' : 'duckdb'
+  const withDuckdb = args.includes('--duckdb')
+  const dbEngine = withDuckdb ? 'duckdb' : 'sqlite'
   mkdirSync(dir)
   const subs = [
     'lexicons',
@@ -1036,7 +1036,7 @@ CMD ["node", "--experimental-strip-types", "--max-old-space-size=512", "node_mod
   )
 
   const pkgDeps: Record<string, string> = { '@hatk/oauth-client': '*', hatk: '*' }
-  if (withSqlite) {
+  if (!withDuckdb) {
     pkgDeps['better-sqlite3'] = '^11'
   }
   const pkgDevDeps: Record<string, string> = {
