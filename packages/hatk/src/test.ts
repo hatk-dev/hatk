@@ -141,10 +141,12 @@ export async function createTestContext(): Promise<TestContext> {
         if (Array.isArray(records)) {
           for (const rec of records) {
             const row = interpolateHelpers(rec)
-            await runSQL(
-              `INSERT OR IGNORE INTO _repos (did, status, handle, backfilled_at) VALUES ($1, $2, $3, $4)`,
-              [row.did, row.status || 'active', row.handle || row.did.split(':').pop() + '.test', new Date().toISOString()],
-            )
+            await runSQL(`INSERT OR IGNORE INTO _repos (did, status, handle, backfilled_at) VALUES ($1, $2, $3, $4)`, [
+              row.did,
+              row.status || 'active',
+              row.handle || row.did.split(':').pop() + '.test',
+              new Date().toISOString(),
+            ])
           }
         }
       }
@@ -189,10 +191,12 @@ export async function createTestContext(): Promise<TestContext> {
           // Auto-register DID in _repos if not already present
           if (!seenDids.has(did)) {
             seenDids.add(did)
-            await runSQL(
-              `INSERT OR IGNORE INTO _repos (did, status, handle, backfilled_at) VALUES ($1, $2, $3, $4)`,
-              [did, 'active', did.split(':').pop() + '.test', new Date().toISOString()],
-            )
+            await runSQL(`INSERT OR IGNORE INTO _repos (did, status, handle, backfilled_at) VALUES ($1, $2, $3, $4)`, [
+              did,
+              'active',
+              did.split(':').pop() + '.test',
+              new Date().toISOString(),
+            ])
           }
           await insertRecord(tableName, uri, cid, did, fields)
         }

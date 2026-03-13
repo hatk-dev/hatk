@@ -255,7 +255,12 @@ function resolveUnionBranch(
 }
 
 // Generate a TableSchema from a lexicon record definition
-export function generateTableSchema(nsid: string, lexicon: any, lexicons?: Map<string, any>, dialect: SqlDialect = DUCKDB_DIALECT): TableSchema {
+export function generateTableSchema(
+  nsid: string,
+  lexicon: any,
+  lexicons?: Map<string, any>,
+  dialect: SqlDialect = DUCKDB_DIALECT,
+): TableSchema {
   const mainDef = lexicon.defs?.main
   if (!mainDef || mainDef.type !== 'record') {
     throw new Error(`Lexicon ${nsid} does not define a record type`)

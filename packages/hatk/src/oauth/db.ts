@@ -73,10 +73,11 @@ export async function getServerKey(kid: string): Promise<{ privateKey: string; p
 }
 
 export async function storeServerKey(kid: string, privateKey: string, publicKey: string): Promise<void> {
-  await runSQL(
-    'INSERT OR REPLACE INTO _oauth_keys (kid, private_key, public_key) VALUES ($1, $2, $3)',
-    [kid, privateKey, publicKey],
-  )
+  await runSQL('INSERT OR REPLACE INTO _oauth_keys (kid, private_key, public_key) VALUES ($1, $2, $3)', [
+    kid,
+    privateKey,
+    publicKey,
+  ])
 }
 
 // --- OAuth Request Storage ---
@@ -138,10 +139,11 @@ export async function deleteOAuthRequest(requestUri: string): Promise<void> {
 // --- Authorization Codes ---
 
 export async function storeAuthCode(code: string, requestUri: string): Promise<void> {
-  await runSQL(
-    'INSERT INTO _oauth_codes (code, request_uri, created_at) VALUES ($1, $2, $3)',
-    [code, requestUri, Math.floor(Date.now() / 1000)],
-  )
+  await runSQL('INSERT INTO _oauth_codes (code, request_uri, created_at) VALUES ($1, $2, $3)', [
+    code,
+    requestUri,
+    Math.floor(Date.now() / 1000),
+  ])
 }
 
 export async function consumeAuthCode(code: string): Promise<string | null> {
@@ -223,8 +225,7 @@ export async function cleanupExpiredOAuth(): Promise<void> {
   await runSQL('DELETE FROM _oauth_dpop_jtis WHERE expires_at < $1', [now])
   await runSQL('DELETE FROM _oauth_requests WHERE expires_at < $1', [now])
   await runSQL('DELETE FROM _oauth_codes WHERE created_at < $1', [now - 600])
-  await runSQL(
-    'DELETE FROM _oauth_refresh_tokens WHERE revoked = 1 OR (expires_at IS NOT NULL AND expires_at < $1)',
-    [now],
-  )
+  await runSQL('DELETE FROM _oauth_refresh_tokens WHERE revoked = 1 OR (expires_at IS NOT NULL AND expires_at < $1)', [
+    now,
+  ])
 }

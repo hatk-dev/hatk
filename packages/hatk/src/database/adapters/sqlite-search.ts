@@ -10,11 +10,7 @@ import type { DatabasePort } from '../ports.ts'
 export class SQLiteSearchPort implements SearchPort {
   constructor(private port: DatabasePort) {}
 
-  async buildIndex(
-    shadowTable: string,
-    sourceQuery: string,
-    searchColumns: string[],
-  ): Promise<void> {
+  async buildIndex(shadowTable: string, sourceQuery: string, searchColumns: string[]): Promise<void> {
     // Drop existing FTS table and data table
     await this.port.execute(`DROP TABLE IF EXISTS ${shadowTable}_fts`, [])
     await this.port.execute(`DROP TABLE IF EXISTS ${shadowTable}`, [])

@@ -32,7 +32,9 @@ export class SQLiteAdapter implements DatabasePort {
   }
 
   close(): void {
-    try { this.db?.close() } catch {}
+    try {
+      this.db?.close()
+    } catch {}
   }
 
   async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
@@ -63,9 +65,14 @@ export class SQLiteAdapter implements DatabasePort {
     this.db.exec('ROLLBACK')
   }
 
-  async createBulkInserter(table: string, columns: string[], options?: { onConflict?: 'ignore' | 'replace'; batchSize?: number }): Promise<BulkInserter> {
+  async createBulkInserter(
+    table: string,
+    columns: string[],
+    options?: { onConflict?: 'ignore' | 'replace'; batchSize?: number },
+  ): Promise<BulkInserter> {
     const placeholders = columns.map(() => '?').join(', ')
-    const conflict = options?.onConflict === 'ignore' ? ' OR IGNORE' : options?.onConflict === 'replace' ? ' OR REPLACE' : ''
+    const conflict =
+      options?.onConflict === 'ignore' ? ' OR IGNORE' : options?.onConflict === 'replace' ? ' OR REPLACE' : ''
     const sql = `INSERT${conflict} INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`
     const stmt = this.db.prepare(sql)
     const buffer: unknown[][] = []
@@ -89,8 +96,12 @@ export class SQLiteAdapter implements DatabasePort {
         buffer.push(values)
         if (buffer.length >= batchSize) flush()
       },
-      async flush() { flush() },
-      async close() { flush() },
+      async flush() {
+        flush()
+      },
+      async close() {
+        flush()
+      },
     }
   }
 }

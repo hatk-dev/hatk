@@ -121,14 +121,16 @@ export const SQLITE_DIALECT: SqlDialect = {
   jaroWinklerSimilarity: null,
   stringAgg: (col, sep) => `group_concat(${col}, ${sep})`,
   supportsSequences: false,
-  introspectColumnsQuery: (tableName) =>
-    `PRAGMA table_info("${tableName}")`,
+  introspectColumnsQuery: (tableName) => `PRAGMA table_info("${tableName}")`,
 }
 
 export function getDialect(dialect: Dialect): SqlDialect {
   switch (dialect) {
-    case 'duckdb': return DUCKDB_DIALECT
-    case 'sqlite': return SQLITE_DIALECT
-    case 'postgres': throw new Error('PostgreSQL adapter not yet implemented')
+    case 'duckdb':
+      return DUCKDB_DIALECT
+    case 'sqlite':
+      return SQLITE_DIALECT
+    case 'postgres':
+      throw new Error('PostgreSQL adapter not yet implemented')
   }
 }

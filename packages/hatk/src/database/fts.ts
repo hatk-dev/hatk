@@ -22,7 +22,12 @@ function resolveRef(ref: string, lexicon: any): any | null {
  * Given a JSON column and its lexicon property definition, produce
  * search column expressions that extract searchable text.
  */
-function jsonSearchColumns(colName: string, prop: any, lexicon: any, dialect: import('./dialect.ts').SqlDialect): SearchColumn[] {
+function jsonSearchColumns(
+  colName: string,
+  prop: any,
+  lexicon: any,
+  dialect: import('./dialect.ts').SqlDialect,
+): SearchColumn[] {
   const columns: SearchColumn[] = []
   // Strip table qualifier (e.g. "t.artists" → "artists") for use in aliases
   const aliasBase = colName.includes('.') ? colName.split('.').pop()! : colName
@@ -149,9 +154,7 @@ export async function buildFtsIndex(collection: string): Promise<void> {
       if (col.sqlType === 'TEXT') {
         const alias = `${child.fieldName}_${col.name}`
         const agg = dialect.stringAgg(`c.${col.name}`, "' '")
-        selectExprs.push(
-          `(SELECT ${agg} FROM ${child.tableName} c WHERE c.parent_uri = t.uri) AS ${alias}`,
-        )
+        selectExprs.push(`(SELECT ${agg} FROM ${child.tableName} c WHERE c.parent_uri = t.uri) AS ${alias}`)
         searchColNames.push(alias)
       }
     }
@@ -164,9 +167,7 @@ export async function buildFtsIndex(collection: string): Promise<void> {
         if (col.sqlType === 'TEXT') {
           const alias = `${union.fieldName}_${branch.branchName}_${col.name}`
           const agg = dialect.stringAgg(`c.${col.name}`, "' '")
-          selectExprs.push(
-            `(SELECT ${agg} FROM ${branch.tableName} c WHERE c.parent_uri = t.uri) AS ${alias}`,
-          )
+          selectExprs.push(`(SELECT ${agg} FROM ${branch.tableName} c WHERE c.parent_uri = t.uri) AS ${alias}`)
           searchColNames.push(alias)
         }
       }

@@ -1,6 +1,13 @@
 import { cborDecode } from './cbor.ts'
 import { parseCarFrame } from './car.ts'
-import { insertRecord, deleteRecord, setCursor, setRepoStatus, getRepoRetryInfo, listAllRepoStatuses } from './database/db.ts'
+import {
+  insertRecord,
+  deleteRecord,
+  setCursor,
+  setRepoStatus,
+  getRepoRetryInfo,
+  listAllRepoStatuses,
+} from './database/db.ts'
 import { backfillRepo } from './backfill.ts'
 import { rebuildAllIndexes } from './database/fts.ts'
 import { log, emit, timer } from './logger.ts'

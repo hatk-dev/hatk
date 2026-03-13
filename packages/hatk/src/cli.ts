@@ -2011,7 +2011,11 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
   const configDir2 = resolve('.')
   const lexicons2 = loadLexicons(resolve(configDir2, 'lexicons'))
   const collections2 = config.collections.length > 0 ? config.collections : discoverCollections(lexicons2)
-  const { schemas: schemas2, ddlStatements: ddl2 } = buildSchemas(lexicons2, collections2, getDialect(config.databaseEngine))
+  const { schemas: schemas2, ddlStatements: ddl2 } = buildSchemas(
+    lexicons2,
+    collections2,
+    getDialect(config.databaseEngine),
+  )
 
   if (config.database !== ':memory:') {
     mkdirSync(dirname(config.database), { recursive: true })

@@ -34,7 +34,11 @@ export interface SetupContext {
     query: (sql: string, params?: any[]) => Promise<any[]>
     run: (sql: string, params?: any[]) => Promise<void>
     runBatch: (operations: Array<{ sql: string; params: any[] }>) => Promise<void>
-    createBulkInserter: (table: string, columns: string[], options?: { onConflict?: 'ignore' | 'replace'; batchSize?: number }) => Promise<BulkInserter>
+    createBulkInserter: (
+      table: string,
+      columns: string[],
+      options?: { onConflict?: 'ignore' | 'replace'; batchSize?: number },
+    ) => Promise<BulkInserter>
   }
 }
 

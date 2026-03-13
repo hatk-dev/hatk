@@ -3,12 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { log } from './logger.ts'
 import { loadConfig } from './config.ts'
-import {
-  loadLexicons,
-  storeLexicons,
-  discoverCollections,
-  buildSchemas,
-} from './database/schema.ts'
+import { loadLexicons, storeLexicons, discoverCollections, buildSchemas } from './database/schema.ts'
 import { discoverViews } from './views.ts'
 import { initDatabase, getCursor, querySQL, getSqlDialect, getSchemaDump, migrateSchema } from './database/db.ts'
 import { createAdapter } from './database/adapter-factory.ts'
@@ -88,7 +83,9 @@ const { adapter, searchPort } = await createAdapter(config.databaseEngine)
 setSearchPort(searchPort)
 await initDatabase(adapter, config.database, schemas, ddlStatements)
 logMemory('after-db-init')
-log(`[main] Database initialized (${config.databaseEngine}, ${config.database === ':memory:' ? 'in-memory' : config.database})`)
+log(
+  `[main] Database initialized (${config.databaseEngine}, ${config.database === ':memory:' ? 'in-memory' : config.database})`,
+)
 
 // Auto-migrate schema if lexicons changed
 const migrationChanges = await migrateSchema(schemas)

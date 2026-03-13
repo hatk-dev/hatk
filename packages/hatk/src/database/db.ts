@@ -1,6 +1,6 @@
 import { type TableSchema, toSnakeCase } from './schema.ts'
 import type { Row } from '../lex-types.ts'
-import { getSearchColumns, stripStopWords, hasSearchPort, getSearchPort } from './fts.ts'
+import { getSearchColumns, stripStopWords, getSearchPort } from './fts.ts'
 import { emit, timer } from '../logger.ts'
 import { OAUTH_DDL } from '../oauth/db.ts'
 import type { DatabasePort } from './ports.ts'
@@ -10,8 +10,12 @@ let port: DatabasePort
 let dialect: SqlDialect
 const schemas = new Map<string, TableSchema>()
 
-export function getDatabasePort(): DatabasePort { return port }
-export function getSqlDialect(): SqlDialect { return dialect }
+export function getDatabasePort(): DatabasePort {
+  return port
+}
+export function getSqlDialect(): SqlDialect {
+  return dialect
+}
 
 export function closeDatabase(): void {
   port?.close()
@@ -135,7 +139,8 @@ function normalizeType(type: string): string {
   if (upper === 'VARCHAR' || upper === 'CHARACTER VARYING') return 'TEXT'
   if (upper === 'TIMESTAMP WITH TIME ZONE') return 'TIMESTAMPTZ'
   if (upper === 'BOOLEAN' || upper === 'BOOL') return 'BOOLEAN'
-  if (upper === 'INT' || upper === 'INT4' || upper === 'INT8' || upper === 'BIGINT' || upper === 'SMALLINT') return 'INTEGER'
+  if (upper === 'INT' || upper === 'INT4' || upper === 'INT8' || upper === 'BIGINT' || upper === 'SMALLINT')
+    return 'INTEGER'
   return upper
 }
 
@@ -316,8 +321,15 @@ async function applyMigrationChanges(changes: MigrationChange[]): Promise<void> 
           break
       }
     } catch (err: any) {
-      console.warn(`[migration] failed to ${change.action} column "${change.column}" on "${change.table}": ${err.message}`)
-      emit('migration', 'error', { action: change.action, table: change.table, column: change.column, error: err.message })
+      console.warn(
+        `[migration] failed to ${change.action} column "${change.column}" on "${change.table}": ${err.message}`,
+      )
+      emit('migration', 'error', {
+        action: change.action,
+        table: change.table,
+        column: change.column,
+        error: err.message,
+      })
     }
   }
 }
@@ -382,10 +394,10 @@ export async function getRepoRetryInfo(did: string): Promise<{ retryCount: numbe
 
 export async function listRetryEligibleRepos(maxRetries: number): Promise<string[]> {
   const now = Math.floor(Date.now() / 1000)
-  const rows = await all(
-    `SELECT did FROM _repos WHERE status = 'failed' AND retry_after <= $1 AND retry_count < $2`,
-    [now, maxRetries],
-  )
+  const rows = await all(`SELECT did FROM _repos WHERE status = 'failed' AND retry_after <= $1 AND retry_count < $2`, [
+    now,
+    maxRetries,
+  ])
   return rows.map((r: any) => r.did)
 }
 
@@ -550,10 +562,7 @@ export async function insertRecord(
         }
       }
 
-      await run(
-        `INSERT INTO ${child.tableName} (${colNames.join(', ')}) VALUES (${placeholders.join(', ')})`,
-        values,
-      )
+      await run(`INSERT INTO ${child.tableName} (${colNames.join(', ')}) VALUES (${placeholders.join(', ')})`, values)
     }
   }
 
@@ -615,10 +624,7 @@ export async function insertRecord(
           values.push(raw)
         }
       }
-      await run(
-        `INSERT INTO ${branch.tableName} (${colNames.join(', ')}) VALUES (${placeholders.join(', ')})`,
-        values,
-      )
+      await run(`INSERT INTO ${branch.tableName} (${colNames.join(', ')}) VALUES (${placeholders.join(', ')})`, values)
     }
   }
 }
@@ -658,10 +664,14 @@ export async function insertLabels(
     )
     if (!label.neg && existing.length > 0) continue
 
-    await run(
-      `INSERT INTO _labels (src, uri, val, neg, cts, exp) VALUES ($1, $2, $3, $4, $5, $6)`,
-      [label.src, label.uri, label.val, label.neg || false, label.cts || new Date().toISOString(), label.exp || null],
-    )
+    await run(`INSERT INTO _labels (src, uri, val, neg, cts, exp) VALUES ($1, $2, $3, $4, $5, $6)`, [
+      label.src,
+      label.uri,
+      label.val,
+      label.neg || false,
+      label.cts || new Date().toISOString(),
+      label.exp || null,
+    ])
   }
 }
 
@@ -916,7 +926,10 @@ export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> 
 }
 
 /** Extract a column value from a record, handling strongRef expansion and type coercion for bulk insert */
-function resolveColumnValue(col: { name: string; originalName: string; sqlType: string; isRef: boolean }, record: Record<string, any>): unknown {
+function resolveColumnValue(
+  col: { name: string; originalName: string; sqlType: string; isRef: boolean },
+  record: Record<string, any>,
+): unknown {
   let rawValue = record[col.originalName]
   if (rawValue && typeof rawValue === 'object' && col.name.endsWith('_uri') && col.isRef) {
     rawValue = rawValue.uri
@@ -1143,7 +1156,7 @@ export async function searchRecords(
   if (!schema) throw new Error(`Unknown collection: ${collection}`)
 
   const elapsed = timer()
-  const { limit = 20, cursor, fuzzy = true } = opts
+  const { limit = 20, fuzzy = true } = opts
   const textCols = schema.columns.filter((c) => c.sqlType === 'TEXT')
 
   // Also check if FTS has indexed any columns (including derived JSON columns)
@@ -1154,7 +1167,6 @@ export async function searchRecords(
 
   // FTS shadow table name (dots replaced with underscores)
   const safeName = '_fts_' + collection.replace(/\./g, '_')
-  const ftsSchema = `fts_main_${safeName}`
 
   const phaseErrors: string[] = []
   const phasesUsed: string[] = []
@@ -1162,35 +1174,36 @@ export async function searchRecords(
   // Phase 1: BM25 ranked search via SearchPort
   let bm25Results: any[] = []
   const sp = getSearchPort()
-  if (sp) try {
-    const ftsQuery = stripStopWords(query)
-    const ftsSearchColNames = getSearchColumns(collection)
+  if (sp)
+    try {
+      const ftsQuery = stripStopWords(query)
+      const ftsSearchColNames = getSearchColumns(collection)
 
-    // Get ranked URIs from the search port
-    const hits = await sp.search(safeName, ftsQuery, ftsSearchColNames, limit + 1, 0)
-    if (hits.length > 0) {
-      const uriList = hits.map((h) => h.uri)
-      const scoreMap = new Map(hits.map((h) => [h.uri, h.score]))
+      // Get ranked URIs from the search port
+      const hits = await sp.search(safeName, ftsQuery, ftsSearchColNames, limit + 1, 0)
+      if (hits.length > 0) {
+        const uriList = hits.map((h) => h.uri)
+        const scoreMap = new Map(hits.map((h) => [h.uri, h.score]))
 
-      // Fetch full records for matched URIs
-      const placeholders = uriList.map((_, i) => `$${i + 1}`).join(', ')
-      const rows = await all(
-        `SELECT m.* FROM ${schema.tableName} m
+        // Fetch full records for matched URIs
+        const placeholders = uriList.map((_, i) => `$${i + 1}`).join(', ')
+        const rows = await all(
+          `SELECT m.* FROM ${schema.tableName} m
           LEFT JOIN _repos r ON m.did = r.did
           WHERE m.uri IN (${placeholders})
           AND (r.status IS NULL OR r.status != 'takendown')`,
-        uriList,
-      )
+          uriList,
+        )
 
-      // Re-attach scores and sort
-      bm25Results = rows
-        .map((r: any) => ({ ...r, score: scoreMap.get(r.uri) ?? 0 }))
-        .sort((a: any, b: any) => b.score - a.score)
+        // Re-attach scores and sort
+        bm25Results = rows
+          .map((r: any) => ({ ...r, score: scoreMap.get(r.uri) ?? 0 }))
+          .sort((a: any, b: any) => b.score - a.score)
+      }
+      phasesUsed.push('bm25')
+    } catch (err: any) {
+      phaseErrors.push(`bm25: ${err.message}`)
     }
-    phasesUsed.push('bm25')
-  } catch (err: any) {
-    phaseErrors.push(`bm25: ${err.message}`)
-  }
 
   const bm25Count = bm25Results.length
   const hasMore = bm25Results.length > limit
@@ -1359,7 +1372,11 @@ export async function runSQL(sql: string, params: any[] = []): Promise<void> {
   return run(sql, params)
 }
 
-export async function createBulkInserterSQL(table: string, columns: string[], options?: { onConflict?: 'ignore' | 'replace'; batchSize?: number }): Promise<import('./ports.ts').BulkInserter> {
+export async function createBulkInserterSQL(
+  table: string,
+  columns: string[],
+  options?: { onConflict?: 'ignore' | 'replace'; batchSize?: number },
+): Promise<import('./ports.ts').BulkInserter> {
   return port.createBulkInserter(table, columns, options)
 }
 
@@ -1605,10 +1622,9 @@ export function unpackCursor(cursor: string): { primary: string; cid: string } |
 }
 
 export async function queryLabelsByDid(did: string): Promise<any[]> {
-  return all(
-    `SELECT * FROM _labels WHERE uri LIKE $1 AND neg = false AND (exp IS NULL OR exp > CURRENT_TIMESTAMP)`,
-    [`at://${did}/%`],
-  )
+  return all(`SELECT * FROM _labels WHERE uri LIKE $1 AND neg = false AND (exp IS NULL OR exp > CURRENT_TIMESTAMP)`, [
+    `at://${did}/%`,
+  ])
 }
 
 export async function searchAccounts(query: string, limit: number = 20): Promise<any[]> {
@@ -1655,10 +1671,12 @@ export async function getPreferences(did: string): Promise<Record<string, any>> 
 }
 
 export async function putPreference(did: string, key: string, value: any): Promise<void> {
-  await run(
-    `INSERT OR REPLACE INTO _preferences (did, key, value, updated_at) VALUES ($1, $2, $3, $4)`,
-    [did, key, JSON.stringify(value), new Date().toISOString()],
-  )
+  await run(`INSERT OR REPLACE INTO _preferences (did, key, value, updated_at) VALUES ($1, $2, $3, $4)`, [
+    did,
+    key,
+    JSON.stringify(value),
+    new Date().toISOString(),
+  ])
 }
 
 export async function filterTakendownDids(dids: string[]): Promise<Set<string>> {

@@ -17,9 +17,15 @@ export class DuckDBAdapter implements DatabasePort {
   }
 
   close(): void {
-    try { this.readCon?.closeSync() } catch {}
-    try { this.writeCon?.closeSync() } catch {}
-    try { this.instance?.closeSync() } catch {}
+    try {
+      this.readCon?.closeSync()
+    } catch {}
+    try {
+      this.writeCon?.closeSync()
+    } catch {}
+    try {
+      this.instance?.closeSync()
+    } catch {}
   }
 
   async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
@@ -73,7 +79,11 @@ export class DuckDBAdapter implements DatabasePort {
     })
   }
 
-  async createBulkInserter(table: string, columns: string[], _options?: { onConflict?: 'ignore' | 'replace'; batchSize?: number }): Promise<BulkInserter> {
+  async createBulkInserter(
+    table: string,
+    _columns: string[],
+    _options?: { onConflict?: 'ignore' | 'replace'; batchSize?: number },
+  ): Promise<BulkInserter> {
     const appender = await this.writeCon.createAppender(table.replace(/"/g, ''))
     return {
       append(values: unknown[]) {
@@ -114,11 +124,17 @@ export class DuckDBAdapter implements DatabasePort {
   private enqueue<T>(queue: 'read' | 'write', fn: () => Promise<T>): Promise<T> {
     if (queue === 'write') {
       const p = this.writeQueue.then(fn)
-      this.writeQueue = p.then(() => {}, () => {})
+      this.writeQueue = p.then(
+        () => {},
+        () => {},
+      )
       return p
     } else {
       const p = this.readQueue.then(fn)
-      this.readQueue = p.then(() => {}, () => {})
+      this.readQueue = p.then(
+        () => {},
+        () => {},
+      )
       return p
     }
   }

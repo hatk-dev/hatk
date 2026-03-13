@@ -4,11 +4,7 @@ import type { DatabasePort } from '../ports.ts'
 export class DuckDBSearchPort implements SearchPort {
   constructor(private port: DatabasePort) {}
 
-  async buildIndex(
-    shadowTable: string,
-    sourceQuery: string,
-    searchColumns: string[],
-  ): Promise<void> {
+  async buildIndex(shadowTable: string, sourceQuery: string, searchColumns: string[]): Promise<void> {
     // Create shadow table
     await this.port.execute(`CREATE OR REPLACE TABLE ${shadowTable} AS ${sourceQuery}`, [])
 

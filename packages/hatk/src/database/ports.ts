@@ -29,7 +29,11 @@ export interface DatabasePort {
   rollback(): Promise<void>
 
   /** Create a bulk inserter for high-throughput writes */
-  createBulkInserter(table: string, columns: string[], options?: { onConflict?: 'ignore' | 'replace'; batchSize?: number }): Promise<BulkInserter>
+  createBulkInserter(
+    table: string,
+    columns: string[],
+    options?: { onConflict?: 'ignore' | 'replace'; batchSize?: number },
+  ): Promise<BulkInserter>
 }
 
 export interface BulkInserter {
@@ -45,11 +49,7 @@ export interface BulkInserter {
 
 export interface SearchPort {
   /** Build/rebuild an FTS index for a table */
-  buildIndex(
-    shadowTable: string,
-    sourceQuery: string,
-    searchColumns: string[],
-  ): Promise<void>
+  buildIndex(shadowTable: string, sourceQuery: string, searchColumns: string[]): Promise<void>
 
   /** Search a table, returning URIs with scores */
   search(
