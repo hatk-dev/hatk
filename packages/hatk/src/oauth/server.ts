@@ -189,7 +189,11 @@ export async function handlePar(
   // Resolve DID from login_hint
   let did = body.login_hint
   if (did && !did.startsWith('did:')) {
-    did = await resolveHandle(did, _relayUrl)
+    try {
+      did = await resolveHandle(did, _relayUrl)
+    } catch {
+      throw new Error('Handle not found')
+    }
   }
 
   // Discover user's PDS auth server

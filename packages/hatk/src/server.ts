@@ -679,8 +679,13 @@ export function startServer(
           jsonError(res, 400, 'DPoP header required')
           return
         }
-        const result = await handlePar(oauth, body, dpopHeader, `${requestOrigin}/oauth/par`)
-        jsonResponse(res, result)
+        try {
+          const result = await handlePar(oauth, body, dpopHeader, `${requestOrigin}/oauth/par`)
+          jsonResponse(res, result)
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Unknown error'
+          jsonError(res, 400, message)
+        }
         return
       }
 
