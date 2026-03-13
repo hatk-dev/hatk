@@ -375,15 +375,19 @@ if (command === 'new') {
   }
 
   writeFileSync(
-    join(dir, 'config.yaml'),
-    `relay: ws://localhost:2583
-plc: http://localhost:2582
-port: 3000
-database: data/hatk.db
-admins: []
+    join(dir, 'hatk.config.ts'),
+    `import { defineConfig } from '@hatk/hatk/config'
 
-backfill:
-  parallelism: 10
+export default defineConfig({
+  relay: 'ws://localhost:2583',
+  plc: 'http://localhost:2582',
+  port: 3000,
+  database: 'data/hatk.db',
+  admins: [],
+  backfill: {
+    parallelism: 10,
+  },
+})
 `,
   )
 
@@ -985,7 +989,7 @@ COPY . .
 RUN node_modules/.bin/hatk build
 RUN npm prune --omit=dev
 EXPOSE 3000
-CMD ["node", "--max-old-space-size=512", "node_modules/@hatk/hatk/dist/main.js", "config.yaml"]
+CMD ["node", "--experimental-strip-types", "--max-old-space-size=512", "node_modules/@hatk/hatk/dist/main.js", "hatk.config.ts"]
 `,
   )
 
@@ -1294,7 +1298,7 @@ a {
   }
 
   console.log(`Created ${name}/`)
-  console.log(`  config.yaml`)
+  console.log(`  hatk.config.ts`)
   console.log(`  lexicons/   — lexicon JSON files (core + your own)`)
   console.log(`  feeds/      — feed generators`)
   console.log(`  xrpc/       — XRPC method handlers`)
@@ -1737,7 +1741,7 @@ a {
     } else {
       // No frontend — just run the hatk server directly
       const mainPath = resolve(import.meta.dirname!, 'main.js')
-      execSync(`npx tsx ${mainPath} config.yaml`, {
+      execSync(`npx tsx ${mainPath} hatk.config.ts`, {
         stdio: 'inherit',
         cwd: process.cwd(),
         env: { ...process.env, DEV_MODE: '1' },
@@ -1760,7 +1764,7 @@ a {
     console.log('[build] No frontend to build (API-only hatk)')
   }
 } else if (command === 'reset') {
-  const config = loadConfig(resolve('config.yaml'))
+  const config = await loadConfig(resolve('hatk.config.ts'))
 
   if (config.database !== ':memory:') {
     for (const suffix of ['', '.wal']) {
@@ -1922,7 +1926,7 @@ a {
   console.log(`\nResolved ${resolved.size} lexicon(s). Regenerating types...`)
   execSync('npx hatk generate types', { stdio: 'inherit', cwd: process.cwd() })
 } else if (command === 'schema') {
-  const config = loadConfig(resolve('config.yaml'))
+  const config = await loadConfig(resolve('hatk.config.ts'))
   if (config.database === ':memory:') {
     console.error('No database file configured (database is :memory:)')
     process.exit(1)
@@ -1960,7 +1964,7 @@ a {
 } else if (command === 'start') {
   try {
     const mainPath = resolve(import.meta.dirname!, 'main.js')
-    execSync(`npx tsx ${mainPath} config.yaml`, { stdio: 'inherit', cwd: process.cwd() })
+    execSync(`npx tsx ${mainPath} hatk.config.ts`, { stdio: 'inherit', cwd: process.cwd() })
   } catch (e: any) {
     if (e.signal === 'SIGINT' || e.signal === 'SIGTERM') process.exit(0)
     throw e

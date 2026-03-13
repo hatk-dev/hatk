@@ -1,6 +1,6 @@
 {
   "name": "@hatk/hatk",
-  "version": "0.0.1-alpha.19",
+  "version": "0.0.1-alpha.20",
   "license": "MIT",
   "bin": {
     "hatk": "dist/cli.js"
@@ -23,6 +23,7 @@
     "./setup": "./dist/setup.js",
     "./test": "./dist/test.js",
     "./test/browser": "./dist/test-browser.js",
+    "./config": "./dist/config.js",
     "./vite-plugin": "./dist/vite-plugin.js"
   },
   "scripts": {

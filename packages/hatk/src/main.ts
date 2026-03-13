@@ -31,13 +31,13 @@ function logMemory(phase: string): void {
   log(`[mem] ${phase}: heap=${Math.round(mem.heapUsed / 1024 / 1024)}MB rss=${Math.round(mem.rss / 1024 / 1024)}MB external=${Math.round(mem.external / 1024 / 1024)}MB arrayBuffers=${Math.round(mem.arrayBuffers / 1024 / 1024)}MB`)
 }
 
-const configPath = process.argv[2] || 'config.yaml'
+const configPath = process.argv[2] || 'hatk.config.ts'
 const configDir = dirname(resolve(configPath))
 
 logMemory('startup')
 
 // 1. Load config
-const config = loadConfig(configPath)
+const config = await loadConfig(configPath)
 configureRelay(config.relay)
 
 // 2. Load lexicons, validate schemas, and discover collections

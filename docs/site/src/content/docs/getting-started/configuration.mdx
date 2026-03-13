@@ -1,39 +1,46 @@
 ---
 title: Configuration
-description: Configure your Hatk project with config.yaml.
+description: Configure your Hatk project with hatk.config.ts.
 ---
 
 ## Overview
 
-Hatk is configured through `config.yaml` at the project root. Most options can be overridden with environment variables.
+Hatk is configured through `hatk.config.ts` at the project root. The `defineConfig` helper provides type safety and autocompletion. Most options can be overridden with environment variables.
 
 ## Complete example
 
-```yaml
-relay: ws://localhost:2583
-plc: http://localhost:2582
-port: 3000
-database: data/hatk.db
-public: ./public
-admins: []
+```typescript
+import { defineConfig } from '@hatk/hatk/config'
 
-backfill:
-  parallelism: 10
-  fetchTimeout: 300
-  maxRetries: 5
-  fullNetwork: false
+export default defineConfig({
+  relay: 'ws://localhost:2583',
+  plc: 'http://localhost:2582',
+  port: 3000,
+  database: 'data/hatk.db',
+  publicDir: './public',
+  admins: [],
 
-ftsRebuildInterval: 500
+  backfill: {
+    parallelism: 10,
+    fetchTimeout: 300,
+    maxRetries: 5,
+    fullNetwork: false,
+  },
 
-oauth:
-  issuer: http://127.0.0.1:3000
-  scopes:
-    - atproto
-  clients:
-    - client_id: http://localhost
-      client_name: My App
-      redirect_uris:
-        - http://127.0.0.1:3000/oauth/callback
+  ftsRebuildInterval: 500,
+
+  oauth: {
+    issuer: 'http://127.0.0.1:3000',
+    scopes: ['atproto'],
+    clients: [
+      {
+        client_id: 'http://localhost',
+        client_name: 'My App',
+        redirect_uris: ['http://127.0.0.1:3000/oauth/callback'],
+      },
+    ],
+  },
+})
 ```
 
 ## Options
@@ -68,9 +75,9 @@ DuckDB file path. Resolved relative to the config file directory.
 - **Default:** `:memory:`
 - **Env:** `DATABASE`
 
-### `public`
+### `publicDir`
 
-Directory for static files. Set to `false` to disable static file serving.
+Directory for static files. Set to `null` to disable static file serving.
 
 - **Default:** `./public`
 

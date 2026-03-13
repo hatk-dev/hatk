@@ -68,7 +68,7 @@ export function hatk(opts?: { port?: number }): Plugin {
       const mainPath = resolve(import.meta.dirname!, 'main.js')
       const watchDirs = ['xrpc', 'feeds', 'labels', 'jobs', 'setup', 'lexicons'].filter((d) => existsSync(d))
       const watchArgs = watchDirs.flatMap((d) => ['--watch-path', d])
-      serverProcess = spawn('npx', ['tsx', 'watch', ...watchArgs, mainPath, 'config.yaml'], {
+      serverProcess = spawn('npx', ['tsx', 'watch', ...watchArgs, mainPath, 'hatk.config.ts'], {
         stdio: 'inherit',
         cwd: process.cwd(),
         env: {

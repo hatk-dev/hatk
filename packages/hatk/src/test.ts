@@ -51,13 +51,13 @@ export interface TestServer extends TestContext {
 }
 
 /**
- * Find the project's config.yaml by walking up from cwd.
- * Returns the resolved config path, or falls back to 'config.yaml'.
+ * Find the project's hatk.config.ts by walking up from cwd.
+ * Returns the resolved config path, or falls back to 'hatk.config.ts'.
  */
 function findConfigPath(): string {
   const explicit = process.env.APPVIEW_CONFIG
   if (explicit) return resolve(explicit)
-  return resolve('config.yaml')
+  return resolve('hatk.config.ts')
 }
 
 /**
@@ -71,7 +71,7 @@ function findConfigPath(): string {
  */
 export async function createTestContext(): Promise<TestContext> {
   const configPath = findConfigPath()
-  const config = loadConfig(configPath)
+  const config = await loadConfig(configPath)
   const configDir = dirname(resolve(configPath))
 
   configureRelay(config.relay)

@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
-import YAML from 'yaml'
+import { existsSync } from 'node:fs'
 
 export interface LabelLocale {
   lang: string
@@ -51,19 +50,38 @@ export interface HatkConfig {
   admins: string[] // DIDs allowed to access /admin/* endpoints
 }
 
+/** Identity function that provides type inference for hatk config files. */
+export function defineConfig(config: Partial<HatkConfig>): Partial<HatkConfig> {
+  return config
+}
+
 /** Derive HTTP URL from relay WebSocket URL (ws://host → http://host) */
 export function relayHttpUrl(relay: string): string {
   return relay.replace(/^ws(s?):\/\//, 'http$1://')
 }
 
-export function loadConfig(configPath: string): HatkConfig {
-  const raw = readFileSync(configPath, 'utf-8')
-  const parsed = YAML.parse(raw)
+export async function loadConfig(configPath: string): Promise<HatkConfig> {
+  const resolved = resolve(configPath)
 
-  const configDir = dirname(resolve(configPath))
+  if (!existsSync(resolved)) {
+    console.error(`Config file not found: ${resolved}`)
+    console.error(`hatk now uses hatk.config.ts instead of config.yaml.`)
+    console.error(`Create a hatk.config.ts file or run 'hatk new' to scaffold a project.`)
+    process.exit(1)
+  }
 
-  const backfillRaw = parsed.backfill || {}
+  const configDir = dirname(resolved)
+  let mod: any
+  try {
+    mod = await import(resolved)
+  } catch (err: any) {
+    console.error(`Failed to load config file: ${resolved}`)
+    console.error(err.message || err)
+    process.exit(1)
+  }
+  const parsed: Partial<HatkConfig> & Record<string, any> = mod.default || {}
 
+  const backfillRaw = parsed.backfill || ({} as Partial<BackfillConfig>)
   const env = process.env
 
   const database = env.DATABASE || parsed.database
@@ -72,7 +90,7 @@ export function loadConfig(configPath: string): HatkConfig {
     plc: env.DID_PLC_URL || parsed.plc || 'https://plc.directory',
     port: parseInt(env.PORT || '') || parsed.port || 3000,
     database: database ? resolve(configDir, database) : ':memory:',
-    publicDir: parsed.public === false ? null : resolve(configDir, parsed.public || './public'),
+    publicDir: parsed.publicDir === null ? null : resolve(configDir, parsed.publicDir || './public'),
     collections: parsed.collections || [],
     backfill: {
       signalCollections: backfillRaw.signalCollections || undefined,

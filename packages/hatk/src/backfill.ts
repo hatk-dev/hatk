@@ -25,7 +25,7 @@ interface BackfillOpts {
   plcUrl: string
   /** AT Protocol collection NSIDs to index (e.g. `app.bsky.feed.post`). */
   collections: Set<string>
-  /** Backfill behavior settings from `config.yaml`. */
+  /** Backfill behavior settings from `hatk.config.ts`. */
   config: BackfillConfig
 }
 
