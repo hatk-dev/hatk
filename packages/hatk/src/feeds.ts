@@ -134,7 +134,49 @@ export function createPaginate(deps: {
 }
 
 export function defineFeed(opts: FeedOpts) {
-  return { ...opts, generate: (ctx: any) => opts.generate({ ...ctx, ok: (v: any) => v }) }
+  return { __type: 'feed' as const, ...opts, generate: (ctx: any) => opts.generate({ ...ctx, ok: (v: any) => v }) }
+}
+
+/** Register a single feed from a scanned server/ module. */
+export function registerFeed(name: string, generator: ReturnType<typeof defineFeed>): void {
+  const handler: FeedHandler = {
+    name,
+    label: generator.label || name,
+    collection: generator.collection,
+    view: generator.view,
+    generate: async (params, cursor, limit, viewer) => {
+      const paginateDeps = {
+        db: { query: querySQL },
+        cursor,
+        limit,
+        packCursor,
+        unpackCursor,
+      }
+      const ctx: FeedContext = {
+        db: { query: querySQL },
+        params,
+        cursor,
+        limit,
+        viewer,
+        packCursor,
+        unpackCursor,
+        isTakendown: isTakendownDid,
+        filterTakendownDids,
+        paginate: createPaginate(paginateDeps),
+      }
+      const result = await generator.generate(ctx)
+      if (Array.isArray(result)) {
+        return { uris: result.map((r: any) => r.uri || r) }
+      }
+      return { uris: result.uris, cursor: result.cursor }
+    },
+  }
+
+  if (typeof generator.hydrate === 'function') {
+    handler.hydrate = generator.hydrate
+  }
+
+  feeds.set(name, handler)
 }
 
 const feeds = new Map<string, FeedHandler>()

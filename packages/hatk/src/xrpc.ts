@@ -233,6 +233,66 @@ export async function initXrpc(xrpcDir: string): Promise<void> {
   }
 }
 
+/** Register a single XRPC handler from a scanned server/ module. */
+export function registerXrpcHandler(nsid: string, handlerModule: { handler: (ctx: any) => Promise<any> }): void {
+  const lexicon = getLexicon(nsid)
+  const paramsDef = lexicon?.defs?.main?.parameters
+  const requiredParams: string[] = paramsDef?.required || []
+  const paramProperties: Record<string, any> = paramsDef?.properties || {}
+
+  handlers.set(nsid, {
+    name: nsid,
+    execute: async (params, cursor, limit, viewer, input) => {
+      for (const [key, def] of Object.entries(paramProperties)) {
+        if (params[key] == null && def.default != null) {
+          params[key] = String(def.default)
+        }
+        if (params[key] != null && def.type === 'integer') {
+          params[key] = Number(params[key]) as any
+        }
+      }
+      for (const param of requiredParams) {
+        if (!params[param]) {
+          throw new InvalidRequestError(`Missing required parameter: ${param}`, 'InvalidRequest')
+        }
+      }
+
+      const ctx: XrpcContext = {
+        db: { query: querySQL, run: runSQL },
+        params,
+        input: input || {},
+        cursor,
+        limit,
+        viewer,
+        packCursor,
+        unpackCursor,
+        isTakendown: isTakendownDid,
+        filterTakendownDids,
+        search: searchRecords,
+        resolve: resolveRecords as any,
+        lookup: async (collection, field, values) => {
+          if (values.length === 0) return new Map()
+          const unique = [...new Set(values.filter(Boolean))]
+          return lookupByFieldBatch(collection, field, unique) as any
+        },
+        count: async (collection, field, values) => {
+          if (values.length === 0) return new Map()
+          const unique = [...new Set(values.filter(Boolean))]
+          return countByFieldBatch(collection, field, unique)
+        },
+        exists: async (collection, filters) => {
+          const conditions = Object.entries(filters).map(([field, value]) => ({ field, value }))
+          const uri = await findUriByFields(collection, conditions)
+          return uri !== null
+        },
+        labels: queryLabelsForUris,
+        blobUrl,
+      }
+      return handlerModule.handler(ctx)
+    },
+  })
+}
+
 /** Execute a registered XRPC handler by name. Returns null if no handler matches. */
 export async function executeXrpc(
   name: string,

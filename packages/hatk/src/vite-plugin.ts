@@ -53,7 +53,7 @@ export function hatk(opts?: { port?: number }): Plugin {
             {
               test: {
                 name: 'unit',
-                include: ['test/feeds/**/*.test.ts', 'test/xrpc/**/*.test.ts'],
+                include: ['test/server/**/*.test.ts', 'test/feeds/**/*.test.ts', 'test/xrpc/**/*.test.ts'],
               },
             },
             {
@@ -69,7 +69,7 @@ export function hatk(opts?: { port?: number }): Plugin {
 
     configureServer(server) {
       const mainPath = resolve(import.meta.dirname!, 'main.js')
-      const watchDirs = ['xrpc', 'feeds', 'labels', 'jobs', 'setup', 'lexicons'].filter((d) => existsSync(d))
+      const watchDirs = ['server', 'xrpc', 'feeds', 'labels', 'jobs', 'setup', 'lexicons'].filter((d) => existsSync(d))
       const watchArgs = watchDirs.flatMap((d) => ['--watch-path', d])
       serverProcess = spawn('npx', ['tsx', 'watch', ...watchArgs, mainPath, 'hatk.config.ts'], {
         stdio: 'inherit',

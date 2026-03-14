@@ -42,6 +42,12 @@ export interface SetupContext {
   }
 }
 
+export type SetupHandler = (ctx: SetupContext) => Promise<void>
+
+export function defineSetup(handler: SetupHandler) {
+  return { __type: 'setup' as const, handler }
+}
+
 /** Recursively collect .ts/.js files in a directory, skipping files prefixed with `_`. */
 function walkDir(dir: string): string[] {
   const results: string[] = []
@@ -89,4 +95,14 @@ export async function initSetup(setupDir: string): Promise<void> {
     await handler(ctx)
     log(`[setup] done: ${name}`)
   }
+}
+
+/** Run a single setup handler with a SetupContext. */
+export async function runSetupHandler(name: string, handler: SetupHandler): Promise<void> {
+  const ctx: SetupContext = {
+    db: { query: querySQL, run: runSQL, runBatch, createBulkInserter: createBulkInserterSQL },
+  }
+  log(`[setup] running: ${name}`)
+  await handler(ctx)
+  log(`[setup] done: ${name}`)
 }

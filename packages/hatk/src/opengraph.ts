@@ -45,6 +45,13 @@ export interface OpengraphResult {
   meta?: { title?: string; description?: string }
 }
 
+export function defineOG(
+  path: string,
+  generate: (ctx: OpengraphContext) => Promise<OpengraphResult>,
+) {
+  return { __type: 'og' as const, path, generate }
+}
+
 interface OgHandler {
   name: string
   path: string
@@ -177,6 +184,89 @@ export async function initOpengraph(ogDir: string): Promise<void> {
       pageRoutes.push({ ogPath: handler.path, pattern: compiled.pattern, paramNames: compiled.paramNames, name })
     }
   }
+}
+
+/** Register a single OG handler from a scanned server/ module. */
+export function registerOgHandler(ogMod: { path: string; generate: (ctx: OpengraphContext) => Promise<OpengraphResult> }): void {
+  const { pattern, paramNames } = compilePath(ogMod.path)
+  const name = ogMod.path.replace(/^\//, '').replace(/\//g, '-').replace(/:/g, '')
+
+  // Load default font if not already loaded
+  if (!defaultFont) {
+    try {
+      const fontPath = resolve(import.meta.dirname, '..', 'fonts', 'Inter-Regular.woff')
+      const fontData = readFileSync(fontPath)
+      defaultFont = { name: 'Inter', data: fontData.buffer as ArrayBuffer, weight: 400, style: 'normal' }
+    } catch {}
+  }
+
+  handlers.push({
+    name,
+    path: ogMod.path,
+    pattern,
+    paramNames,
+    execute: async (params) => {
+      const ctx: XrpcContext = {
+        db: { query: querySQL, run: runSQL },
+        params,
+        input: {},
+        limit: 1,
+        viewer: null,
+        packCursor,
+        unpackCursor,
+        isTakendown: isTakendownDid,
+        filterTakendownDids,
+        search: searchRecords,
+        resolve: resolveRecords as any,
+        lookup: async (collection, field, values) => {
+          if (values.length === 0) return new Map()
+          const unique = [...new Set(values.filter(Boolean))]
+          return lookupByFieldBatch(collection, field, unique) as any
+        },
+        count: async (collection, field, values) => {
+          if (values.length === 0) return new Map()
+          const unique = [...new Set(values.filter(Boolean))]
+          return countByFieldBatch(collection, field, unique)
+        },
+        exists: async (collection, filters) => {
+          const conditions = Object.entries(filters).map(([field, value]) => ({ field, value }))
+          const uri = await findUriByFields(collection, conditions)
+          return uri !== null
+        },
+        labels: queryLabelsForUris,
+        blobUrl,
+      }
+      ;(ctx as any).fetchImage = async (url: string): Promise<string | null> => {
+        try {
+          const resp = await fetch(url, { redirect: 'follow' })
+          if (!resp.ok) return null
+          const buf = Buffer.from(await resp.arrayBuffer())
+          const contentType = resp.headers.get('content-type') || 'image/jpeg'
+          return `data:${contentType};base64,${buf.toString('base64')}`
+        } catch {
+          return null
+        }
+      }
+      const result = await ogMod.generate(ctx as OpengraphContext)
+      const element = result.element
+      const options = {
+        width: 1200,
+        height: 630,
+        ...result.options,
+        fonts: [...(defaultFont ? [defaultFont] : []), ...(result.options?.fonts || [])],
+      }
+      const svg = await satori(element as any, options)
+      return { svg, meta: result.meta }
+    },
+  })
+
+  const pagePath = ogMod.path.replace(/^\/og/, '')
+  if (pagePath !== ogMod.path) {
+    const compiled = compilePath(pagePath)
+    pageRoutes.push({ ogPath: ogMod.path, pattern: compiled.pattern, paramNames: compiled.paramNames, name })
+  }
+
+  log(`[opengraph] registered: ${name} → ${ogMod.path}`)
 }
 
 export async function handleOpengraphRequest(pathname: string): Promise<Buffer | null> {

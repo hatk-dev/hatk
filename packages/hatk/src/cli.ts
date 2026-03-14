@@ -93,6 +93,8 @@ function usage() {
     generate label <name>                  Generate a label definition
     generate og <name>                     Generate an OpenGraph route
     generate job <name>                    Generate a periodic job
+    generate hook <name>                   Generate a lifecycle hook
+    generate setup <name>                  Generate a setup script
     generate types                         Regenerate TypeScript types from lexicons
     destroy <type> <name>                  Remove a generated file
 
@@ -122,7 +124,7 @@ export default defineFeed({
   },
 })
 `,
-  xrpc: (name) => `import { defineQuery } from '${xrpcImportPath(name)}'
+  xrpc: (name) => `import { defineQuery } from '../hatk.generated.ts'
 
 export default defineQuery('${name}', async (ctx) => {
   const { ok, db, params, packCursor, unpackCursor } = ctx
@@ -200,15 +202,18 @@ export default {
   },
 }
 `,
-}
+  hook: (name) => `import { defineHook } from '../hatk.generated.ts'
 
-// Compute relative import path from xrpc/ns/id/method.ts back to hatk.generated.ts
-// e.g. fm.teal.getStats → xrpc/fm/teal/getStats.ts → needs ../../../hatk.generated.ts
-// Parts: [fm, teal, getStats] → 2 namespace dirs + xrpc/ dir = 3 levels up
-function xrpcImportPath(nsid: string) {
-  const parts = nsid.split('.')
-  const namespaceDirs = parts.length - 1 // dirs created from namespace segments
-  return '../'.repeat(namespaceDirs + 1) + 'hatk.generated.ts' // +1 for xrpc/ dir itself
+export default defineHook('${name}', async (ctx) => {
+  // Hook logic here
+})
+`,
+  setup: (_name) => `import { defineSetup } from '../hatk.generated.ts'
+
+export default defineSetup(async (ctx) => {
+  // Setup logic here — runs before the server starts
+})
+`,
 }
 
 const testTemplates: Record<string, (name: string) => string> = {
@@ -321,11 +326,13 @@ const lexiconTemplates: Record<string, (nsid: string) => object> = {
 }
 
 const dirs: Record<string, string> = {
-  feed: 'feeds',
-  xrpc: 'xrpc',
-  label: 'labels',
-  og: 'og',
-  job: 'jobs',
+  feed: 'server',
+  xrpc: 'server',
+  label: 'server',
+  og: 'server',
+  job: 'server',
+  hook: 'server',
+  setup: 'server',
 }
 
 // --- Commands ---
@@ -379,17 +386,11 @@ if (command === 'new') {
   mkdirSync(dir)
   const subs = [
     'lexicons',
-    'feeds',
-    'xrpc',
-    'og',
-    'labels',
-    'jobs',
+    'server',
     'seeds',
-    'setup',
     'public',
     'test',
-    'test/feeds',
-    'test/xrpc',
+    'test/server',
     'test/integration',
     'test/browser',
     'test/fixtures',
@@ -1092,7 +1093,7 @@ CMD ["node", "--experimental-strip-types", "--max-old-space-size=512", "node_mod
           allowImportingTsExtensions: true,
           resolveJsonModule: true,
         },
-        include: ['feeds', 'xrpc', 'og', 'seeds', 'labels', 'jobs', 'setup', 'hatk.generated.ts', 'hatk.config.ts'],
+        include: ['server', 'seeds', 'hatk.generated.ts', 'hatk.config.ts'],
       },
       null,
       2,
@@ -1355,14 +1356,8 @@ Types are generated from lexicons into \`hatk.generated.ts\` — never edit this
 | Directory    | Purpose                                              |
 |-------------|------------------------------------------------------|
 | \`lexicons/\`  | AT Protocol lexicon schemas (JSON). Defines collections and XRPC methods |
-| \`feeds/\`     | Feed generators — each file exports a feed via \`defineFeed\` |
-| \`xrpc/\`      | XRPC method handlers — directory nesting maps to NSID segments |
-| \`labels/\`    | Label definitions and rules for moderation            |
-| \`setup/\`     | Boot-time scripts (run before server starts). Prefix with numbers for ordering |
+| \`server/\`    | All server-side code: feeds, XRPC handlers, hooks, labels, OG routes, jobs, setup scripts |
 | \`seeds/\`     | Test data seeding scripts for local development       |
-| \`hooks/\`     | Lifecycle hooks (e.g. \`on-login.ts\`)                  |
-| \`og/\`        | OpenGraph image routes                                |
-| \`jobs/\`      | Periodic background tasks                             |
 | \`test/\`      | Test files (vitest). Run with \`hatk test\`              |
 | \`public/\`    | Static files served at the root                       |
 
@@ -1386,13 +1381,8 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
   console.log(`Created ${name}/`)
   console.log(`  hatk.config.ts`)
   console.log(`  lexicons/   — lexicon JSON files (core + your own)`)
-  console.log(`  feeds/      — feed generators`)
-  console.log(`  xrpc/       — XRPC method handlers`)
-  console.log(`  og/         — OpenGraph image routes`)
-  console.log(`  labels/     — label definitions + rules`)
-  console.log(`  jobs/       — periodic tasks`)
+  console.log(`  server/     — feeds, XRPC handlers, hooks, labels, OG routes, jobs, setup`)
   console.log(`  seeds/      — seed fixture data (hatk seed)`)
-  console.log(`  setup/      — boot-time setup scripts (run before server starts)`)
   console.log(`  test/       — test files (hatk test)`)
   console.log(`  public/     — static files`)
   console.log(`  docker-compose.yml — local PDS for development`)
@@ -1654,6 +1644,10 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     out += `\n// ─── XRPC Helpers ───────────────────────────────────────────────────\n\n`
     out += `export type { HydrateContext } from '@hatk/hatk/feeds'\n`
     out += `export { InvalidRequestError, NotFoundError } from '@hatk/hatk/xrpc'\n`
+    out += `export { defineSetup } from '@hatk/hatk/setup'\n`
+    out += `export { defineHook } from '@hatk/hatk/hooks'\n`
+    out += `export { defineLabels } from '@hatk/hatk/labels'\n`
+    out += `export { defineOG } from '@hatk/hatk/opengraph'\n`
     out += `export type Ctx<K extends keyof XrpcSchema & keyof Registry> = XrpcContext<\n`
     out += `  LexServerParams<Registry[K], Registry>,\n`
     out += `  RecordRegistry,\n`
@@ -1667,13 +1661,13 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     out += `  nsid: K,\n`
     out += `  handler: (ctx: Ctx<K> & { ok: <T extends OutputOf<K>>(value: StrictArg<T, OutputOf<K>>) => Checked<OutputOf<K>> }) => Promise<Checked<OutputOf<K>>>,\n`
     out += `) {\n`
-    out += `  return { handler: (ctx: any) => handler({ ...ctx, ok: (v: any) => v }) }\n`
+    out += `  return { __type: 'query' as const, nsid, handler: (ctx: any) => handler({ ...ctx, ok: (v: any) => v }) }\n`
     out += `}\n\n`
     out += `export function defineProcedure<K extends keyof XrpcSchema & string>(\n`
     out += `  nsid: K,\n`
     out += `  handler: (ctx: Ctx<K> & { ok: <T extends OutputOf<K>>(value: StrictArg<T, OutputOf<K>>) => Checked<OutputOf<K>> }) => Promise<Checked<OutputOf<K>>>,\n`
     out += `) {\n`
-    out += `  return { handler: (ctx: any) => handler({ ...ctx, ok: (v: any) => v }) }\n`
+    out += `  return { __type: 'procedure' as const, nsid, handler: (ctx: any) => handler({ ...ctx, ok: (v: any) => v }) }\n`
     out += `}\n\n`
     out += `// ─── Feed & Seed Helpers ────────────────────────────────────────────\n\n`
     out += `type FeedGenerate = (ctx: FeedContext & { ok: (value: FeedResult) => Checked<FeedResult> }) => Promise<Checked<FeedResult>>\n`
@@ -1741,17 +1735,9 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     }
 
     const baseDir = dirs[type]
-    let filePath: string
-    if (type === 'xrpc') {
-      // NSID → folder path: fm.teal.getStats → xrpc/fm/teal/getStats.ts
-      const parts = name.split('.')
-      const subDir = join(baseDir, ...parts.slice(0, -1))
-      mkdirSync(subDir, { recursive: true })
-      filePath = join(subDir, `${parts[parts.length - 1]}.ts`)
-    } else {
-      mkdirSync(baseDir, { recursive: true })
-      filePath = join(baseDir, `${name}.ts`)
-    }
+    mkdirSync(baseDir, { recursive: true })
+    const fileName = type === 'xrpc' ? name.split('.').pop()! : name
+    const filePath = join(baseDir, `${fileName}.ts`)
 
     if (existsSync(filePath)) {
       console.error(`${filePath} already exists`)
@@ -1764,7 +1750,7 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     // Scaffold test file if template exists
     const testTemplate = testTemplates[type]
     if (testTemplate) {
-      const testDir = type === 'xrpc' ? 'test/xrpc' : `test/${baseDir}`
+      const testDir = 'test/server'
       mkdirSync(testDir, { recursive: true })
       const testName = type === 'xrpc' ? name.split('.').pop()! : name
       const testPath = join(testDir, `${testName}.test.ts`)
@@ -1783,17 +1769,9 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
   }
 
   const baseDir = dirs[type]
-  let tsPath: string, jsPath: string
-  if (type === 'xrpc') {
-    const parts = name.split('.')
-    const leaf = parts[parts.length - 1]
-    const subDir = join(baseDir, ...parts.slice(0, -1))
-    tsPath = join(subDir, `${leaf}.ts`)
-    jsPath = join(subDir, `${leaf}.js`)
-  } else {
-    tsPath = join(baseDir, `${name}.ts`)
-    jsPath = join(baseDir, `${name}.js`)
-  }
+  const fileName = type === 'xrpc' ? name.split('.').pop()! : name
+  const tsPath = join(baseDir, `${fileName}.ts`)
+  const jsPath = join(baseDir, `${fileName}.js`)
   const filePath = existsSync(tsPath) ? tsPath : existsSync(jsPath) ? jsPath : null
 
   if (!filePath) {
@@ -1805,7 +1783,7 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
   console.log(`Removed ${filePath}`)
 
   // Clean up test file
-  const testDir = type === 'xrpc' ? 'test/xrpc' : `test/${baseDir}`
+  const testDir = 'test/server'
   const testName = type === 'xrpc' ? name.split('.').pop()! : name
   const testFile = join(testDir, `${testName}.test.ts`)
   if (existsSync(testFile)) {

@@ -20,6 +20,7 @@
     "./xrpc-client": "./dist/xrpc-client.js",
     "./views": "./dist/views.js",
     "./seed": "./dist/seed.js",
+    "./hooks": "./dist/hooks.js",
     "./setup": "./dist/setup.js",
     "./test": "./dist/test.js",
     "./test/browser": "./dist/test-browser.js",

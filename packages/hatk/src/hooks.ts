@@ -33,6 +33,10 @@ export type OnLoginCtx = {
   ensureRepo: (did: string) => Promise<void>
 }
 
+export function defineHook(event: 'on-login', handler: (ctx: OnLoginCtx) => Promise<void>) {
+  return { __type: 'hook' as const, event, handler }
+}
+
 type OnLoginHook = (ctx: OnLoginCtx) => Promise<void>
 
 let onLoginHook: OnLoginHook | null = null
@@ -55,6 +59,14 @@ export async function loadOnLoginHook(hooksDir: string): Promise<void> {
 async function ensureRepo(did: string): Promise<void> {
   await setRepoStatus(did, 'pending')
   triggerAutoBackfill(did)
+}
+
+/** Register a hook from a scanned server/ module. */
+export function registerHook(event: string, handler: Function): void {
+  if (event === 'on-login') {
+    onLoginHook = handler as OnLoginHook
+    log('[hooks] on-login hook registered')
+  }
 }
 
 /** Fire the on-login hook if loaded. Errors are logged but never block login. */

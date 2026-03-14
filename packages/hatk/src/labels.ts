@@ -47,6 +47,15 @@ export interface LabelRuleContext {
   }
 }
 
+export interface LabelModule {
+  definition?: LabelDefinition
+  evaluate?: (ctx: LabelRuleContext) => Promise<string[]>
+}
+
+export function defineLabels(module: LabelModule) {
+  return { __type: 'labels' as const, ...module }
+}
+
 /** Internal representation of a loaded label rule module. */
 interface LabelRule {
   name: string
@@ -100,6 +109,16 @@ export async function initLabels(labelsDir: string): Promise<void> {
 
   if (labelDefs.length > 0) {
     log(`[labels] ${labelDefs.length} label definitions loaded`)
+  }
+}
+
+/** Register a single label module from a scanned server/ module. */
+export function registerLabelModule(name: string, labelMod: { definition?: LabelDefinition; evaluate?: (ctx: LabelRuleContext) => Promise<string[]> }): void {
+  if (labelMod.definition) {
+    labelDefs.push(labelMod.definition)
+  }
+  if (labelMod.evaluate) {
+    rules.push({ name, evaluate: labelMod.evaluate })
   }
 }
 

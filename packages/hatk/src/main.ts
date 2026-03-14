@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { log } from './logger.ts'
 import { loadConfig } from './config.ts'
@@ -22,6 +22,7 @@ import { runBackfill } from './backfill.ts'
 import { initOAuth } from './oauth/server.ts'
 import { loadOnLoginHook } from './hooks.ts'
 import { initSetup } from './setup.ts'
+import { initServer } from './server-init.ts'
 
 function logMemory(phase: string): void {
   const mem = process.memoryUsage()
@@ -63,7 +64,6 @@ log(`[main] Loaded config: ${collections.length} collections`)
 
 // Discover view defs from lexicons
 discoverViews()
-await loadOnLoginHook(resolve(configDir, 'hooks'))
 
 const engineDialect = getDialect(config.databaseEngine)
 const { schemas, ddlStatements } = buildSchemas(lexicons, collections, engineDialect)
@@ -93,8 +93,24 @@ if (migrationChanges.length > 0) {
   log(`[main] Applied ${migrationChanges.length} schema migration(s)`)
 }
 
-// 3b. Run setup hooks (after DB init, before server)
-await initSetup(resolve(configDir, 'setup'))
+// 3b. Run setup hooks, feeds, xrpc, og, labels
+const serverDir = resolve(configDir, 'server')
+if (existsSync(serverDir)) {
+  // New: single server/ directory
+  await initServer(serverDir)
+} else {
+  // Legacy: separate directories
+  await initSetup(resolve(configDir, 'setup'))
+  await loadOnLoginHook(resolve(configDir, 'hooks'))
+  await initFeeds(resolve(configDir, 'feeds'))
+  log(`[main] Feeds initialized: ${listFeeds().map((f) => f.name).join(', ') || 'none'}`)
+  await initXrpc(resolve(configDir, 'xrpc'))
+  log(`[main] XRPC handlers initialized: ${listXrpc().join(', ') || 'none'}`)
+  await initOpengraph(resolve(configDir, 'og'))
+  log(`[main] OpenGraph initialized`)
+  await initLabels(resolve(configDir, 'labels'))
+  log(`[main] Labels initialized: ${getLabelDefinitions().length} definitions`)
+}
 
 // Write db/schema.sql (after setup, so setup-created tables are included)
 try {
@@ -121,25 +137,6 @@ try {
     }
   }
 } catch {}
-
-// 4. Initialize feeds, xrpc handlers, og, labels from directories
-await initFeeds(resolve(configDir, 'feeds'))
-log(
-  `[main] Feeds initialized: ${
-    listFeeds()
-      .map((f) => f.name)
-      .join(', ') || 'none'
-  }`,
-)
-
-await initXrpc(resolve(configDir, 'xrpc'))
-log(`[main] XRPC handlers initialized: ${listXrpc().join(', ') || 'none'}`)
-
-await initOpengraph(resolve(configDir, 'og'))
-log(`[main] OpenGraph initialized`)
-
-await initLabels(resolve(configDir, 'labels'))
-log(`[main] Labels initialized: ${getLabelDefinitions().length} definitions`)
 
 if (config.oauth) {
   await initOAuth(config.oauth, config.plc, config.relay)
