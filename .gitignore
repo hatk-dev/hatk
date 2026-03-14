@@ -5,3 +5,4 @@ test-results/
 .svelte-kit/
 .DS_Store
 dist/
+.worktrees/
