@@ -84,6 +84,12 @@ export function hatk(opts?: { port?: number }): Plugin {
 
     config() {
       return {
+        resolve: {
+          alias: {
+            '$hatk/client': resolve('hatk.generated.client.ts'),
+            '$hatk': resolve('hatk.generated.ts'),
+          },
+        },
         environments: {
           hatk: {
             resolve: {
