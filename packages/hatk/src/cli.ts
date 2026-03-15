@@ -92,7 +92,6 @@ function usage() {
     generate xrpc <nsid>                   Generate an XRPC handler
     generate label <name>                  Generate a label definition
     generate og <name>                     Generate an OpenGraph route
-    generate job <name>                    Generate a periodic job
     generate hook <name>                   Generate a lifecycle hook
     generate setup <name>                  Generate a setup script
     generate types                         Regenerate TypeScript types from lexicons
@@ -192,13 +191,6 @@ export default {
         },
       },
     }
-  },
-}
-`,
-  job: (_name) => `export default {
-  interval: 300, // seconds
-  async run(_ctx: any) {
-    // Periodic task logic here
   },
 }
 `,
@@ -330,7 +322,6 @@ const dirs: Record<string, string> = {
   xrpc: 'server',
   label: 'server',
   og: 'server',
-  job: 'server',
   hook: 'server',
   setup: 'server',
 }
@@ -1343,9 +1334,7 @@ a {
     )
   }
 
-  writeFileSync(
-    join(dir, 'AGENTS.md'),
-    `# hatk project
+  let agentsMd = `# hatk project
 
 This is an AT Protocol application built with [hatk](https://github.com/hatk-dev/hatk).
 Read the project's lexicons in \`lexicons/\` to understand the data model.
@@ -1356,32 +1345,78 @@ Types are generated from lexicons into \`hatk.generated.ts\` — never edit this
 | Directory    | Purpose                                              |
 |-------------|------------------------------------------------------|
 | \`lexicons/\`  | AT Protocol lexicon schemas (JSON). Defines collections and XRPC methods |
-| \`server/\`    | All server-side code: feeds, XRPC handlers, hooks, labels, OG routes, jobs, setup scripts |
+| \`server/\`    | All server-side code: feeds, XRPC handlers, hooks, labels, OG routes, setup scripts |
 | \`seeds/\`     | Test data seeding scripts for local development       |
-| \`test/\`      | Test files (vitest). Run with \`hatk test\`              |
+| \`test/\`      | Test files (vitest). Run with \`vp test\`               |
 | \`public/\`    | Static files served at the root                       |
+`
+  if (withSvelte) {
+    agentsMd += `| \`src/\`       | SvelteKit frontend (routes, components, styles)       |
 
-## Key files
+`
+  } else {
+    agentsMd += `
+`
+  }
+
+  agentsMd += `## Key files
 
 - \`hatk.config.ts\` — project configuration (see \`defineConfig\` for type info)
-- \`hatk.generated.ts\` — auto-generated types and typed helpers. Regenerate with \`hatk generate types\`
+- \`hatk.generated.ts\` — auto-generated server types and helpers. Regenerate with \`hatk generate types\`
+- \`hatk.generated.client.ts\` — auto-generated client-safe types and \`callXrpc\`. Never import \`hatk.generated.ts\` from frontend code
 
+## The \`$hatk\` alias
+
+Server files in \`server/\` import from \`$hatk\`:
+\`\`\`ts
+import { defineFeed, views, type Status } from "$hatk"
+\`\`\`
+`
+  if (withSvelte) {
+    agentsMd += `
+SvelteKit routes and components import from \`$hatk/client\`:
+\`\`\`ts
+import { callXrpc, getViewer } from "$hatk/client"
+\`\`\`
+
+\`$hatk\` resolves to \`hatk.generated.ts\` and \`$hatk/client\` to \`hatk.generated.client.ts\`.
+The Vite plugin handles this in dev/build. In tests and production, a Node.js module resolve hook handles it.
+`
+  } else {
+    agentsMd += `
+\`$hatk\` resolves to \`hatk.generated.ts\`. The Vite plugin handles this in dev/build.
+In tests and production, a Node.js module resolve hook handles it.
+`
+  }
+
+  agentsMd += `
 ## Commands
 
 Run \`npx hatk --help\` for the full list of commands.
 
 Use \`npx hatk generate\` to scaffold new feeds, xrpc handlers, labels, and lexicons
-rather than creating files manually. These generate files with the correct imports
-from \`hatk.generated.ts\`.
+rather than creating files manually. These generate files with the correct imports.
 
 After modifying lexicons, always run \`npx hatk generate types\` to update the generated types.
-`,
+`
+  if (withSvelte) {
+    agentsMd += `
+## Running
+
+- \`vp dev\` — start dev server (hatk + SvelteKit + PDS)
+- \`vp build\` — build for production (SvelteKit outputs to \`build/\`)
+- \`hatk start\` — start production server (hatk + SvelteKit via \`build/handler.js\`)
+- \`vp test\` — run tests
+`
+  }
+
+  writeFileSync(join(dir, 'AGENTS.md'), agentsMd,
   )
 
   console.log(`Created ${name}/`)
   console.log(`  hatk.config.ts`)
   console.log(`  lexicons/   — lexicon JSON files (core + your own)`)
-  console.log(`  server/     — feeds, XRPC handlers, hooks, labels, OG routes, jobs, setup`)
+  console.log(`  server/     — feeds, XRPC handlers, hooks, labels, OG routes, setup`)
   console.log(`  seeds/      — seed fixture data (hatk seed)`)
   console.log(`  test/       — test files (hatk test)`)
   console.log(`  public/     — static files`)
