@@ -10,7 +10,7 @@ import { createAdapter } from './database/adapter-factory.ts'
 import { getDialect } from './database/dialect.ts'
 import { setSearchPort } from './database/fts.ts'
 import { initFeeds, listFeeds } from './feeds.ts'
-import { initXrpc, listXrpc, configureRelay } from './xrpc.ts'
+import { initXrpc, listXrpc, configureRelay, callXrpc } from './xrpc.ts'
 import { initOpengraph } from './opengraph.ts'
 import { initLabels, getLabelDefinitions } from './labels.ts'
 import { startIndexer } from './indexer.ts'
@@ -21,6 +21,7 @@ import { validateLexicons } from '@bigmoves/lexicon'
 import { relayHttpUrl } from './config.ts'
 import { runBackfill } from './backfill.ts'
 import { initOAuth } from './oauth/server.ts'
+import { parseSessionCookie, getSessionCookieName } from './oauth/session.ts'
 import { loadOnLoginHook } from './hooks.ts'
 import { initSetup } from './setup.ts'
 import { initServer } from './server-init.ts'
@@ -185,6 +186,11 @@ const handler = createHandler({
   admins: config.admins,
   onResync: runBackfillAndRestart,
 })
+
+// Expose server bridge on globalThis so SvelteKit SSR can call XRPC handlers directly
+;(globalThis as any).__hatk_callXrpc = callXrpc
+;(globalThis as any).__hatk_parseSessionCookie = parseSessionCookie
+;(globalThis as any).__hatk_sessionCookieName = getSessionCookieName()
 
 // Detect SvelteKit build output and use it as fallback handler
 let fallback: any = undefined
