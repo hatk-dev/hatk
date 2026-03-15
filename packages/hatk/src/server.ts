@@ -666,7 +666,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       }
 
       // Dev-only: create a session cookie for any DID (for testing)
-      if (url.pathname === '/__dev/login' && devMode) {
+      if (url.pathname === '/__dev/login' && devMode && oauth) {
         const did = url.searchParams.get('did')
         if (!did) return withCors(jsonError(400, 'did required', acceptEncoding))
         const cookieValue = await createSessionCookie(did)
@@ -934,12 +934,11 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       error = err.message
       return withCors(jsonError(500, err.message, acceptEncoding))
     } finally {
-      if (isXrpc || isAdmin) {
+      if ((isXrpc || isAdmin) && elapsed) {
         emit('server', 'request', {
           method: request.method,
           path: url.pathname,
-          status_code: 0, // Status not easily available here, but emit for timing
-          duration_ms: elapsed!(),
+          duration_ms: elapsed(),
           collection: url.searchParams.get('collection') || undefined,
           query: url.searchParams.get('q') || undefined,
           error,

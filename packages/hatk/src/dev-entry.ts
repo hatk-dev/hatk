@@ -119,7 +119,7 @@ export async function reloadServer() {
 export { renderPage } from './renderer.ts'
 export { getRenderer } from './renderer.ts'
 export { callXrpc } from './xrpc.ts'
-export { parseSessionCookie } from './oauth/session.ts'
+export { parseSessionCookie, getSessionCookieName } from './oauth/session.ts'
 
 log(`[hatk] Dev server ready`)
 log(`  Relay: ${config.relay}`)

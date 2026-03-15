@@ -7,6 +7,7 @@ import { refreshPdsSession } from './oauth/server.ts'
 import { validateRecord } from '@bigmoves/lexicon'
 import { getLexiconArray } from './database/schema.ts'
 import { insertRecord, deleteRecord as dbDeleteRecord } from './database/db.ts'
+import { emit } from './logger.ts'
 
 export class ProxyError extends Error {
   constructor(public status: number, message: string) {
@@ -16,36 +17,22 @@ export class ProxyError extends Error {
 
 // --- Low-level PDS proxy with DPoP + nonce retry + token refresh ---
 
-async function proxyToPds(
+interface PdsProxyResult {
+  ok: boolean
+  status: number
+  body: Record<string, unknown>
+  headers: Headers
+}
+
+type FetchFn = (token: string, nonce?: string) => Promise<PdsProxyResult>
+
+/** Shared retry logic: DPoP nonce handling + token refresh. */
+async function withDpopRetry(
   oauthConfig: OAuthConfig,
-  session: any,
-  method: string,
-  pdsUrl: string,
-  body: any,
-): Promise<{ ok: boolean; status: number; body: any; headers: Headers }> {
-  const serverKey = await getServerKey('appview-oauth-key')
-  const privateJwk = JSON.parse(serverKey!.privateKey)
-  const publicJwk = JSON.parse(serverKey!.publicKey)
-
+  session: { access_token: string; pds_endpoint: string; did: string; refresh_token: string; dpop_jkt: string },
+  doFetch: FetchFn,
+): Promise<PdsProxyResult> {
   let accessToken = session.access_token
-
-  async function doFetch(
-    token: string,
-    nonce?: string,
-  ): Promise<{ ok: boolean; status: number; body: any; headers: Headers }> {
-    const proof = await createDpopProof(privateJwk, publicJwk, method, pdsUrl, token, nonce)
-    const res = await fetch(pdsUrl, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `DPoP ${token}`,
-        DPoP: proof,
-      },
-      body: JSON.stringify(body),
-    })
-    const resBody = await res.json().catch(() => ({}))
-    return { ok: res.ok, status: res.status, body: resBody, headers: res.headers }
-  }
 
   let result = await doFetch(accessToken)
   if (result.ok) return result
@@ -68,7 +55,6 @@ async function proxyToPds(
       accessToken = refreshed.accessToken
       result = await doFetch(accessToken, nonce)
       if (result.ok) return result
-      // May need DPoP nonce after refresh
       if (result.body.error === 'use_dpop_nonce') {
         nonce = result.headers.get('DPoP-Nonce') || undefined
         if (nonce) result = await doFetch(accessToken, nonce)
@@ -79,6 +65,33 @@ async function proxyToPds(
   return result
 }
 
+async function proxyToPds(
+  oauthConfig: OAuthConfig,
+  session: { access_token: string; pds_endpoint: string; did: string; refresh_token: string; dpop_jkt: string },
+  method: string,
+  pdsUrl: string,
+  body: unknown,
+): Promise<PdsProxyResult> {
+  const serverKey = await getServerKey('appview-oauth-key')
+  const privateJwk = JSON.parse(serverKey!.privateKey)
+  const publicJwk = JSON.parse(serverKey!.publicKey)
+
+  return withDpopRetry(oauthConfig, session, async (token, nonce) => {
+    const proof = await createDpopProof(privateJwk, publicJwk, method, pdsUrl, token, nonce)
+    const res = await fetch(pdsUrl, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `DPoP ${token}`,
+        DPoP: proof,
+      },
+      body: JSON.stringify(body),
+    })
+    const resBody: Record<string, unknown> = await res.json().catch(() => ({}))
+    return { ok: res.ok, status: res.status, body: resBody, headers: res.headers }
+  })
+}
+
 /** Proxy a raw binary request to the user's PDS with DPoP + nonce retry + token refresh. */
 async function proxyToPdsRaw(
   oauthConfig: OAuthConfig,
@@ -86,17 +99,12 @@ async function proxyToPdsRaw(
   pdsUrl: string,
   body: Uint8Array,
   contentType: string,
-): Promise<{ ok: boolean; status: number; body: Record<string, unknown>; headers: Headers }> {
+): Promise<PdsProxyResult> {
   const serverKey = await getServerKey('appview-oauth-key')
   const privateJwk = JSON.parse(serverKey!.privateKey)
   const publicJwk = JSON.parse(serverKey!.publicKey)
 
-  let accessToken = session.access_token
-
-  async function doFetch(
-    token: string,
-    nonce?: string,
-  ): Promise<{ ok: boolean; status: number; body: Record<string, unknown>; headers: Headers }> {
+  return withDpopRetry(oauthConfig, session, async (token, nonce) => {
     const proof = await createDpopProof(privateJwk, publicJwk, 'POST', pdsUrl, token, nonce)
     const res = await fetch(pdsUrl, {
       method: 'POST',
@@ -110,35 +118,7 @@ async function proxyToPdsRaw(
     })
     const resBody: Record<string, unknown> = await res.json().catch(() => ({}))
     return { ok: res.ok, status: res.status, body: resBody, headers: res.headers }
-  }
-
-  let result = await doFetch(accessToken)
-  if (result.ok) return result
-
-  let nonce: string | undefined
-
-  if (result.body.error === 'use_dpop_nonce') {
-    nonce = result.headers.get('DPoP-Nonce') || undefined
-    if (nonce) {
-      result = await doFetch(accessToken, nonce)
-      if (result.ok) return result
-    }
-  }
-
-  if (result.body.error === 'invalid_token') {
-    const refreshed = await refreshPdsSession(oauthConfig, session)
-    if (refreshed) {
-      accessToken = refreshed.accessToken
-      result = await doFetch(accessToken, nonce)
-      if (result.ok) return result
-      if (result.body.error === 'use_dpop_nonce') {
-        nonce = result.headers.get('DPoP-Nonce') || undefined
-        if (nonce) result = await doFetch(accessToken, nonce)
-      }
-    }
-  }
-
-  return result
+  })
 }
 
 // --- High-level proxy functions ---
@@ -146,7 +126,7 @@ async function proxyToPdsRaw(
 export async function pdsCreateRecord(
   oauthConfig: OAuthConfig,
   viewer: { did: string },
-  input: { collection: string; repo?: string; rkey?: string; record: Record<string, any> },
+  input: { collection: string; repo?: string; rkey?: string; record: Record<string, unknown> },
 ): Promise<{ uri?: string; cid?: string }> {
   const validationError = validateRecord(getLexiconArray(), input.collection, input.record)
   if (validationError) {
@@ -165,13 +145,15 @@ export async function pdsCreateRecord(
   }
 
   const pdsRes = await proxyToPds(oauthConfig, session, 'POST', pdsUrl, pdsBody)
-  if (!pdsRes.ok) throw new ProxyError(pdsRes.status, pdsRes.body.error || 'PDS write failed')
+  if (!pdsRes.ok) throw new ProxyError(pdsRes.status, String(pdsRes.body.error || 'PDS write failed'))
 
   try {
-    await insertRecord(input.collection, pdsRes.body.uri, pdsRes.body.cid, viewer.did, input.record)
-  } catch {}
+    await insertRecord(input.collection, String(pdsRes.body.uri), String(pdsRes.body.cid), viewer.did, input.record)
+  } catch (err: unknown) {
+    emit('pds-proxy', 'local_index_error', { op: 'createRecord', error: err instanceof Error ? err.message : String(err) })
+  }
 
-  return pdsRes.body
+  return pdsRes.body as { uri?: string; cid?: string }
 }
 
 export async function pdsDeleteRecord(
@@ -190,12 +172,14 @@ export async function pdsDeleteRecord(
   }
 
   const pdsRes = await proxyToPds(oauthConfig, session, 'POST', pdsUrl, pdsBody)
-  if (!pdsRes.ok) throw new ProxyError(pdsRes.status, pdsRes.body.error || 'PDS delete failed')
+  if (!pdsRes.ok) throw new ProxyError(pdsRes.status, String(pdsRes.body.error || 'PDS delete failed'))
 
   try {
     const uri = `at://${viewer.did}/${input.collection}/${input.rkey}`
     await dbDeleteRecord(input.collection, uri)
-  } catch {}
+  } catch (err: unknown) {
+    emit('pds-proxy', 'local_index_error', { op: 'deleteRecord', error: err instanceof Error ? err.message : String(err) })
+  }
 
   return pdsRes.body
 }
@@ -203,7 +187,7 @@ export async function pdsDeleteRecord(
 export async function pdsPutRecord(
   oauthConfig: OAuthConfig,
   viewer: { did: string },
-  input: { collection: string; rkey: string; record: Record<string, any>; repo?: string },
+  input: { collection: string; rkey: string; record: Record<string, unknown>; repo?: string },
 ): Promise<{ uri?: string; cid?: string }> {
   const validationError = validateRecord(getLexiconArray(), input.collection, input.record)
   if (validationError) {
@@ -222,13 +206,15 @@ export async function pdsPutRecord(
   }
 
   const pdsRes = await proxyToPds(oauthConfig, session, 'POST', pdsUrl, pdsBody)
-  if (!pdsRes.ok) throw new ProxyError(pdsRes.status, pdsRes.body.error || 'PDS write failed')
+  if (!pdsRes.ok) throw new ProxyError(pdsRes.status, String(pdsRes.body.error || 'PDS write failed'))
 
   try {
-    await insertRecord(input.collection, pdsRes.body.uri, pdsRes.body.cid, viewer.did, input.record)
-  } catch {}
+    await insertRecord(input.collection, String(pdsRes.body.uri), String(pdsRes.body.cid), viewer.did, input.record)
+  } catch (err: unknown) {
+    emit('pds-proxy', 'local_index_error', { op: 'putRecord', error: err instanceof Error ? err.message : String(err) })
+  }
 
-  return pdsRes.body
+  return pdsRes.body as { uri?: string; cid?: string }
 }
 
 export async function pdsUploadBlob(

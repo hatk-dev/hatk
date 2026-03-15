@@ -1825,10 +1825,11 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     clientOut += `      if (parse) {\n`
     clientOut += `        const { getRequestEvent } = await import('$app/server')\n`
     clientOut += `        const event = getRequestEvent()\n`
-    clientOut += `        const cookieValue = event.cookies.get('__hatk_session')\n`
+    clientOut += `        const cookieName = (globalThis as any).__hatk_sessionCookieName ?? '__hatk_session'\n`
+    clientOut += `        const cookieValue = event.cookies.get(cookieName)\n`
     clientOut += `        if (cookieValue) {\n`
     clientOut += `          const request = new Request('http://localhost', {\n`
-    clientOut += `            headers: { cookie: \`__hatk_session=\${cookieValue}\` },\n`
+    clientOut += `            headers: { cookie: \`\${cookieName}=\${cookieValue}\` },\n`
     clientOut += `          })\n`
     clientOut += `          return parse(request)\n`
     clientOut += `        }\n`

@@ -7,6 +7,10 @@ let _privateJwk: JsonWebKey
 let _cookieName = '__hatk_session'
 const MAX_AGE = 30 * 24 * 60 * 60 // 30 days in seconds
 
+export function getSessionCookieName(): string {
+  return _cookieName
+}
+
 export function initSession(privateJwk: JsonWebKey, cookieName?: string): void {
   _privateJwk = privateJwk
   if (cookieName) _cookieName = cookieName
@@ -15,7 +19,7 @@ export function initSession(privateJwk: JsonWebKey, cookieName?: string): void {
 async function hmacKey(usage: 'sign' | 'verify'): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     'raw',
-    new TextEncoder().encode(JSON.stringify(_privateJwk)),
+    new TextEncoder().encode(JSON.stringify(_privateJwk, Object.keys(_privateJwk).sort())),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     [usage],

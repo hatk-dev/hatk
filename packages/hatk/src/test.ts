@@ -99,7 +99,7 @@ export async function createTestContext(): Promise<TestContext> {
     ddlStatements.push(generateCreateTableSQL(schema, SQLITE_DIALECT))
   }
 
-  // In-memory database
+  // In-memory SQLite — faster startup, no native module issues in Vite's module runner
   const { adapter, searchPort } = await createAdapter('sqlite')
   setSearchPort(searchPort)
   await initDatabase(adapter, ':memory:', schemas, ddlStatements)

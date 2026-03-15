@@ -35,7 +35,11 @@ export function toRequest(req: IncomingMessage, base: string): Request {
  * Pipe a Web Standard Response back to a Node.js ServerResponse.
  */
 export async function sendResponse(res: ServerResponse, response: Response): Promise<void> {
-  res.writeHead(response.status, Object.fromEntries(response.headers.entries()))
+  const rawHeaders: string[] = []
+  response.headers.forEach((value, name) => {
+    rawHeaders.push(name, value)
+  })
+  res.writeHead(response.status, rawHeaders)
 
   if (!response.body) {
     res.end()
@@ -56,9 +60,9 @@ export async function sendResponse(res: ServerResponse, response: Response): Pro
 }
 
 /** Routes handled by hatk — everything else can fall through to a framework handler. */
-const HATK_ROUTES = ['/xrpc/', '/oauth/', '/.well-known/', '/og/', '/admin', '/repos', '/info/', '/_health', '/robots.txt', '/auth/logout']
+export const HATK_ROUTES = ['/xrpc/', '/oauth/', '/.well-known/', '/og/', '/admin', '/repos', '/info/', '/_health', '/robots.txt', '/auth/logout', '/__dev/']
 
-function isHatkRoute(pathname: string): boolean {
+export function isHatkRoute(pathname: string): boolean {
   return HATK_ROUTES.some(r => pathname.startsWith(r) || pathname === r)
 }
 

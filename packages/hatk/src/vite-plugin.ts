@@ -2,6 +2,7 @@ import { createRunnableDevEnvironment, type Plugin, type ViteDevServer, type Hot
 import { resolve } from 'node:path'
 import { existsSync } from 'node:fs'
 import { execSync } from 'node:child_process'
+import { isHatkRoute } from './adapter.ts'
 
 /** Boot the local PDS if a docker-compose.yml exists. */
 async function ensurePds(): Promise<void> {
@@ -41,6 +42,7 @@ function collectAllCss(server: ViteDevServer): string {
   for (const envName of ['hatk', 'client']) {
     const env = server.environments[envName]
     if (!env?.moduleGraph) continue
+    // TODO: uses internal Vite module graph API — may break across Vite minor versions
     for (const mod of (env.moduleGraph as any).idToModuleMap?.values?.() ?? []) {
       const url = mod.url || ''
       if (/\.(css|scss|less|styl|stylus|pcss|postcss)(\?|$)/.test(url)) {
@@ -145,12 +147,12 @@ export function hatk(opts?: { port?: number }): Plugin {
       // The runner has its own module instances with registered handlers; Node's instance is empty.
       ;(globalThis as any).__hatk_callXrpc = mod.callXrpc
 
-      // Capture cookie parser for SSR viewer resolution
+      // Capture cookie parser and name for SSR viewer resolution
       const ssrParseSessionCookie: ((request: Request) => Promise<{ did: string } | null>) | null = mod.parseSessionCookie ?? null
       ;(globalThis as any).__hatk_parseSessionCookie = ssrParseSessionCookie
+      ;(globalThis as any).__hatk_sessionCookieName = mod.getSessionCookieName?.() ?? '__hatk_session'
 
-      const hasRenderer = ssrGetRenderer && ssrGetRenderer()
-      if (hasRenderer) {
+      if (ssrGetRenderer?.()) {
         console.log('[hatk] SSR ready')
       }
 
@@ -158,20 +160,7 @@ export function hatk(opts?: { port?: number }): Plugin {
       server.middlewares.use(async (req: any, res: any, next: any) => {
         const url = new URL(req.url!, `http://localhost:${devPort}`)
 
-        const isBackend =
-          url.pathname.startsWith('/xrpc/') ||
-          url.pathname.startsWith('/oauth/') ||
-          url.pathname.startsWith('/.well-known/') ||
-          url.pathname.startsWith('/og/') ||
-          url.pathname.startsWith('/admin') ||
-          url.pathname.startsWith('/repos') ||
-          url.pathname.startsWith('/info/') ||
-          url.pathname === '/_health' ||
-          url.pathname === '/robots.txt' ||
-          url.pathname === '/auth/logout' ||
-          url.pathname.startsWith('/__dev/')
-
-        if (!isBackend || !handler) {
+        if (!isHatkRoute(url.pathname) || !handler) {
           next()
           return
         }
@@ -194,7 +183,7 @@ export function hatk(opts?: { port?: number }): Plugin {
       // SSR middleware — returned function runs after htmlFallback but before indexHtmlMiddleware
       return () => {
         server.middlewares.use(async (req: any, res: any, next: any) => {
-          if (!hasRenderer) {
+          if (!ssrGetRenderer?.()) {
             next()
             return
           }
@@ -217,6 +206,8 @@ export function hatk(opts?: { port?: number }): Plugin {
             const request = new Request(fullUrl.href, { headers })
 
             // Resolve viewer from session cookie for SSR
+            // TODO: globalThis.__hatk_viewer is not safe for concurrent SSR requests.
+            // Replace with AsyncLocalStorage when callXrpc supports per-request context.
             let viewer: { did: string } | null = null
             if (ssrParseSessionCookie) {
               try {
