@@ -26,8 +26,5 @@
   },
   "engines": {
     "node": ">=25.0.0"
-  },
-  "dependencies": {
-    "better-sqlite3": "^12.8.0"
   }
 }
