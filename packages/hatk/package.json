@@ -32,7 +32,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@bigmoves/lexicon": "^0.2.1",
+    "@bigmoves/lexicon": "^0.2.2",
     "@duckdb/node-api": "^1.4.4-r.1",
     "@hatk/oauth-client": "*",
     "@resvg/resvg-js": "^2.6.2",
