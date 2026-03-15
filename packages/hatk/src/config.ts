@@ -26,6 +26,7 @@ export interface OAuthConfig {
   issuer: string
   scopes: string[]
   clients: OAuthClientConfig[]
+  cookieName?: string
 }
 
 export interface BackfillConfig {
@@ -80,7 +81,7 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
   const configDir = dirname(resolved)
   let mod: any
   try {
-    mod = await import(resolved)
+    mod = await import(/* @vite-ignore */ resolved)
   } catch (err: any) {
     console.error(`Failed to load config file: ${resolved}`)
     console.error(err.message || err)

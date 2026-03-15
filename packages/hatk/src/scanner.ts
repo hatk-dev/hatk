@@ -16,6 +16,7 @@ export interface ScanResult {
   setup: ScannedModule[]
   labels: ScannedModule[]
   og: ScannedModule[]
+  renderer: ScannedModule | null
 }
 
 /** Recursively collect .ts/.js files, skipping _ prefixed and dot files */
@@ -48,6 +49,7 @@ export async function scanServerDir(serverDir: string): Promise<ScanResult> {
     setup: [],
     labels: [],
     og: [],
+    renderer: null,
   }
 
   if (!existsSync(serverDir)) return result
@@ -56,7 +58,7 @@ export async function scanServerDir(serverDir: string): Promise<ScanResult> {
 
   for (const filePath of files) {
     const name = relative(serverDir, filePath).replace(/\.(ts|js)$/, '')
-    const mod = await import(filePath)
+    const mod = await import(/* @vite-ignore */ `${filePath}?t=${Date.now()}`)
     const exported = mod.default
 
     if (!exported) {
@@ -87,6 +89,9 @@ export async function scanServerDir(serverDir: string): Promise<ScanResult> {
         break
       case 'og':
         result.og.push(entry)
+        break
+      case 'renderer':
+        result.renderer = entry
         break
       default:
         log(`[scanner] ${name}: no recognized __type tag, skipping`)

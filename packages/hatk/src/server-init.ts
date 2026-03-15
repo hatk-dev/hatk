@@ -7,12 +7,13 @@ import { registerLabelModule, getLabelDefinitions } from './labels.ts'
 import { registerOgHandler } from './opengraph.ts'
 import { registerHook } from './hooks.ts'
 import { runSetupHandler } from './setup.ts'
+import { registerRenderer } from './renderer.ts'
 
 /**
  * Scan the server/ directory and register all discovered handlers.
  * Setup scripts run immediately (in sorted order).
  */
-export async function initServer(serverDir: string): Promise<void> {
+export async function initServer(serverDir: string, opts?: { skipSetup?: boolean }): Promise<void> {
   if (!existsSync(serverDir)) {
     log(`[server] No server/ directory found, skipping`)
     return
@@ -20,9 +21,11 @@ export async function initServer(serverDir: string): Promise<void> {
 
   const scanned = await scanServerDir(serverDir)
 
-  // 1. Run setup scripts first (sorted by name)
-  for (const entry of scanned.setup.sort((a, b) => a.name.localeCompare(b.name))) {
-    await runSetupHandler(entry.name, entry.mod.handler)
+  // 1. Run setup scripts first (sorted by name) — skipped in test context
+  if (!opts?.skipSetup) {
+    for (const entry of scanned.setup.sort((a, b) => a.name.localeCompare(b.name))) {
+      await runSetupHandler(entry.name, entry.mod.handler)
+    }
   }
 
   // 2. Register feeds
@@ -52,6 +55,11 @@ export async function initServer(serverDir: string): Promise<void> {
   // 6. Register OG handlers
   for (const entry of scanned.og) {
     registerOgHandler(entry.mod)
+  }
+
+  // 7. Register renderer
+  if (scanned.renderer) {
+    registerRenderer(scanned.renderer.mod.handler)
   }
 
   log(`[server] Initialized from server/ directory:`)

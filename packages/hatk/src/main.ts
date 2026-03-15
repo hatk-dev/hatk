@@ -15,7 +15,8 @@ import { initOpengraph } from './opengraph.ts'
 import { initLabels, getLabelDefinitions } from './labels.ts'
 import { startIndexer } from './indexer.ts'
 import { rebuildAllIndexes } from './database/fts.ts'
-import { startServer } from './server.ts'
+import { createHandler, registerCoreHandlers } from './server.ts'
+import { serve } from './adapter.ts'
 import { validateLexicons } from '@bigmoves/lexicon'
 import { relayHttpUrl } from './config.ts'
 import { runBackfill } from './backfill.ts'
@@ -112,6 +113,9 @@ if (existsSync(serverDir)) {
   log(`[main] Labels initialized: ${getLabelDefinitions().length} definitions`)
 }
 
+// Register built-in dev.hatk.* handlers so callXrpc() can find them
+registerCoreHandlers(collections, config.oauth)
+
 // Write db/schema.sql (after setup, so setup-created tables are included)
 try {
   const schemaDir = resolve(configDir, 'db')
@@ -174,7 +178,24 @@ function runBackfillAndRestart() {
     })
 }
 
-startServer(config.port, collections, config.publicDir, config.oauth, config.admins, undefined, runBackfillAndRestart)
+const handler = createHandler({
+  collections,
+  publicDir: config.publicDir,
+  oauth: config.oauth,
+  admins: config.admins,
+  onResync: runBackfillAndRestart,
+})
+
+// Detect SvelteKit build output and use it as fallback handler
+let fallback: any = undefined
+const sveltekitHandler = resolve(configDir, 'build', 'handler.js')
+if (existsSync(sveltekitHandler)) {
+  const sk = await import(/* @vite-ignore */ sveltekitHandler)
+  fallback = sk.handler
+  log(`[main] SvelteKit handler loaded from build/handler.js`)
+}
+
+serve(handler, config.port, undefined, fallback)
 
 log(`\nhatk running:`)
 log(`  Relay: ${config.relay}`)

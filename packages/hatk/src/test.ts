@@ -1,4 +1,3 @@
-import type { IncomingMessage } from 'node:http'
 import { resolve, dirname } from 'node:path'
 import { readdirSync, readFileSync } from 'node:fs'
 import YAML from 'yaml'
@@ -12,13 +11,12 @@ import {
 } from './database/schema.ts'
 import { initDatabase, querySQL, runSQL, insertRecord, closeDatabase } from './database/db.ts'
 import { createAdapter } from './database/adapter-factory.ts'
+import { SQLITE_DIALECT } from './database/dialect.ts'
 import { setSearchPort } from './database/fts.ts'
-import { initFeeds, executeFeed, listFeeds, createPaginate } from './feeds.ts'
-import { initXrpc, executeXrpc, listXrpc, configureRelay } from './xrpc.ts'
-import { initOpengraph } from './opengraph.ts'
-import { initLabels } from './labels.ts'
+import { executeFeed, listFeeds, createPaginate } from './feeds.ts'
+import { executeXrpc, listXrpc, configureRelay } from './xrpc.ts'
+import { initServer } from './server-init.ts'
 import { discoverViews } from './views.ts'
-import { loadOnLoginHook } from './hooks.ts'
 import { validateLexicons } from '@bigmoves/lexicon'
 import { packCursor, unpackCursor, isTakendownDid, filterTakendownDids } from './database/db.ts'
 import { seed as createSeedHelpers, type SeedOpts } from './seed.ts'
@@ -98,28 +96,19 @@ export async function createTestContext(): Promise<TestContext> {
     if (!lexicon) continue
     const schema = generateTableSchema(nsid, lexicon, lexicons)
     schemas.push(schema)
-    ddlStatements.push(generateCreateTableSQL(schema))
+    ddlStatements.push(generateCreateTableSQL(schema, SQLITE_DIALECT))
   }
 
   // In-memory database
-  const { adapter, searchPort } = await createAdapter('duckdb')
+  const { adapter, searchPort } = await createAdapter('sqlite')
   setSearchPort(searchPort)
   await initDatabase(adapter, ':memory:', schemas, ddlStatements)
 
-  // Discover views + hooks
+  // Discover views
   discoverViews()
-  try {
-    await loadOnLoginHook(resolve(configDir, 'hooks'))
-  } catch {}
 
-  // Skip setup hooks in test context — they're for server boot-time
-  // initialization (e.g. importing large datasets) and not appropriate for tests
-
-  // Discover feeds, xrpc, labels
-  await initFeeds(resolve(configDir, 'feeds'))
-  await initXrpc(resolve(configDir, 'xrpc'))
-  await initOpengraph(resolve(configDir, 'og'))
-  await initLabels(resolve(configDir, 'labels'))
+  // Discover feeds, xrpc, labels, hooks, og from server/ directory (skip setup scripts in tests)
+  await initServer(resolve(configDir, 'server'), { skipSetup: true })
 
   return {
     db: { query: querySQL, run: runSQL },
@@ -285,8 +274,8 @@ export async function startTestServer(): Promise<TestServer> {
   const { startServer } = await import('./server.ts')
 
   // Start server on port 0 (random available port)
-  const resolveViewer = (req: IncomingMessage) => {
-    const did = req.headers['x-test-viewer']
+  const resolveViewer = (request: Request) => {
+    const did = request.headers.get('x-test-viewer')
     return typeof did === 'string' ? { did } : null
   }
   const httpServer = startServer(

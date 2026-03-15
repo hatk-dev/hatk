@@ -80,7 +80,7 @@ export async function initSetup(setupDir: string): Promise<void> {
 
   for (const scriptPath of files) {
     const name = relative(setupDir, scriptPath).replace(/\.(ts|js)$/, '')
-    const mod = await import(scriptPath)
+    const mod = await import(/* @vite-ignore */ `${scriptPath}?t=${Date.now()}`)
     const handler = mod.default?.handler || mod.default
     if (typeof handler !== 'function') {
       console.warn(`[setup] ${name}: no handler function found, skipping`)

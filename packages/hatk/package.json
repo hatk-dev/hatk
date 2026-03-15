@@ -23,9 +23,9 @@
     "./hooks": "./dist/hooks.js",
     "./setup": "./dist/setup.js",
     "./test": "./dist/test.js",
-    "./test/browser": "./dist/test-browser.js",
     "./config": "./dist/config.js",
-    "./vite-plugin": "./dist/vite-plugin.js"
+    "./vite-plugin": "./dist/vite-plugin.js",
+    "./renderer": "./dist/renderer.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -41,10 +41,12 @@
     "vitest": "^4",
     "yaml": "^2.7.0"
   },
+  "peerDependencies": {
+    "vite": "^8.0.0"
+  },
   "devDependencies": {
-    "@playwright/test": "^1.58.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.2.14",
-    "vite": "^6"
+    "vite": "^8.0.0"
   }
 }

@@ -466,10 +466,14 @@ export async function getSchemaDump(): Promise<string> {
       `SELECT sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_fts_%' AND sql IS NOT NULL ORDER BY name`,
     )
   }
-  // Normalize indentation
+  // Normalize indentation and formatting
   return rows
     .map((r: any) => {
       let sql = (r.sql as string).trim()
+      // Remove quotes around column names (SQLite adds them for some columns)
+      sql = sql.replace(/\n\s*"(\w+)"/g, '\n$1')
+      // Ensure closing paren is on its own line
+      sql = sql.replace(/([^(\s])\)$/, '$1\n)')
       // Split into lines and re-indent consistently
       const lines = sql.split('\n').map((l) => l.trim())
       sql = lines

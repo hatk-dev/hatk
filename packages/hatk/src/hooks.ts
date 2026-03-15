@@ -50,7 +50,7 @@ export async function loadOnLoginHook(hooksDir: string): Promise<void> {
   const jsPath = resolve(hooksDir, 'on-login.js')
   const path = existsSync(tsPath) ? tsPath : existsSync(jsPath) ? jsPath : null
   if (!path) return
-  const mod = await import(path)
+  const mod = await import(/* @vite-ignore */ `${path}?t=${Date.now()}`)
   onLoginHook = mod.default
   log('[hooks] on-login hook loaded')
 }

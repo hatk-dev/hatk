@@ -194,7 +194,7 @@ export async function initFeeds(feedsDir: string): Promise<void> {
   for (const file of files) {
     const name = file.replace(/\.(ts|js)$/, '')
     const scriptPath = resolve(feedsDir, file)
-    const mod = await import(scriptPath)
+    const mod = await import(/* @vite-ignore */ `${scriptPath}?t=${Date.now()}`)
     const generator = mod.default
 
     const handler: FeedHandler = {

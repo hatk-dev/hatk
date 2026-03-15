@@ -1,8 +1,19 @@
 import { resolve } from 'node:path'
 import { readFileSync, readdirSync } from 'node:fs'
 import { log } from './logger.ts'
-import satori from 'satori'
-import { Resvg } from '@resvg/resvg-js'
+// Lazy-imported to avoid CJS require() issues in Vite's module runner
+let _satori: typeof import('satori').default | null = null
+let _Resvg: typeof import('@resvg/resvg-js').Resvg | null = null
+
+async function getSatori() {
+  if (!_satori) _satori = (await import('satori')).default
+  return _satori
+}
+
+async function getResvg() {
+  if (!_Resvg) _Resvg = (await import('@resvg/resvg-js')).Resvg
+  return _Resvg
+}
 import {
   querySQL,
   runSQL,
@@ -107,7 +118,7 @@ export async function initOpengraph(ogDir: string): Promise<void> {
   for (const file of files) {
     const name = file.replace(/\.(ts|js)$/, '')
     const scriptPath = resolve(ogDir, file)
-    const mod = await import(scriptPath)
+    const mod = await import(/* @vite-ignore */ `${scriptPath}?t=${Date.now()}`)
     const handler = mod.default
 
     if (!handler.path) {
@@ -172,7 +183,7 @@ export async function initOpengraph(ogDir: string): Promise<void> {
           ...result.options,
           fonts: [...(defaultFont ? [defaultFont] : []), ...(result.options?.fonts || [])],
         }
-        const svg = await satori(element, options)
+        const svg = await (await getSatori())(element, options)
         return { svg, meta: result.meta }
       },
     })
@@ -255,7 +266,7 @@ export function registerOgHandler(ogMod: { path: string; generate: (ctx: Opengra
         ...result.options,
         fonts: [...(defaultFont ? [defaultFont] : []), ...(result.options?.fonts || [])],
       }
-      const svg = await satori(element as any, options)
+      const svg = await (await getSatori())(element as any, options)
       return { svg, meta: result.meta }
     },
   })
@@ -284,6 +295,7 @@ export async function handleOpengraphRequest(pathname: string): Promise<Buffer |
 
     try {
       const { svg, meta } = await handler.execute(params)
+      const Resvg = await getResvg()
       const png = new Resvg(svg, { fitTo: { mode: 'width', value: 1200 } }).render().asPng()
 
       if (cache.size >= CACHE_MAX) {

@@ -14,6 +14,7 @@ import {
   base64UrlEncode,
 } from './crypto.ts'
 import { parseDpopProof, createDpopProof } from './dpop.ts'
+import { initSession } from './session.ts'
 import { resolveClient, validateRedirectUri, isLoopbackClient } from './client.ts'
 import { discoverAuthServer, resolveHandle } from './discovery.ts'
 import {
@@ -90,6 +91,9 @@ export async function initOAuth(_config: OAuthConfig, plcUrl: string, relayUrl: 
   }
   serverPrivateKey = await importPrivateKey(serverPrivateJwk)
   serverJkt = await computeJwkThumbprint(serverPublicJwk)
+
+  // Initialize SSR session cookie signing
+  initSession(serverPrivateJwk, _config.cookieName)
 
   // Periodic cleanup of expired OAuth data
   setInterval(() => cleanupExpiredOAuth().catch(() => {}), 60_000)
@@ -319,6 +323,107 @@ export function buildAuthorizeRedirect(config: OAuthConfig, request: any): strin
   return `${request.pds_auth_server}/oauth/authorize?${params}`
 }
 
+// --- Server-initiated login (no DPoP required from browser) ---
+
+export async function serverLogin(
+  config: OAuthConfig,
+  handle: string,
+): Promise<string> {
+  // Resolve handle to DID
+  let did = handle
+  if (!did.startsWith('did:')) {
+    did = await resolveHandle(handle, _relayUrl)
+  }
+
+  // Discover PDS auth server
+  const discovery = await discoverAuthServer(did, _plcUrl)
+  const pdsAuthServer = discovery.authServerEndpoint
+
+  // Create PKCE for PAR to PDS
+  const pdsCodeVerifier = randomToken()
+  const pdsCodeChallenge = base64UrlEncode(await sha256(pdsCodeVerifier))
+  const pdsState = randomToken()
+
+  // PAR to the PDS
+  const parEndpoint =
+    discovery.authServerMetadata.pushed_authorization_request_endpoint || `${pdsAuthServer}/oauth/par`
+  const serverDpopProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', parEndpoint)
+
+  const scope = config.scopes?.join(' ') || 'atproto transition:generic'
+  const pdsParBody = new URLSearchParams({
+    client_id: pdsClientId(config.issuer, config),
+    redirect_uri: pdsRedirectUri(config.issuer),
+    response_type: 'code',
+    code_challenge: pdsCodeChallenge,
+    code_challenge_method: 'S256',
+    scope,
+    login_hint: handle,
+    state: pdsState,
+  })
+
+  let pdsRequestUri: string | undefined
+
+  const pdsParRes = await fetch(parEndpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', DPoP: serverDpopProof },
+    body: pdsParBody.toString(),
+  })
+
+  if (!pdsParRes.ok) {
+    const errBody = await pdsParRes.json().catch(() => ({}))
+    if (errBody.error === 'use_dpop_nonce') {
+      const nonce = pdsParRes.headers.get('DPoP-Nonce')
+      if (nonce) {
+        const retryProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', parEndpoint, undefined, nonce)
+        const retryRes = await fetch(parEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', DPoP: retryProof },
+          body: pdsParBody.toString(),
+        })
+        if (!retryRes.ok) {
+          const retryErr = await retryRes.json().catch(() => ({}))
+          throw new Error(`PDS PAR failed: ${retryRes.status} ${retryErr.error_description || retryErr.error || ''}`)
+        }
+        const retryData = await retryRes.json()
+        pdsRequestUri = retryData.request_uri
+      }
+    } else {
+      throw new Error(`PDS PAR failed: ${pdsParRes.status} ${errBody.error_description || errBody.error || ''}`)
+    }
+  } else {
+    const pdsParData = await pdsParRes.json()
+    pdsRequestUri = pdsParData.request_uri
+  }
+
+  // Store the request so the callback can find it
+  const requestUri = `urn:ietf:params:oauth:request_uri:${randomToken()}`
+  const expiresAt = Math.floor(Date.now() / 1000) + 600
+
+  await storeOAuthRequest(requestUri, {
+    clientId: pdsClientId(config.issuer, config),
+    redirectUri: '/',
+    scope,
+    state: pdsState,
+    codeChallenge: '',
+    codeChallengeMethod: 'S256',
+    dpopJkt: serverJkt,
+    pdsRequestUri,
+    pdsAuthServer,
+    pdsCodeVerifier,
+    pdsState,
+    did,
+    loginHint: handle,
+    expiresAt,
+  })
+
+  // Build redirect URL to PDS
+  const params = new URLSearchParams({
+    request_uri: pdsRequestUri!,
+    client_id: pdsClientId(config.issuer, config),
+  })
+  return `${pdsAuthServer}/oauth/authorize?${params}`
+}
+
 // --- OAuth Callback (PDS redirects here) ---
 
 export async function handleCallback(
@@ -326,7 +431,7 @@ export async function handleCallback(
   code: string,
   state: string | null,
   iss: string | null,
-): Promise<{ requestUri: string; clientRedirectUri: string; clientState: string | null }> {
+): Promise<{ requestUri: string; clientRedirectUri: string; clientState: string | null; did: string }> {
   // Find the matching OAuth request by pds_state (unique per PAR)
   const { querySQL } = await import('../database/db.ts')
   let request: any = null
@@ -446,7 +551,7 @@ export async function handleCallback(
   if (request.state) params.set('state', request.state)
   const clientRedirectUri = `${request.redirect_uri}?${params}`
 
-  return { requestUri: request.request_uri, clientRedirectUri, clientState: request.state }
+  return { requestUri: request.request_uri, clientRedirectUri, clientState: request.state, did }
 }
 
 // --- Token Endpoint ---

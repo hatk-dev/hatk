@@ -1,5 +1,3 @@
-import { createServer, type Server, type IncomingMessage } from 'node:http'
-import { gzipSync } from 'node:zlib'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, extname } from 'node:path'
@@ -13,22 +11,17 @@ import {
   getRepoStatus,
   getRepoRetryInfo,
   querySQL,
-  insertRecord,
-  deleteRecord,
   queryLabelsForUris,
   insertLabels,
   searchAccounts,
   listReposPaginated,
   getCollectionCounts,
-  normalizeValue,
   getSchemaDump,
   getPreferences,
   putPreference,
 } from './database/db.ts'
 import { executeFeed, listFeeds } from './feeds.ts'
-import { executeXrpc, InvalidRequestError } from './xrpc.ts'
-import { getLexiconArray } from './database/schema.ts'
-import { validateRecord } from '@bigmoves/lexicon'
+import { executeXrpc, InvalidRequestError, NotFoundError, registerCoreXrpcHandler } from './xrpc.ts'
 import { resolveRecords } from './hydrate.ts'
 import { handleOpengraphRequest, buildOgMeta } from './opengraph.ts'
 import { getLabelDefinitions, rescanLabels } from './labels.ts'
@@ -42,14 +35,17 @@ import {
   handlePar,
   buildAuthorizeRedirect,
   handleCallback,
+  serverLogin,
   handleToken,
   authenticate,
-  refreshPdsSession,
 } from './oauth/server.ts'
+import { createSessionCookie, sessionCookieHeader, clearSessionCookieHeader, parseSessionCookie } from './oauth/session.ts'
 import { getOAuthRequest } from './oauth/db.ts'
-import { createDpopProof } from './oauth/dpop.ts'
-import { getServerKey, getSession } from './oauth/db.ts'
 import type { OAuthConfig } from './config.ts'
+import { pdsCreateRecord, pdsDeleteRecord, pdsPutRecord, pdsUploadBlob, ProxyError } from './pds-proxy.ts'
+import { json, jsonError, cors, withCors, file, notFound } from './response.ts'
+import { serve } from './adapter.ts'
+import { renderPage } from './renderer.ts'
 
 const MIME: Record<string, string> = {
   '.html': 'text/html',
@@ -58,95 +54,198 @@ const MIME: Record<string, string> = {
   '.json': 'application/json',
 }
 
-function readBody(req: any): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = ''
-    req.on('data', (chunk: string) => (body += chunk))
-    req.on('end', () => resolve(body))
-    req.on('error', reject)
+/**
+ * Register built-in dev.hatk.* XRPC handlers in the handler registry.
+ * This makes them available to callXrpc() for use in SSR and server code.
+ */
+export function registerCoreHandlers(collections: string[], oauth: OAuthConfig | null): void {
+  registerCoreXrpcHandler('dev.hatk.getRecords', async (params, cursor, limit) => {
+    const collection = params.collection
+    if (!collection) throw new InvalidRequestError('Missing collection parameter')
+    if (!getSchema(collection)) throw new NotFoundError(`Unknown collection: ${collection}`)
+
+    const sort = params.sort || undefined
+    const order = (params.order || undefined) as 'asc' | 'desc' | undefined
+    const reserved = new Set(['collection', 'limit', 'cursor', 'sort', 'order'])
+    const filters: Record<string, string> = {}
+    for (const [key, value] of Object.entries(params)) {
+      if (!reserved.has(key)) filters[key] = value
+    }
+
+    const result = await queryRecords(collection, {
+      limit,
+      cursor,
+      sort,
+      order,
+      filters: Object.keys(filters).length > 0 ? filters : undefined,
+    })
+    const uris = result.records.map((r: any) => r.uri)
+    const items = await resolveRecords(uris)
+    return { items, cursor: result.cursor }
   })
+
+  registerCoreXrpcHandler('dev.hatk.getRecord', async (params) => {
+    const uri = params.uri
+    if (!uri) throw new InvalidRequestError('Missing uri parameter')
+    const record = await getRecordByUri(uri)
+    if (!record) throw new NotFoundError('Record not found')
+    const shaped = reshapeRow(record, record?.__childData) as Record<string, any>
+    const labelsMap = await queryLabelsForUris([record.uri])
+    if (shaped) shaped.labels = labelsMap.get(record.uri) || []
+    return { record: shaped }
+  })
+
+  registerCoreXrpcHandler('dev.hatk.getFeed', async (params, cursor, limit, viewer) => {
+    const feedName = params.feed
+    if (!feedName) throw new InvalidRequestError('Missing feed parameter')
+    const result = await executeFeed(feedName, params, cursor, limit, viewer)
+    if (!result) throw new NotFoundError(`Unknown feed: ${feedName}`)
+    return result
+  })
+
+  registerCoreXrpcHandler('dev.hatk.searchRecords', async (params, cursor, limit) => {
+    const collection = params.collection
+    const q = params.q
+    if (!collection) throw new InvalidRequestError('Missing collection parameter')
+    if (!q) throw new InvalidRequestError('Missing q parameter')
+    if (!getSchema(collection)) throw new NotFoundError(`Unknown collection: ${collection}`)
+
+    const fuzzy = params.fuzzy !== 'false'
+    const result = await searchRecords(collection, q, { limit, cursor, fuzzy })
+    const uris = result.records.map((r: any) => r.uri)
+    const items = await resolveRecords(uris)
+    return { items, cursor: result.cursor }
+  })
+
+  registerCoreXrpcHandler('dev.hatk.describeFeeds', async () => {
+    return { feeds: listFeeds() }
+  })
+
+  registerCoreXrpcHandler('dev.hatk.describeCollections', async () => {
+    const collectionInfo = collections.map((c) => {
+      const schema = getSchema(c)
+      return {
+        collection: c,
+        columns: schema?.columns.map((col) => ({
+          name: col.name,
+          originalName: col.originalName,
+          type: col.sqlType,
+          required: col.notNull,
+        })),
+      }
+    })
+    return { collections: collectionInfo }
+  })
+
+  registerCoreXrpcHandler('dev.hatk.describeLabels', async () => {
+    return { definitions: getLabelDefinitions() }
+  })
+
+  // Write operations — proxy to user's PDS
+  if (oauth) {
+    registerCoreXrpcHandler('dev.hatk.getPreferences', async (_params, _cursor, _limit, viewer) => {
+      if (!viewer) throw new InvalidRequestError('Authentication required')
+      const prefs = await getPreferences(viewer.did)
+      return { preferences: prefs }
+    })
+
+    registerCoreXrpcHandler('dev.hatk.putPreference', async (_params, _cursor, _limit, viewer, input) => {
+      if (!viewer) throw new InvalidRequestError('Authentication required')
+      const body = input as { key?: string; value?: unknown }
+      if (!body.key || typeof body.key !== 'string') throw new InvalidRequestError('Missing or invalid key')
+      if (body.value === undefined) throw new InvalidRequestError('Missing value')
+      await putPreference(viewer.did, body.key, body.value)
+      return { success: true }
+    })
+
+    registerCoreXrpcHandler('dev.hatk.createRecord', async (_params, _cursor, _limit, viewer, input) => {
+      if (!viewer) throw new InvalidRequestError('Authentication required')
+      return pdsCreateRecord(oauth, viewer, input as any)
+    })
+
+    registerCoreXrpcHandler('dev.hatk.deleteRecord', async (_params, _cursor, _limit, viewer, input) => {
+      if (!viewer) throw new InvalidRequestError('Authentication required')
+      return pdsDeleteRecord(oauth, viewer, input as any)
+    })
+
+    registerCoreXrpcHandler('dev.hatk.putRecord', async (_params, _cursor, _limit, viewer, input) => {
+      if (!viewer) throw new InvalidRequestError('Authentication required')
+      return pdsPutRecord(oauth, viewer, input as any)
+    })
+
+    registerCoreXrpcHandler('dev.hatk.uploadBlob', async (_params, _cursor, _limit, viewer, input) => {
+      if (!viewer) throw new InvalidRequestError('Authentication required')
+      return pdsUploadBlob(oauth, viewer, input as any, 'application/octet-stream')
+    })
+  }
 }
 
-function readBodyRaw(req: IncomingMessage): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    req.on('data', (chunk: Buffer) => chunks.push(chunk))
-    req.on('end', () => resolve(Buffer.concat(chunks)))
-    req.on('error', reject)
-  })
+export interface HandlerConfig {
+  collections: string[]
+  publicDir: string | null
+  oauth: OAuthConfig | null
+  admins: string[]
+  renderer?: (request: Request, manifest: any) => Promise<{ html: string; head?: string }>
+  resolveViewer?: (request: Request) => { did: string } | null
+  onResync?: () => void
 }
 
-export function startServer(
-  port: number,
-  collections: string[],
-  publicDir: string | null,
-  oauth: OAuthConfig | null,
-  admins: string[] = [],
-  resolveViewer?: (req: IncomingMessage) => { did: string } | null,
-  onResync?: () => void,
-): Server {
+/**
+ * Create a Web Standard request handler for all hatk routes.
+ * Returns a pure function: (Request) → Promise<Response>
+ */
+export function createHandler(config: HandlerConfig): (request: Request) => Promise<Response> {
+  const { collections, publicDir, oauth, admins } = config
+  const devMode = process.env.DEV_MODE === '1'
   const coreXrpc = (method: string) => `/xrpc/dev.hatk.${method}`
 
-  const devMode = process.env.DEV_MODE === '1'
-
-  function requireAdmin(viewer: { did: string } | null, res: any): boolean {
-    if (!viewer) {
-      jsonError(res, 401, 'Authentication required')
-      return false
-    }
-    if (!devMode && !admins.includes(viewer.did)) {
-      jsonError(res, 403, 'Admin access required')
-      return false
-    }
-    return true
+  function requireAdmin(viewer: { did: string } | null, acceptEncoding: string | null): Response | null {
+    if (!viewer) return withCors(jsonError(401, 'Authentication required', acceptEncoding))
+    if (!devMode && !admins.includes(viewer.did)) return withCors(jsonError(403, 'Admin access required', acceptEncoding))
+    return null // auth OK
   }
 
-  const server = createServer(async (req, res) => {
-    const url = new URL(req.url!, `http://localhost:${port}`)
+  return async (request: Request): Promise<Response> => {
+    const url = new URL(request.url)
+    const acceptEncoding = request.headers.get('accept-encoding')
 
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    res.setHeader('Access-Control-Allow-Headers', '*')
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-    if (req.method === 'OPTIONS') {
-      res.writeHead(200)
-      res.end()
-      return
-    }
+    // CORS preflight
+    if (request.method === 'OPTIONS') return cors()
 
     const isXrpc = url.pathname.startsWith('/xrpc/')
     const isAdmin =
       url.pathname.startsWith('/admin') && !url.pathname.endsWith('.html') && !url.pathname.endsWith('.js')
     const elapsed = isXrpc || isAdmin ? timer() : null
     let error: string | undefined
-    const requestOrigin = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers['host'] || `localhost:${port}`}`
+    const requestOrigin = `${request.headers.get('x-forwarded-proto') || 'http'}://${request.headers.get('host') || 'localhost'}`
 
     // Authenticate viewer (optional — unauthenticated requests still work)
-    let viewer: { did: string } | null = resolveViewer?.(req) ?? null
+    let viewer: { did: string } | null = config.resolveViewer?.(request) ?? null
     if (!viewer && oauth) {
       try {
         viewer = await authenticate(
-          (req.headers['authorization'] as string) || null,
-          (req.headers['dpop'] as string) || null,
-          req.method!,
+          request.headers.get('authorization'),
+          request.headers.get('dpop'),
+          request.method,
           `${requestOrigin}${url.pathname}`,
         )
       } catch (err: any) {
         emit('oauth', 'authenticate_error', { error: err.message })
       }
     }
+    // Fallback: resolve viewer from session cookie (for browser requests without DPoP)
+    if (!viewer && oauth) {
+      try {
+        viewer = await parseSessionCookie(request)
+      } catch {}
+    }
 
     try {
       // GET /xrpc/dev.hatk.getRecords?collection=<nsid>&limit=N&cursor=C&<field>=<value>
       if (url.pathname === coreXrpc('getRecords')) {
         const collection = url.searchParams.get('collection')
-        if (!collection) {
-          jsonError(res, 400, 'Missing collection parameter')
-          return
-        }
-        if (!getSchema(collection)) {
-          jsonError(res, 404, `Unknown collection: ${collection}`)
-          return
-        }
+        if (!collection) return withCors(jsonError(400, 'Missing collection parameter', acceptEncoding))
+        if (!getSchema(collection)) return withCors(jsonError(404, `Unknown collection: ${collection}`, acceptEncoding))
 
         const limit = parseInt(url.searchParams.get('limit') || '20')
         const cursor = url.searchParams.get('cursor') || undefined
@@ -170,38 +269,27 @@ export function startServer(
 
         const uris = result.records.map((r: any) => r.uri)
         const items = await resolveRecords(uris)
-        jsonResponse(res, { items, cursor: result.cursor })
-        return
+        return withCors(json({ items, cursor: result.cursor }, 200, acceptEncoding))
       }
 
       // GET /xrpc/dev.hatk.getRecord?uri=<at-uri>
       if (url.pathname === coreXrpc('getRecord')) {
         const uri = url.searchParams.get('uri')
-        if (!uri) {
-          jsonError(res, 400, 'Missing uri parameter')
-          return
-        }
+        if (!uri) return withCors(jsonError(400, 'Missing uri parameter', acceptEncoding))
 
         const record = await getRecordByUri(uri)
-        if (!record) {
-          jsonError(res, 404, 'Record not found')
-          return
-        }
+        if (!record) return withCors(jsonError(404, 'Record not found', acceptEncoding))
 
         const shaped = reshapeRow(record, record?.__childData) as Record<string, any>
         const labelsMap = await queryLabelsForUris([record.uri])
         if (shaped) shaped.labels = labelsMap.get(record.uri) || []
-        jsonResponse(res, { record: shaped })
-        return
+        return withCors(json({ record: shaped }, 200, acceptEncoding))
       }
 
       // GET /xrpc/dev.hatk.getFeed?feed=<name>&limit=N&cursor=C
       if (url.pathname === coreXrpc('getFeed')) {
         const feedName = url.searchParams.get('feed')
-        if (!feedName) {
-          jsonError(res, 400, 'Missing feed parameter')
-          return
-        }
+        if (!feedName) return withCors(jsonError(400, 'Missing feed parameter', acceptEncoding))
         const limit = parseInt(url.searchParams.get('limit') || '30')
         const cursor = url.searchParams.get('cursor') || undefined
 
@@ -211,31 +299,18 @@ export function startServer(
         }
 
         const result = await executeFeed(feedName, params, cursor, limit, viewer)
-        if (!result) {
-          jsonError(res, 404, `Unknown feed: ${feedName}`)
-          return
-        }
+        if (!result) return withCors(jsonError(404, `Unknown feed: ${feedName}`, acceptEncoding))
 
-        jsonResponse(res, result)
-        return
+        return withCors(json(result, 200, acceptEncoding))
       }
 
       // GET /xrpc/dev.hatk.searchRecords?collection=<nsid>&q=<query>&limit=N&cursor=C
       if (url.pathname === coreXrpc('searchRecords')) {
         const collection = url.searchParams.get('collection')
         const q = url.searchParams.get('q')
-        if (!collection) {
-          jsonError(res, 400, 'Missing collection parameter')
-          return
-        }
-        if (!q) {
-          jsonError(res, 400, 'Missing q parameter')
-          return
-        }
-        if (!getSchema(collection)) {
-          jsonError(res, 404, `Unknown collection: ${collection}`)
-          return
-        }
+        if (!collection) return withCors(jsonError(400, 'Missing collection parameter', acceptEncoding))
+        if (!q) return withCors(jsonError(400, 'Missing q parameter', acceptEncoding))
+        if (!getSchema(collection)) return withCors(jsonError(404, `Unknown collection: ${collection}`, acceptEncoding))
 
         const limit = parseInt(url.searchParams.get('limit') || '20')
         const cursor = url.searchParams.get('cursor') || undefined
@@ -245,14 +320,12 @@ export function startServer(
 
         const uris = result.records.map((r: any) => r.uri)
         const items = await resolveRecords(uris)
-        jsonResponse(res, { items, cursor: result.cursor })
-        return
+        return withCors(json({ items, cursor: result.cursor }, 200, acceptEncoding))
       }
 
       // GET /xrpc/dev.hatk.describeFeeds
       if (url.pathname === coreXrpc('describeFeeds')) {
-        jsonResponse(res, { feeds: listFeeds() })
-        return
+        return withCors(json({ feeds: listFeeds() }, 200, acceptEncoding))
       }
 
       // GET /xrpc/dev.hatk.describeCollections
@@ -269,167 +342,123 @@ export function startServer(
             })),
           }
         })
-        jsonResponse(res, { collections: collectionInfo })
-        return
+        return withCors(json({ collections: collectionInfo }, 200, acceptEncoding))
       }
 
       // GET /xrpc/dev.hatk.describeLabels
       if (url.pathname === coreXrpc('describeLabels')) {
-        jsonResponse(res, { definitions: getLabelDefinitions() })
-        return
+        return withCors(json({ definitions: getLabelDefinitions() }, 200, acceptEncoding))
       }
 
       // GET /xrpc/dev.hatk.getPreferences — get all preferences for authenticated user
       if (url.pathname === coreXrpc('getPreferences')) {
-        if (!viewer) {
-          jsonError(res, 401, 'Authentication required')
-          return
-        }
+        if (!viewer) return withCors(jsonError(401, 'Authentication required', acceptEncoding))
         const prefs = await getPreferences(viewer.did)
-        jsonResponse(res, { preferences: prefs })
-        return
+        return withCors(json({ preferences: prefs }, 200, acceptEncoding))
       }
 
       // POST /xrpc/dev.hatk.putPreference — set a single preference
-      if (url.pathname === coreXrpc('putPreference') && req.method === 'POST') {
-        if (!viewer) {
-          jsonError(res, 401, 'Authentication required')
-          return
-        }
-        const body = JSON.parse(await readBody(req))
-        if (!body.key || typeof body.key !== 'string') {
-          jsonError(res, 400, 'Missing or invalid key')
-          return
-        }
-        if (body.value === undefined) {
-          jsonError(res, 400, 'Missing value')
-          return
-        }
+      if (url.pathname === coreXrpc('putPreference') && request.method === 'POST') {
+        if (!viewer) return withCors(jsonError(401, 'Authentication required', acceptEncoding))
+        const body = JSON.parse(await request.text())
+        if (!body.key || typeof body.key !== 'string') return withCors(jsonError(400, 'Missing or invalid key', acceptEncoding))
+        if (body.value === undefined) return withCors(jsonError(400, 'Missing value', acceptEncoding))
         await putPreference(viewer.did, body.key, body.value)
-        jsonResponse(res, { success: true })
-        return
+        return withCors(json({ success: true }, 200, acceptEncoding))
       }
 
       // ── Admin Repo Management ──
 
       // POST /admin/repos/add — enqueue DIDs for backfill
-      if (url.pathname === '/admin/repos/add' && req.method === 'POST') {
-        if (!requireAdmin(viewer, res)) return
-        const { dids } = JSON.parse(await readBody(req))
-        if (!Array.isArray(dids)) {
-          jsonError(res, 400, 'Missing dids array')
-          return
-        }
+      if (url.pathname === '/admin/repos/add' && request.method === 'POST') {
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const { dids } = JSON.parse(await request.text())
+        if (!Array.isArray(dids)) return withCors(jsonError(400, 'Missing dids array', acceptEncoding))
         for (const did of dids) {
           await setRepoStatus(did, 'pending')
           triggerAutoBackfill(did)
         }
-        jsonResponse(res, { added: dids.length })
-        return
+        return withCors(json({ added: dids.length }, 200, acceptEncoding))
       }
 
       // POST /admin/labels/rescan — retroactively apply label rules
-      if (url.pathname === '/admin/labels/rescan' && req.method === 'POST') {
-        if (!requireAdmin(viewer, res)) return
+      if (url.pathname === '/admin/labels/rescan' && request.method === 'POST') {
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
         const result = await rescanLabels(collections)
-        jsonResponse(res, result)
-        return
+        return withCors(json(result, 200, acceptEncoding))
       }
 
       // ── Admin Endpoints ──
 
       // GET /admin/whoami — check if current viewer is admin
       if (url.pathname === '/admin/whoami') {
-        if (!requireAdmin(viewer, res)) return
-        jsonResponse(res, { did: viewer!.did, admin: true })
-        return
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        return withCors(json({ did: viewer!.did, admin: true }, 200, acceptEncoding))
       }
 
       // GET /admin/labels/definitions — get available label definitions
       if (url.pathname === '/admin/labels/definitions') {
-        if (!requireAdmin(viewer, res)) return
-        jsonResponse(res, { definitions: getLabelDefinitions() })
-        return
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        return withCors(json({ definitions: getLabelDefinitions() }, 200, acceptEncoding))
       }
 
       // POST /admin/labels — apply a label
-      if (url.pathname === '/admin/labels' && req.method === 'POST') {
-        if (!requireAdmin(viewer, res)) return
-        const { uri, val } = JSON.parse(await readBody(req))
-        if (!uri || !val) {
-          jsonError(res, 400, 'Missing uri or val')
-          return
-        }
+      if (url.pathname === '/admin/labels' && request.method === 'POST') {
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const { uri, val } = JSON.parse(await request.text())
+        if (!uri || !val) return withCors(jsonError(400, 'Missing uri or val', acceptEncoding))
         await insertLabels([{ src: 'admin', uri, val }])
-        jsonResponse(res, { ok: true })
-        return
+        return withCors(json({ ok: true }, 200, acceptEncoding))
       }
 
       // POST /admin/labels/reset — delete all labels of a given type
-      if (url.pathname === '/admin/labels/reset' && req.method === 'POST') {
-        if (!requireAdmin(viewer, res)) return
-        const { val } = JSON.parse(await readBody(req))
-        if (!val) {
-          jsonError(res, 400, 'Missing val')
-          return
-        }
+      if (url.pathname === '/admin/labels/reset' && request.method === 'POST') {
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const { val } = JSON.parse(await request.text())
+        if (!val) return withCors(jsonError(400, 'Missing val', acceptEncoding))
         const result = await querySQL(`SELECT COUNT(*)::INTEGER as count FROM _labels WHERE val = $1`, [val])
         const count = Number(result[0]?.count || 0)
         await querySQL(`DELETE FROM _labels WHERE val = $1`, [val])
-        jsonResponse(res, { deleted: count })
-        return
+        return withCors(json({ deleted: count }, 200, acceptEncoding))
       }
 
       // POST /admin/labels/negate — negate a label
-      if (url.pathname === '/admin/labels/negate' && req.method === 'POST') {
-        if (!requireAdmin(viewer, res)) return
-        const { uri, val } = JSON.parse(await readBody(req))
-        if (!uri || !val) {
-          jsonError(res, 400, 'Missing uri or val')
-          return
-        }
+      if (url.pathname === '/admin/labels/negate' && request.method === 'POST') {
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const { uri, val } = JSON.parse(await request.text())
+        if (!uri || !val) return withCors(jsonError(400, 'Missing uri or val', acceptEncoding))
         await insertLabels([{ src: 'admin', uri, val, neg: true }])
-        jsonResponse(res, { ok: true })
-        return
+        return withCors(json({ ok: true }, 200, acceptEncoding))
       }
 
       // POST /admin/takedown — takedown an account
-      if (url.pathname === '/admin/takedown' && req.method === 'POST') {
-        if (!requireAdmin(viewer, res)) return
-        const { did } = JSON.parse(await readBody(req))
-        if (!did) {
-          jsonError(res, 400, 'Missing did')
-          return
-        }
+      if (url.pathname === '/admin/takedown' && request.method === 'POST') {
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const { did } = JSON.parse(await request.text())
+        if (!did) return withCors(jsonError(400, 'Missing did', acceptEncoding))
         await setRepoStatus(did, 'takendown')
-        jsonResponse(res, { ok: true })
-        return
+        return withCors(json({ ok: true }, 200, acceptEncoding))
       }
 
       // POST /admin/reverse-takedown — reverse a takedown
-      if (url.pathname === '/admin/reverse-takedown' && req.method === 'POST') {
-        if (!requireAdmin(viewer, res)) return
-        const { did } = JSON.parse(await readBody(req))
-        if (!did) {
-          jsonError(res, 400, 'Missing did')
-          return
-        }
+      if (url.pathname === '/admin/reverse-takedown' && request.method === 'POST') {
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const { did } = JSON.parse(await request.text())
+        if (!did) return withCors(jsonError(400, 'Missing did', acceptEncoding))
         await setRepoStatus(did, 'active')
-        jsonResponse(res, { ok: true })
-        return
+        return withCors(json({ ok: true }, 200, acceptEncoding))
       }
 
       // GET /admin/search — search records or accounts
       if (url.pathname === '/admin/search') {
-        if (!requireAdmin(viewer, res)) return
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
         const q = url.searchParams.get('q') || ''
         const type = url.searchParams.get('type') || 'records'
         const limit = parseInt(url.searchParams.get('limit') || '20')
 
         if (type === 'accounts') {
           const accounts = await searchAccounts(q, limit)
-          jsonResponse(res, { accounts })
-          return
+          return withCors(json({ accounts }, 200, acceptEncoding))
         }
 
         // No query — live firehose activity (excludes bulk backfill records)
@@ -440,7 +469,6 @@ export function startServer(
             try {
               const schema = getSchema(col)
               if (!schema) continue
-              // Only show records indexed after the repo's backfill completed (live activity)
               const rows = await querySQL(
                 `SELECT t.* FROM ${schema.tableName} t JOIN _repos r ON t.did = r.did WHERE t.indexed_at > r.backfilled_at ORDER BY t.indexed_at DESC LIMIT $1`,
                 [limit + offset],
@@ -458,8 +486,7 @@ export function startServer(
             return ta > tb ? -1 : ta < tb ? 1 : 0
           })
           const page = allResults.slice(offset, offset + limit)
-          jsonResponse(res, { records: page, total: allResults.length })
-          return
+          return withCors(json({ records: page, total: allResults.length }, 200, acceptEncoding))
         }
 
         // URI lookup
@@ -467,13 +494,12 @@ export function startServer(
           const rec = await getRecordByUri(q)
           if (rec) {
             const labelsMap = await queryLabelsForUris([rec.uri])
-            jsonResponse(res, {
+            return withCors(json({
               records: [{ ...reshapeRow(rec, rec?.__childData), labels: labelsMap.get(rec.uri) || [] }],
-            })
+            }, 200, acceptEncoding))
           } else {
-            jsonResponse(res, { records: [] })
+            return withCors(json({ records: [] }, 200, acceptEncoding))
           }
-          return
         }
 
         // DID lookup — find all records by this DID
@@ -492,8 +518,7 @@ export function startServer(
               }
             } catch {}
           }
-          jsonResponse(res, { records: allResults.slice(0, limit) })
-          return
+          return withCors(json({ records: allResults.slice(0, limit) }, 200, acceptEncoding))
         }
 
         // Default: full-text search records across all collections
@@ -511,15 +536,14 @@ export function startServer(
             }
           } catch {}
         }
-        jsonResponse(res, { records: allResults.slice(0, limit) })
-        return
+        return withCors(json({ records: allResults.slice(0, limit) }, 200, acceptEncoding))
       }
 
       // POST /admin/repos/resync — re-download repos
-      if (url.pathname === '/admin/repos/resync' && req.method === 'POST') {
-        if (!requireAdmin(viewer, res)) return
-        const body = await readBody(req)
-        const { dids } = body ? JSON.parse(body) : ({} as { dids?: string[] })
+      if (url.pathname === '/admin/repos/resync' && request.method === 'POST') {
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const bodyText = await request.text()
+        const { dids } = bodyText ? JSON.parse(bodyText) : ({} as { dids?: string[] })
         let repoList: string[]
         if (Array.isArray(dids) && dids.length > 0) {
           repoList = dids
@@ -530,29 +554,24 @@ export function startServer(
         for (const did of repoList) {
           await setRepoStatus(did, 'pending')
         }
-        jsonResponse(res, { resyncing: repoList.length })
-        if (onResync) onResync()
-        return
+        if (config.onResync) config.onResync()
+        return withCors(json({ resyncing: repoList.length }, 200, acceptEncoding))
       }
 
       // POST /admin/repos/remove — remove DIDs from tracking
-      if (url.pathname === '/admin/repos/remove' && req.method === 'POST') {
-        if (!requireAdmin(viewer, res)) return
-        const { dids } = JSON.parse(await readBody(req))
-        if (!Array.isArray(dids)) {
-          jsonError(res, 400, 'Missing dids array')
-          return
-        }
+      if (url.pathname === '/admin/repos/remove' && request.method === 'POST') {
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const { dids } = JSON.parse(await request.text())
+        if (!Array.isArray(dids)) return withCors(jsonError(400, 'Missing dids array', acceptEncoding))
         for (const did of dids) {
           await querySQL(`DELETE FROM _repos WHERE did = $1`, [did])
         }
-        jsonResponse(res, { removed: dids.length })
-        return
+        return withCors(json({ removed: dids.length }, 200, acceptEncoding))
       }
 
       // GET /admin/info — aggregate status + db size + collection counts
       if (url.pathname === '/admin/info') {
-        if (!requireAdmin(viewer, res)) return
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
         const rows = await querySQL(`SELECT status, COUNT(*)::INTEGER as count FROM _repos GROUP BY status`)
         const counts: Record<string, number> = {}
         for (const row of rows) counts[row.status as string] = Number(row.count)
@@ -566,350 +585,242 @@ export function startServer(
           heapTotal: `${(mem.heapTotal / 1024 / 1024).toFixed(1)} MiB`,
           external: `${(mem.external / 1024 / 1024).toFixed(1)} MiB`,
         }
-        jsonResponse(res, { repos: counts, duckdb: dbInfo, node, collections: collectionCounts })
-        return
+        return withCors(json({ repos: counts, duckdb: dbInfo, node, collections: collectionCounts }, 200, acceptEncoding))
       }
 
       // GET /admin/info/:did — repo status info
       if (url.pathname.startsWith('/admin/info/did:')) {
-        if (!requireAdmin(viewer, res)) return
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
         const did = url.pathname.slice('/admin/info/'.length)
         const status = await getRepoStatus(did)
-        if (!status) {
-          jsonError(res, 404, 'Repo not found')
-          return
-        }
+        if (!status) return withCors(jsonError(404, 'Repo not found', acceptEncoding))
         const retryInfo = await getRepoRetryInfo(did)
-        jsonResponse(res, {
+        return withCors(json({
           did,
           status,
           retry_count: retryInfo?.retryCount ?? 0,
           retry_after: retryInfo?.retryAfter ?? 0,
-        })
-        return
+        }, 200, acceptEncoding))
       }
 
       // GET /admin/repos — paginated repo listing
-      if (url.pathname === '/admin/repos' && req.method === 'GET') {
-        if (!requireAdmin(viewer, res)) return
+      if (url.pathname === '/admin/repos' && request.method === 'GET') {
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
         const limit = parseInt(url.searchParams.get('limit') || '50')
         const offset = parseInt(url.searchParams.get('offset') || '0')
         const status = url.searchParams.get('status') || undefined
         const q = url.searchParams.get('q') || undefined
         const result = await listReposPaginated({ limit, offset, status, q })
-        jsonResponse(res, result)
-        return
+        return withCors(json(result, 200, acceptEncoding))
       }
 
       // GET /admin/schema — full DuckDB DDL dump + lexicons
       if (url.pathname === '/admin/schema') {
-        if (!requireAdmin(viewer, res)) return
+        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
         const { getAllLexicons } = await import('./database/schema.ts')
         const ddl = await getSchemaDump()
-        jsonResponse(res, { ddl, lexicons: getAllLexicons() })
-        return
+        return withCors(json({ ddl, lexicons: getAllLexicons() }, 200, acceptEncoding))
       }
 
       // ── Public Repo Endpoints (used by hatk clients for auto-sync) ──
 
       // POST /repos/add — enqueue DIDs for backfill (public)
-      if (url.pathname === '/repos/add' && req.method === 'POST') {
-        const { dids } = JSON.parse(await readBody(req))
-        if (!Array.isArray(dids)) {
-          jsonError(res, 400, 'Missing dids array')
-          return
-        }
+      if (url.pathname === '/repos/add' && request.method === 'POST') {
+        const { dids } = JSON.parse(await request.text())
+        if (!Array.isArray(dids)) return withCors(jsonError(400, 'Missing dids array', acceptEncoding))
         for (const did of dids) {
           await setRepoStatus(did, 'pending')
           triggerAutoBackfill(did)
         }
-        jsonResponse(res, { added: dids.length })
-        return
+        return withCors(json({ added: dids.length }, 200, acceptEncoding))
       }
 
       // GET /info/:did — repo status info (public)
       if (url.pathname.startsWith('/info/did:')) {
         const did = url.pathname.slice('/info/'.length)
         const status = await getRepoStatus(did)
-        if (!status) {
-          jsonError(res, 404, 'Repo not found')
-          return
-        }
+        if (!status) return withCors(jsonError(404, 'Repo not found', acceptEncoding))
         const retryInfo = await getRepoRetryInfo(did)
-        jsonResponse(res, {
+        return withCors(json({
           did,
           status,
           retry_count: retryInfo?.retryCount ?? 0,
           retry_after: retryInfo?.retryAfter ?? 0,
-        })
-        return
+        }, 200, acceptEncoding))
       }
 
       // --- OAuth Endpoints ---
 
       // OAuth well-known endpoints
       if (url.pathname === '/.well-known/oauth-authorization-server' && oauth) {
-        jsonResponse(res, getAuthServerMetadata(oauth.issuer, oauth))
-        return
+        return withCors(json(getAuthServerMetadata(oauth.issuer, oauth), 200, acceptEncoding))
       }
       if (url.pathname === '/.well-known/oauth-protected-resource' && oauth) {
-        jsonResponse(res, getProtectedResourceMetadata(oauth.issuer, oauth))
-        return
+        return withCors(json(getProtectedResourceMetadata(oauth.issuer, oauth), 200, acceptEncoding))
       }
       if (url.pathname === '/oauth/jwks' && oauth) {
-        jsonResponse(res, getJwks())
-        return
+        return withCors(json(getJwks(), 200, acceptEncoding))
       }
       if ((url.pathname === '/oauth/client-metadata.json' || url.pathname === '/oauth-client-metadata.json') && oauth) {
-        jsonResponse(res, getClientMetadata(oauth.issuer, oauth))
-        return
+        return withCors(json(getClientMetadata(oauth.issuer, oauth), 200, acceptEncoding))
+      }
+
+      // Dev-only: create a session cookie for any DID (for testing)
+      if (url.pathname === '/__dev/login' && devMode) {
+        const did = url.searchParams.get('did')
+        if (!did) return withCors(jsonError(400, 'did required', acceptEncoding))
+        const cookieValue = await createSessionCookie(did)
+        const secure = url.protocol === 'https:'
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Set-Cookie': sessionCookieHeader(cookieValue, secure),
+          },
+        })
+      }
+
+      // OAuth Login (server-initiated, no DPoP required)
+      if (url.pathname === '/oauth/login' && oauth) {
+        const handle = url.searchParams.get('handle')
+        if (!handle) return withCors(jsonError(400, 'handle required', acceptEncoding))
+        try {
+          const redirectUrl = await serverLogin(oauth, handle)
+          return new Response(null, { status: 302, headers: { Location: redirectUrl } })
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Login failed'
+          return withCors(jsonError(400, message, acceptEncoding))
+        }
       }
 
       // OAuth PAR
-      if (url.pathname === '/oauth/par' && req.method === 'POST' && oauth) {
-        const rawBody = await readBody(req)
+      if (url.pathname === '/oauth/par' && request.method === 'POST' && oauth) {
+        const rawBody = await request.text()
         let body: Record<string, string>
-        if (req.headers['content-type']?.includes('application/x-www-form-urlencoded')) {
+        if (request.headers.get('content-type')?.includes('application/x-www-form-urlencoded')) {
           body = Object.fromEntries(new URLSearchParams(rawBody))
         } else {
           body = JSON.parse(rawBody)
         }
-        const dpopHeader = req.headers['dpop'] as string
-        if (!dpopHeader) {
-          jsonError(res, 400, 'DPoP header required')
-          return
-        }
+        const dpopHeader = request.headers.get('dpop')
+        if (!dpopHeader) return withCors(jsonError(400, 'DPoP header required', acceptEncoding))
         try {
           const result = await handlePar(oauth, body, dpopHeader, `${requestOrigin}/oauth/par`)
-          jsonResponse(res, result)
+          return withCors(json(result, 200, acceptEncoding))
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Unknown error'
-          jsonError(res, 400, message)
+          return withCors(jsonError(400, message, acceptEncoding))
         }
-        return
       }
 
       // OAuth Authorize
       if (url.pathname === '/oauth/authorize' && oauth) {
         const requestUri = url.searchParams.get('request_uri')
-        if (!requestUri) {
-          jsonError(res, 400, 'request_uri required')
-          return
-        }
-        const request = await getOAuthRequest(requestUri)
-        if (!request) {
-          jsonError(res, 400, 'Invalid or expired request_uri')
-          return
-        }
-        const redirectUrl = buildAuthorizeRedirect(oauth, request)
-        res.writeHead(302, { Location: redirectUrl })
-        res.end()
-        return
+        if (!requestUri) return withCors(jsonError(400, 'request_uri required', acceptEncoding))
+        const oauthRequest = await getOAuthRequest(requestUri)
+        if (!oauthRequest) return withCors(jsonError(400, 'Invalid or expired request_uri', acceptEncoding))
+        const redirectUrl = buildAuthorizeRedirect(oauth, oauthRequest)
+        return new Response(null, { status: 302, headers: { Location: redirectUrl } })
       }
 
       // OAuth Callback (PDS redirects here after user approves)
       // Skip if iss matches our own issuer — that's the client-side redirect, let the SPA handle it
       if (url.pathname === '/oauth/callback' && oauth) {
         const iss = url.searchParams.get('iss')
-        if (iss === oauth.issuer) {
-          // Client-side callback — fall through to SPA
-        } else {
+        if (iss !== oauth.issuer) {
           const code = url.searchParams.get('code')
           const state = url.searchParams.get('state')
-          if (!code) {
-            jsonError(res, 400, 'Missing code')
-            return
-          }
+          if (!code) return withCors(jsonError(400, 'Missing code', acceptEncoding))
           const result = await handleCallback(oauth, code, state, iss)
-          res.writeHead(302, { Location: result.clientRedirectUri })
-          res.end()
-          return
+          const isSecure = requestOrigin.startsWith('https')
+          const cookie = await createSessionCookie(result.did)
+          // Server-initiated login stores redirectUri as '/' — redirect cleanly without code/iss params
+          const redirectTo = result.clientRedirectUri.startsWith('/?code=') ? '/' : result.clientRedirectUri
+          return new Response(null, {
+            status: 302,
+            headers: [
+              ['Location', redirectTo],
+              ['Set-Cookie', sessionCookieHeader(cookie, isSecure)],
+            ],
+          })
         }
+        // Client-side callback — fall through to SPA
+      }
+
+      // Session cookie logout
+      if (url.pathname === '/auth/logout' && request.method === 'POST') {
+        return new Response(null, {
+          status: 200,
+          headers: { 'Set-Cookie': clearSessionCookieHeader() },
+        })
       }
 
       // OAuth Token
-      if (url.pathname === '/oauth/token' && req.method === 'POST' && oauth) {
-        const rawBody = await readBody(req)
+      if (url.pathname === '/oauth/token' && request.method === 'POST' && oauth) {
+        const rawBody = await request.text()
         let body: Record<string, string>
-        if (req.headers['content-type']?.includes('application/x-www-form-urlencoded')) {
+        if (request.headers.get('content-type')?.includes('application/x-www-form-urlencoded')) {
           body = Object.fromEntries(new URLSearchParams(rawBody))
         } else {
           body = JSON.parse(rawBody)
         }
-        const dpopHeader = req.headers['dpop'] as string
-        if (!dpopHeader) {
-          jsonError(res, 400, 'DPoP header required')
-          return
-        }
+        const dpopHeader = request.headers.get('dpop')
+        if (!dpopHeader) return withCors(jsonError(400, 'DPoP header required', acceptEncoding))
         const result = await handleToken(oauth, body, dpopHeader, `${requestOrigin}/oauth/token`)
-        jsonResponse(res, result)
-        return
+        return withCors(json(result, 200, acceptEncoding))
       }
 
       // POST /xrpc/dev.hatk.createRecord — proxy write to user's PDS
-      if (url.pathname === coreXrpc('createRecord') && req.method === 'POST' && oauth) {
-        if (!viewer) {
-          jsonError(res, 401, 'Authentication required')
-          return
-        }
-        const body = JSON.parse(await readBody(req))
-
-        const validationError = validateRecord(getLexiconArray(), body.collection, body.record)
-        if (validationError) {
-          jsonError(
-            res,
-            400,
-            `InvalidRecord: ${validationError.path ? validationError.path + ': ' : ''}${validationError.message}`,
-          )
-          return
-        }
-
-        const session = await getSession(viewer.did)
-        if (!session) {
-          jsonError(res, 401, 'No PDS session for user')
-          return
-        }
-
-        const pdsUrl = `${session.pds_endpoint}/xrpc/com.atproto.repo.createRecord`
-        const pdsBody = {
-          repo: viewer.did,
-          collection: body.collection,
-          rkey: body.rkey,
-          record: body.record,
-        }
-
-        const pdsRes = await proxyToPds(oauth, session, 'POST', pdsUrl, pdsBody)
-        if (!pdsRes.ok) {
-          jsonError(res, pdsRes.status, pdsRes.body.error || 'PDS write failed')
-          return
-        }
-        const result = pdsRes.body
-
-        // Index the record immediately
+      if (url.pathname === coreXrpc('createRecord') && request.method === 'POST' && oauth) {
+        if (!viewer) return withCors(jsonError(401, 'Authentication required', acceptEncoding))
+        const body = JSON.parse(await request.text())
         try {
-          await insertRecord(body.collection, result.uri, result.cid, viewer.did, body.record)
-        } catch {
-          // Non-fatal — firehose will catch it
+          const result = await pdsCreateRecord(oauth, viewer, body)
+          return withCors(json(result, 200, acceptEncoding))
+        } catch (err: any) {
+          if (err instanceof ProxyError) return withCors(jsonError(err.status, err.message, acceptEncoding))
+          throw err
         }
-
-        jsonResponse(res, result)
-        return
       }
 
       // POST /xrpc/dev.hatk.deleteRecord — proxy delete to user's PDS
-      if (url.pathname === coreXrpc('deleteRecord') && req.method === 'POST' && oauth) {
-        if (!viewer) {
-          jsonError(res, 401, 'Authentication required')
-          return
-        }
-        const body = JSON.parse(await readBody(req))
-        const session = await getSession(viewer.did)
-        if (!session) {
-          jsonError(res, 401, 'No PDS session for user')
-          return
-        }
-
-        const pdsUrl = `${session.pds_endpoint}/xrpc/com.atproto.repo.deleteRecord`
-        const pdsBody = {
-          repo: viewer.did,
-          collection: body.collection,
-          rkey: body.rkey,
-        }
-
-        const pdsRes = await proxyToPds(oauth, session, 'POST', pdsUrl, pdsBody)
-        if (!pdsRes.ok) {
-          jsonError(res, pdsRes.status, pdsRes.body.error || 'PDS delete failed')
-          return
-        }
-        const result = pdsRes.body
-
-        // Delete the record locally
+      if (url.pathname === coreXrpc('deleteRecord') && request.method === 'POST' && oauth) {
+        if (!viewer) return withCors(jsonError(401, 'Authentication required', acceptEncoding))
+        const body = JSON.parse(await request.text())
         try {
-          const uri = `at://${viewer.did}/${body.collection}/${body.rkey}`
-          await deleteRecord(body.collection, uri)
-        } catch {
-          // Non-fatal — firehose will catch it
+          const result = await pdsDeleteRecord(oauth, viewer, body)
+          return withCors(json(result, 200, acceptEncoding))
+        } catch (err: any) {
+          if (err instanceof ProxyError) return withCors(jsonError(err.status, err.message, acceptEncoding))
+          throw err
         }
-
-        jsonResponse(res, result)
-        return
       }
 
       // POST /xrpc/dev.hatk.putRecord — proxy create-or-update to user's PDS
-      if (url.pathname === coreXrpc('putRecord') && req.method === 'POST' && oauth) {
-        if (!viewer) {
-          jsonError(res, 401, 'Authentication required')
-          return
-        }
-        const body = JSON.parse(await readBody(req))
-
-        const validationError = validateRecord(getLexiconArray(), body.collection, body.record)
-        if (validationError) {
-          jsonError(
-            res,
-            400,
-            `InvalidRecord: ${validationError.path ? validationError.path + ': ' : ''}${validationError.message}`,
-          )
-          return
-        }
-
-        const session = await getSession(viewer.did)
-        if (!session) {
-          jsonError(res, 401, 'No PDS session for user')
-          return
-        }
-
-        const pdsUrl = `${session.pds_endpoint}/xrpc/com.atproto.repo.putRecord`
-        const pdsBody = {
-          repo: viewer.did,
-          collection: body.collection,
-          rkey: body.rkey,
-          record: body.record,
-        }
-
-        const pdsRes = await proxyToPds(oauth, session, 'POST', pdsUrl, pdsBody)
-        if (!pdsRes.ok) {
-          jsonError(res, pdsRes.status, pdsRes.body.error || 'PDS write failed')
-          return
-        }
-        const result = pdsRes.body
-
-        // Re-index (insertRecord uses INSERT OR REPLACE so this handles both create and update)
+      if (url.pathname === coreXrpc('putRecord') && request.method === 'POST' && oauth) {
+        if (!viewer) return withCors(jsonError(401, 'Authentication required', acceptEncoding))
+        const body = JSON.parse(await request.text())
         try {
-          await insertRecord(body.collection, result.uri, result.cid, viewer.did, body.record)
-        } catch {
-          // Non-fatal — firehose will catch it
+          const result = await pdsPutRecord(oauth, viewer, body)
+          return withCors(json(result, 200, acceptEncoding))
+        } catch (err: any) {
+          if (err instanceof ProxyError) return withCors(jsonError(err.status, err.message, acceptEncoding))
+          throw err
         }
-
-        jsonResponse(res, result)
-        return
       }
 
       // POST /xrpc/dev.hatk.uploadBlob — proxy blob upload to user's PDS
-      if (url.pathname === coreXrpc('uploadBlob') && req.method === 'POST' && oauth) {
-        if (!viewer) {
-          jsonError(res, 401, 'Authentication required')
-          return
+      if (url.pathname === coreXrpc('uploadBlob') && request.method === 'POST' && oauth) {
+        if (!viewer) return withCors(jsonError(401, 'Authentication required', acceptEncoding))
+        const contentType = request.headers.get('content-type') || 'application/octet-stream'
+        const rawBody = new Uint8Array(await request.arrayBuffer())
+        try {
+          const result = await pdsUploadBlob(oauth, viewer, rawBody, contentType)
+          return withCors(json(result, 200, acceptEncoding))
+        } catch (err: any) {
+          if (err instanceof ProxyError) return withCors(jsonError(err.status, err.message, acceptEncoding))
+          throw err
         }
-
-        const session = await getSession(viewer.did)
-        if (!session) {
-          jsonError(res, 401, 'No PDS session for user')
-          return
-        }
-
-        const contentType = req.headers['content-type'] || 'application/octet-stream'
-        const rawBody = await readBodyRaw(req)
-
-        const pdsUrl = `${session.pds_endpoint}/xrpc/com.atproto.repo.uploadBlob`
-        const pdsRes = await proxyToPdsRaw(oauth, session, pdsUrl, rawBody, contentType)
-        if (!pdsRes.ok) {
-          jsonError(res, pdsRes.status, String(pdsRes.body.error || 'PDS upload failed'))
-          return
-        }
-
-        jsonResponse(res, pdsRes.body)
-        return
       }
 
       // GET /admin — serve admin UI from hatk package
@@ -917,13 +828,9 @@ export function startServer(
         const adminPath = join(import.meta.dirname, '../public/admin.html')
         try {
           const content = await readFile(adminPath)
-          res.writeHead(200, { 'Content-Type': 'text/html' })
-          res.end(content)
-          return
+          return withCors(file(content, 'text/html'))
         } catch {
-          res.writeHead(404)
-          res.end('Admin page not found')
-          return
+          return withCors(new Response('Admin page not found', { status: 404 }))
         }
       }
 
@@ -932,37 +839,25 @@ export function startServer(
         const authPath = join(import.meta.dirname, '../public/admin-auth.js')
         try {
           const content = await readFile(authPath)
-          res.writeHead(200, { 'Content-Type': 'application/javascript' })
-          res.end(content)
-          return
+          return withCors(file(content, 'application/javascript'))
         } catch {
-          res.writeHead(404)
-          res.end('Not found')
-          return
+          return notFound()
         }
       }
 
       // GET /_health
       if (url.pathname === '/_health') {
-        jsonResponse(res, { status: 'ok' })
-        return
+        return withCors(json({ status: 'ok' }, 200, acceptEncoding))
       }
 
       // GET /og/* — OpenGraph image routes
-      if (url.pathname.startsWith('/og/') && !res.writableEnded) {
+      if (url.pathname.startsWith('/og/')) {
         const png = await handleOpengraphRequest(url.pathname)
-        if (png) {
-          res.writeHead(200, {
-            'Content-Type': 'image/png',
-            'Cache-Control': 'public, max-age=300',
-          })
-          res.end(png)
-          return
-        }
+        if (png) return withCors(file(png, 'image/png', 'public, max-age=300'))
       }
 
       // GET/POST /xrpc/{nsid} — custom XRPC handlers (matched by full NSID from folder structure)
-      if (url.pathname.startsWith('/xrpc/') && !res.writableEnded) {
+      if (url.pathname.startsWith('/xrpc/')) {
         const method = url.pathname.slice('/xrpc/'.length)
         const limit = parseInt(url.searchParams.get('limit') || '20')
         const cursor = url.searchParams.get('cursor') || undefined
@@ -974,9 +869,9 @@ export function startServer(
 
         // Parse request body for POST (procedures)
         let input: unknown
-        if (req.method === 'POST') {
+        if (request.method === 'POST') {
           try {
-            input = JSON.parse(await readBody(req))
+            input = JSON.parse(await request.text())
           } catch {
             input = {}
           }
@@ -984,14 +879,10 @@ export function startServer(
 
         try {
           const result = await executeXrpc(method, params, cursor, limit, viewer, input)
-          if (result) {
-            jsonResponse(res, result)
-            return
-          }
+          if (result) return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
           if (err instanceof InvalidRequestError) {
-            jsonError(res, err.status, err.errorName || err.message)
-            return
+            return withCors(jsonError(err.status, err.errorName || err.message, acceptEncoding))
           }
           throw err
         }
@@ -1004,9 +895,7 @@ export function startServer(
         const robotsPath = userRobots && existsSync(userRobots) ? userRobots : defaultRobots
         try {
           const content = await readFile(robotsPath)
-          res.writeHead(200, { 'Content-Type': 'text/plain' })
-          res.end(content)
-          return
+          return withCors(file(content, 'text/plain'))
         } catch {
           // fall through
         }
@@ -1017,38 +906,39 @@ export function startServer(
         try {
           const filePath = join(publicDir, url.pathname === '/' ? 'index.html' : url.pathname)
           const content = await readFile(filePath)
-          res.writeHead(200, { 'Content-Type': MIME[extname(filePath)] || 'text/plain' })
-          res.end(content)
-          return
+          return withCors(file(content, MIME[extname(filePath)] || 'text/plain'))
         } catch {}
 
-        // SPA fallback — serve index.html for client-side routes
+        // SSR or SPA fallback — serve index.html for client-side routes
         try {
-          let content = await readFile(join(publicDir, 'index.html'), 'utf-8')
-
-          // Inject OG meta tags for shareable routes
+          const template = await readFile(join(publicDir, 'index.html'), 'utf-8')
           const ogMeta = buildOgMeta(url.pathname, requestOrigin)
-          if (ogMeta) {
-            content = content.replace('</head>', `${ogMeta}\n</head>`)
+
+          // Try SSR first
+          const renderedHtml = await renderPage(template, request, ogMeta)
+          if (renderedHtml) {
+            return withCors(file(Buffer.from(renderedHtml), 'text/html'))
           }
 
-          res.writeHead(200, { 'Content-Type': 'text/html' })
-          res.end(content)
-          return
+          // SPA fallback — inject OG meta only
+          let html = template
+          if (ogMeta) {
+            html = html.replace('</head>', `${ogMeta}\n</head>`)
+          }
+          return withCors(file(Buffer.from(html), 'text/html'))
         } catch {}
       }
 
-      res.writeHead(404)
-      res.end('Not Found')
+      return notFound()
     } catch (err: any) {
       error = err.message
-      jsonError(res, 500, err.message)
+      return withCors(jsonError(500, err.message, acceptEncoding))
     } finally {
       if (isXrpc || isAdmin) {
         emit('server', 'request', {
-          method: req.method,
+          method: request.method,
           path: url.pathname,
-          status_code: res.statusCode,
+          status_code: 0, // Status not easily available here, but emit for timing
           duration_ms: elapsed!(),
           collection: url.searchParams.get('collection') || undefined,
           query: url.searchParams.get('q') || undefined,
@@ -1056,163 +946,20 @@ export function startServer(
         })
       }
     }
-  })
-
-  server.listen(port, () => log(`[server] ${oauth?.issuer || `http://localhost:${port}`}`))
-  return server
-}
-
-function sendJson(res: any, status: number, body: Buffer): void {
-  const acceptEncoding = res.req?.headers['accept-encoding'] || ''
-  if (body.length > 1024 && /\bgzip\b/.test(acceptEncoding as string)) {
-    const compressed = gzipSync(body)
-    res.writeHead(status, {
-      'Content-Type': 'application/json',
-      'Content-Encoding': 'gzip',
-      Vary: 'Accept-Encoding',
-      ...(status === 200 ? { 'Cache-Control': 'no-store' } : {}),
-    })
-    res.end(compressed)
-  } else {
-    res.writeHead(status, {
-      'Content-Type': 'application/json',
-      ...(status === 200 ? { 'Cache-Control': 'no-store' } : {}),
-    })
-    res.end(body)
   }
 }
 
-function jsonResponse(res: any, data: any): void {
-  sendJson(res, 200, Buffer.from(JSON.stringify(data, (_, v) => normalizeValue(v))))
+// Backward-compatible wrapper
+export function startServer(
+  port: number,
+  collections: string[],
+  publicDir: string | null,
+  oauth: OAuthConfig | null,
+  admins: string[] = [],
+  resolveViewer?: (request: Request) => { did: string } | null,
+  onResync?: () => void,
+): import('node:http').Server {
+  const handler = createHandler({ collections, publicDir, oauth, admins, resolveViewer, onResync })
+  return serve(handler, port)
 }
 
-function jsonError(res: any, status: number, message: string): void {
-  if (res.headersSent) return
-  sendJson(res, status, Buffer.from(JSON.stringify({ error: message })))
-}
-
-/** Proxy a request to the user's PDS with DPoP + automatic nonce retry + token refresh. */
-async function proxyToPds(
-  oauthConfig: import('./config.ts').OAuthConfig,
-  session: any,
-  method: string,
-  pdsUrl: string,
-  body: any,
-): Promise<{ ok: boolean; status: number; body: any; headers: Headers }> {
-  const serverKey = await getServerKey('appview-oauth-key')
-  const privateJwk = JSON.parse(serverKey!.privateKey)
-  const publicJwk = JSON.parse(serverKey!.publicKey)
-
-  let accessToken = session.access_token
-
-  async function doFetch(
-    token: string,
-    nonce?: string,
-  ): Promise<{ ok: boolean; status: number; body: any; headers: Headers }> {
-    const proof = await createDpopProof(privateJwk, publicJwk, method, pdsUrl, token, nonce)
-    const res = await fetch(pdsUrl, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `DPoP ${token}`,
-        DPoP: proof,
-      },
-      body: JSON.stringify(body),
-    })
-    const resBody = await res.json().catch(() => ({}))
-    return { ok: res.ok, status: res.status, body: resBody, headers: res.headers }
-  }
-
-  let result = await doFetch(accessToken)
-  if (result.ok) return result
-
-  let nonce: string | undefined
-
-  // Step 1: handle DPoP nonce requirement
-  if (result.body.error === 'use_dpop_nonce') {
-    nonce = result.headers.get('DPoP-Nonce') || undefined
-    if (nonce) {
-      result = await doFetch(accessToken, nonce)
-      if (result.ok) return result
-    }
-  }
-
-  // Step 2: handle expired PDS token — refresh and retry
-  if (result.body.error === 'invalid_token') {
-    const refreshed = await refreshPdsSession(oauthConfig, session)
-    if (refreshed) {
-      accessToken = refreshed.accessToken
-      result = await doFetch(accessToken, nonce)
-      if (result.ok) return result
-      // May need DPoP nonce after refresh
-      if (result.body.error === 'use_dpop_nonce') {
-        nonce = result.headers.get('DPoP-Nonce') || undefined
-        if (nonce) result = await doFetch(accessToken, nonce)
-      }
-    }
-  }
-
-  return result
-}
-
-/** Proxy a raw binary request to the user's PDS with DPoP + nonce retry + token refresh. */
-async function proxyToPdsRaw(
-  oauthConfig: import('./config.ts').OAuthConfig,
-  session: { access_token: string; pds_endpoint: string; did: string; refresh_token: string; dpop_jkt: string },
-  pdsUrl: string,
-  body: Uint8Array,
-  contentType: string,
-): Promise<{ ok: boolean; status: number; body: Record<string, unknown>; headers: Headers }> {
-  const serverKey = await getServerKey('appview-oauth-key')
-  const privateJwk = JSON.parse(serverKey!.privateKey)
-  const publicJwk = JSON.parse(serverKey!.publicKey)
-
-  let accessToken = session.access_token
-
-  async function doFetch(
-    token: string,
-    nonce?: string,
-  ): Promise<{ ok: boolean; status: number; body: Record<string, unknown>; headers: Headers }> {
-    const proof = await createDpopProof(privateJwk, publicJwk, 'POST', pdsUrl, token, nonce)
-    const res = await fetch(pdsUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': contentType,
-        'Content-Length': String(body.length),
-        Authorization: `DPoP ${token}`,
-        DPoP: proof,
-      },
-      body: Buffer.from(body),
-    })
-    const resBody: Record<string, unknown> = await res.json().catch(() => ({}))
-    return { ok: res.ok, status: res.status, body: resBody, headers: res.headers }
-  }
-
-  let result = await doFetch(accessToken)
-  if (result.ok) return result
-
-  let nonce: string | undefined
-
-  if (result.body.error === 'use_dpop_nonce') {
-    nonce = result.headers.get('DPoP-Nonce') || undefined
-    if (nonce) {
-      result = await doFetch(accessToken, nonce)
-      if (result.ok) return result
-    }
-  }
-
-  if (result.body.error === 'invalid_token') {
-    const refreshed = await refreshPdsSession(oauthConfig, session)
-    if (refreshed) {
-      accessToken = refreshed.accessToken
-      result = await doFetch(accessToken, nonce)
-      if (result.ok) return result
-      if (result.body.error === 'use_dpop_nonce') {
-        nonce = result.headers.get('DPoP-Nonce') || undefined
-        if (nonce) result = await doFetch(accessToken, nonce)
-      }
-    }
-  }
-
-  return result
-}

@@ -168,7 +168,7 @@ export async function initXrpc(xrpcDir: string): Promise<void> {
   for (const scriptPath of files) {
     const rel = relative(xrpcDir, scriptPath).replace(/\.(ts|js)$/, '')
     const name = rel.replace(/[\\/]/g, '.')
-    const mod = await import(scriptPath)
+    const mod = await import(/* @vite-ignore */ `${scriptPath}?t=${Date.now()}`)
     const handler = mod.default
 
     // Extract param schema from lexicon for validation and defaults
@@ -305,6 +305,46 @@ export async function executeXrpc(
   const handler = handlers.get(name)
   if (!handler) return null
   return handler.execute(params, cursor, limit, viewer || null, input)
+}
+
+/** Call a registered XRPC handler directly (no HTTP). For use in SSR renderers. */
+export async function callXrpc(
+  nsid: string,
+  params: Record<string, any> = {},
+  input?: unknown,
+): Promise<any> {
+  const viewer = (globalThis as any).__hatk_viewer ?? null
+  // In externalized module context (e.g. SSR), delegate to the runner's callXrpc via globalThis.
+  // The runner's module instance has all registered handlers; this (Node's) instance may not.
+  if (handlers.size === 0 && (globalThis as any).__hatk_callXrpc) {
+    return (globalThis as any).__hatk_callXrpc(nsid, params, input)
+  }
+  const stringParams: Record<string, string> = {}
+  for (const [k, v] of Object.entries(params)) {
+    if (v != null) stringParams[k] = String(v)
+  }
+  const limit = params.limit ? Number(params.limit) : 20
+  const cursor = params.cursor ?? undefined
+  const result = await executeXrpc(nsid, stringParams, cursor, limit, viewer, input)
+  if (result === null) throw new Error(`No XRPC handler registered for ${nsid}`)
+  return result
+}
+
+/**
+ * Register a core XRPC handler directly (no XrpcContext wrapping).
+ * Used for built-in dev.hatk.* handlers that manage their own dependencies.
+ */
+export function registerCoreXrpcHandler(
+  nsid: string,
+  fn: (
+    params: Record<string, string>,
+    cursor: string | undefined,
+    limit: number,
+    viewer: { did: string } | null,
+    input?: unknown,
+  ) => Promise<any>,
+): void {
+  handlers.set(nsid, { name: nsid, execute: fn })
 }
 
 /** Return all registered XRPC method names. */

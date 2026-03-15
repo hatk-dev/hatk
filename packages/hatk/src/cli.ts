@@ -1424,6 +1424,21 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     }
     entries.sort((a, b) => a.nsid.localeCompare(b.nsid))
 
+    // Collect procedure nsids and blob-input nsids for client callXrpc
+    const procedureNsids: string[] = []
+    const blobInputNsids: string[] = []
+    for (const { nsid, defType } of entries) {
+      if (defType === 'procedure') {
+        const lex = lexicons.get(nsid)
+        const inputEncoding = lex?.defs?.main?.input?.encoding
+        if (inputEncoding === '*/*') {
+          blobInputNsids.push(nsid)
+        } else {
+          procedureNsids.push(nsid)
+        }
+      }
+    }
+
     if (entries.length === 0) {
       console.error('No lexicons found')
       process.exit(1)
@@ -1474,6 +1489,7 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     let out = '// Auto-generated from lexicons. Do not edit.\n'
     out += `import type { ${[...usedWrappers].sort().join(', ')}, LexServerParams, Checked, Prettify, StrictArg } from '@hatk/hatk/lex-types'\n`
     out += `import type { XrpcContext } from '@hatk/hatk/xrpc'\n`
+    out += `import { callXrpc as _callXrpc } from '@hatk/hatk/xrpc'\n`
     out += `import { defineFeed as _defineFeed, type FeedResult, type FeedContext, type HydrateContext } from '@hatk/hatk/feeds'\n`
     out += `import { seed as _seed, type SeedOpts } from '@hatk/hatk/seed'\n`
 
@@ -1648,6 +1664,7 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     out += `export { defineHook } from '@hatk/hatk/hooks'\n`
     out += `export { defineLabels } from '@hatk/hatk/labels'\n`
     out += `export { defineOG } from '@hatk/hatk/opengraph'\n`
+    out += `export { defineRenderer } from '@hatk/hatk/renderer'\n`
     out += `export type Ctx<K extends keyof XrpcSchema & keyof Registry> = XrpcContext<\n`
     out += `  LexServerParams<Registry[K], Registry>,\n`
     out += `  RecordRegistry,\n`
@@ -1668,6 +1685,14 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     out += `  handler: (ctx: Ctx<K> & { ok: <T extends OutputOf<K>>(value: StrictArg<T, OutputOf<K>>) => Checked<OutputOf<K>> }) => Promise<Checked<OutputOf<K>>>,\n`
     out += `) {\n`
     out += `  return { __type: 'procedure' as const, nsid, handler: (ctx: any) => handler({ ...ctx, ok: (v: any) => v }) }\n`
+    out += `}\n\n`
+    out += `// ─── Server-side XRPC Caller ────────────────────────────────────────\n\n`
+    out += `type ExtractParams<T> = T extends { params: infer P } ? P : Record<string, unknown>\n`
+    out += `export async function callXrpc<K extends keyof XrpcSchema & string>(\n`
+    out += `  nsid: K,\n`
+    out += `  params?: ExtractParams<XrpcSchema[K]>,\n`
+    out += `): Promise<OutputOf<K>> {\n`
+    out += `  return _callXrpc(nsid, params as any) as Promise<OutputOf<K>>\n`
     out += `}\n\n`
     out += `// ─── Feed & Seed Helpers ────────────────────────────────────────────\n\n`
     out += `type FeedGenerate = (ctx: FeedContext & { ok: (value: FeedResult) => Checked<FeedResult> }) => Promise<Checked<FeedResult>>\n`
@@ -1704,9 +1729,129 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     }
 
     writeFileSync(outPath, out)
+
+    // Generate client-safe version (types + callXrpc only, no server module re-exports)
+    // Types use `export type` from main file (erased at compile time, no runtime import).
+    // callXrpc imports from @hatk/hatk/xrpc directly to avoid pulling in server deps.
+    let clientOut = '// Auto-generated client-safe subset. Do not edit.\n'
+    clientOut += `// Import this in app components instead of hatk.generated.ts\n`
+    clientOut += `// to avoid pulling in server-only dependencies.\n`
+    clientOut += `export type { XrpcSchema } from './hatk.generated.ts'\n`
+    clientOut += `import type { XrpcSchema } from './hatk.generated.ts'\n`
+
+    // Re-export all types
+    const typeExports: string[] = []
+    for (const { nsid, defType } of entries) {
+      if (!defType) continue
+      if (nsid === 'dev.hatk.createRecord' || nsid === 'dev.hatk.deleteRecord' || nsid === 'dev.hatk.putRecord') continue
+      typeExports.push(capitalize(varNames.get(nsid)!))
+    }
+    if (recordEntries.length > 0) {
+      typeExports.push('RecordRegistry', 'CreateRecord', 'DeleteRecord', 'PutRecord')
+    }
+    // Named defs (views, objects) — collect from emittedDefNames minus main types
+    const mainTypeNames = new Set(entries.filter(e => e.defType).map(e => capitalize(varNames.get(e.nsid)!)))
+    for (const name of emittedDefNames) {
+      if (!mainTypeNames.has(name) && !typeExports.includes(name)) {
+        typeExports.push(name)
+      }
+    }
+    if (typeExports.length > 0) {
+      clientOut += `export type { ${typeExports.join(', ')} } from './hatk.generated.ts'\n`
+    }
+
+    // Typed callXrpc — environment-aware:
+    // SSR: uses globalThis.__hatk_callXrpc bridge (direct handler invocation)
+    // Client: fetches via HTTP (GET for queries, POST for procedures, raw POST for blobs)
+    if (procedureNsids.length > 0) {
+      clientOut += `\nconst _procedures = new Set([${procedureNsids.map(n => `'${n}'`).join(', ')}])\n`
+    }
+    if (blobInputNsids.length > 0) {
+      clientOut += `const _blobInputs = new Set([${blobInputNsids.map(n => `'${n}'`).join(', ')}])\n`
+    }
+
+    clientOut += `\ntype CallArg<K extends keyof XrpcSchema> =\n`
+    clientOut += `  XrpcSchema[K] extends { input: infer I } ? I :\n`
+    clientOut += `  XrpcSchema[K] extends { params: infer P } ? P :\n`
+    clientOut += `  Record<string, unknown>\n`
+    clientOut += `type OutputOf<K extends keyof XrpcSchema> = XrpcSchema[K]['output']\n\n`
+    clientOut += `export async function callXrpc<K extends keyof XrpcSchema & string>(\n`
+    clientOut += `  nsid: K,\n`
+    clientOut += `  arg?: CallArg<K>,\n`
+    clientOut += `): Promise<OutputOf<K>> {\n`
+    // Server-side bridge
+    clientOut += `  if (typeof window === 'undefined') {\n`
+    clientOut += `    const bridge = (globalThis as any).__hatk_callXrpc\n`
+    clientOut += `    if (!bridge) throw new Error('callXrpc: server bridge not available — is hatk initialized?')\n`
+    if (procedureNsids.length > 0 || blobInputNsids.length > 0) {
+      const checks = []
+      if (procedureNsids.length > 0) checks.push('_procedures.has(nsid)')
+      if (blobInputNsids.length > 0) checks.push('_blobInputs.has(nsid)')
+      clientOut += `    if (${checks.join(' || ')}) return bridge(nsid, {}, arg) as Promise<OutputOf<K>>\n`
+    }
+    clientOut += `    return bridge(nsid, arg) as Promise<OutputOf<K>>\n`
+    clientOut += `  }\n`
+    // Client-side fetch
+    clientOut += `  const url = new URL(\`/xrpc/\${nsid}\`, window.location.origin)\n`
+    if (blobInputNsids.length > 0) {
+      clientOut += `  if (_blobInputs.has(nsid)) {\n`
+      clientOut += `    const blob = arg as Blob | ArrayBuffer\n`
+      clientOut += `    const ct = blob instanceof Blob ? blob.type : 'application/octet-stream'\n`
+      clientOut += `    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': ct }, body: blob })\n`
+      clientOut += `    if (!res.ok) throw new Error(\`XRPC \${nsid} failed: \${res.status}\`)\n`
+      clientOut += `    return res.json() as Promise<OutputOf<K>>\n`
+      clientOut += `  }\n`
+    }
+    if (procedureNsids.length > 0) {
+      clientOut += `  if (_procedures.has(nsid)) {\n`
+      clientOut += `    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(arg) })\n`
+      clientOut += `    if (!res.ok) throw new Error(\`XRPC \${nsid} failed: \${res.status}\`)\n`
+      clientOut += `    return res.json() as Promise<OutputOf<K>>\n`
+      clientOut += `  }\n`
+    }
+    clientOut += `  for (const [k, v] of Object.entries(arg || {})) {\n`
+    clientOut += `    if (v != null) url.searchParams.set(k, String(v))\n`
+    clientOut += `  }\n`
+    clientOut += `  const res = await fetch(url)\n`
+    clientOut += `  if (!res.ok) throw new Error(\`XRPC \${nsid} failed: \${res.status}\`)\n`
+    clientOut += `  return res.json() as Promise<OutputOf<K>>\n`
+    clientOut += `}\n`
+
+    // getViewer — async, resolves from cookies on server via getRequestEvent()
+    clientOut += `\nexport async function getViewer(): Promise<{ did: string } | null> {\n`
+    clientOut += `  if (typeof window === 'undefined') {\n`
+    clientOut += `    try {\n`
+    clientOut += `      const parse = (globalThis as any).__hatk_parseSessionCookie\n`
+    clientOut += `      if (parse) {\n`
+    clientOut += `        const { getRequestEvent } = await import('$app/server')\n`
+    clientOut += `        const event = getRequestEvent()\n`
+    clientOut += `        const cookieValue = event.cookies.get('__hatk_session')\n`
+    clientOut += `        if (cookieValue) {\n`
+    clientOut += `          const request = new Request('http://localhost', {\n`
+    clientOut += `            headers: { cookie: \`__hatk_session=\${cookieValue}\` },\n`
+    clientOut += `          })\n`
+    clientOut += `          return parse(request)\n`
+    clientOut += `        }\n`
+    clientOut += `      }\n`
+    clientOut += `    } catch {}\n`
+    clientOut += `    return (globalThis as any).__hatk_viewer ?? null\n`
+    clientOut += `  }\n`
+    clientOut += `  try {\n`
+    clientOut += `    const mod = (globalThis as any).__hatk_auth\n`
+    clientOut += `    if (mod?.viewerDid) {\n`
+    clientOut += `      const did = mod.viewerDid()\n`
+    clientOut += `      if (did) return { did }\n`
+    clientOut += `    }\n`
+    clientOut += `  } catch {}\n`
+    clientOut += `  return (globalThis as any).__hatk_viewer ?? null\n`
+    clientOut += `}\n`
+
+    writeFileSync('./hatk.generated.client.ts', clientOut)
+
     console.log(
       `Generated ${outPath} with ${entries.length} types: ${entries.map((e) => capitalize(varNames.get(e.nsid)!)).join(', ')}`,
     )
+    console.log(`Generated ./hatk.generated.client.ts (client-safe subset)`)
   } else if (lexiconTemplates[type]) {
     const nsid = args[2]
     if (!nsid || !nsid.includes('.')) {
@@ -1798,8 +1943,8 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
   await ensurePds()
   runSeed()
 
-  if (existsSync(resolve('svelte.config.js')) && existsSync(resolve('src/app.html'))) {
-    // SvelteKit project — vite dev starts the hatk server via the plugin
+  if (existsSync(resolve('vite.config.ts')) || existsSync(resolve('vite.config.js'))) {
+    // Vite project — vite dev starts the hatk server via the plugin
     await spawnForward('npx', ['vite', 'dev'])
   } else {
     // No frontend — just run the hatk server directly
