@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+import { registerHatkResolveHook } from './resolve-hatk.ts'
+import { pathToFileURL } from 'node:url'
+import { registerHooks } from 'node:module'
 import { log } from './logger.ts'
 import { loadConfig } from './config.ts'
 import { loadLexicons, storeLexicons, discoverCollections, buildSchemas } from './database/schema.ts'
@@ -35,6 +38,8 @@ function logMemory(phase: string): void {
 
 const configPath = process.argv[2] || 'hatk.config.ts'
 const configDir = dirname(resolve(configPath))
+
+registerHatkResolveHook()
 
 logMemory('startup')
 

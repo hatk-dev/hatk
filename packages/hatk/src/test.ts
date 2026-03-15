@@ -1,7 +1,6 @@
 import { resolve, dirname } from 'node:path'
-import { pathToFileURL } from 'node:url'
-import { registerHooks } from 'node:module'
 import { readdirSync, readFileSync } from 'node:fs'
+import { registerHatkResolveHook } from './resolve-hatk.ts'
 import YAML from 'yaml'
 import { loadConfig, type HatkConfig } from './config.ts'
 import {
@@ -72,17 +71,7 @@ function findConfigPath(): string {
  * but it will NOT work with --pool=threads (multiple tests sharing a process).
  */
 export async function createTestContext(): Promise<TestContext> {
-  // Register Node.js module resolve hook so raw import() of server files
-  // can resolve the $hatk alias to the generated entry points.
-  const hatkUrl = pathToFileURL(resolve('hatk.generated.ts')).href
-  const hatkClientUrl = pathToFileURL(resolve('hatk.generated.client.ts')).href
-  registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (specifier === '$hatk/client') return { url: hatkClientUrl, shortCircuit: true }
-      if (specifier === '$hatk') return { url: hatkUrl, shortCircuit: true }
-      return nextResolve(specifier, context)
-    },
-  })
+  registerHatkResolveHook()
 
   const configPath = findConfigPath()
   const config = await loadConfig(configPath)
