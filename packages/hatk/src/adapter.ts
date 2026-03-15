@@ -60,7 +60,7 @@ export async function sendResponse(res: ServerResponse, response: Response): Pro
 }
 
 /** Routes handled by hatk — everything else can fall through to a framework handler. */
-export const HATK_ROUTES = ['/xrpc/', '/oauth/', '/.well-known/', '/og/', '/admin', '/repos', '/info/', '/_health', '/robots.txt', '/auth/logout', '/__dev/']
+export const HATK_ROUTES = ['/xrpc/', '/oauth/', '/oauth-client-metadata.json', '/.well-known/', '/og/', '/admin', '/repos', '/info/', '/_health', '/robots.txt', '/auth/logout', '/__dev/']
 
 export function isHatkRoute(pathname: string): boolean {
   return HATK_ROUTES.some(r => pathname.startsWith(r) || pathname === r)
