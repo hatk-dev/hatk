@@ -168,14 +168,9 @@ const backfillOpts = {
 function runBackfillAndRestart() {
   runBackfill(backfillOpts)
     .then(async (recordCount) => {
-      const port = getDatabasePort()
-      if (port.dialect !== 'sqlite') {
-        log('[main] Backfill complete, rebuilding FTS indexes...')
-        await rebuildAllIndexes(collections)
-        log('[main] FTS indexes ready')
-      } else {
-        log('[main] Backfill complete (FTS updated incrementally)')
-      }
+      log('[main] Backfill complete, building FTS indexes...')
+      await rebuildAllIndexes(collections)
+      log('[main] FTS indexes ready')
       return recordCount
     })
     .then((recordCount) => {
