@@ -69,4 +69,4 @@ curl "http://localhost:3000/xrpc/dev.hatk.describeFeeds"
 
 ---
 
-See [Feeds guide](/guides/feeds/) for how to define feeds with `defineFeed()`.
+See [Feeds guide](/guides/feeds) for how to define feeds with `defineFeed()`.

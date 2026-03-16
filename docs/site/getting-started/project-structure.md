@@ -38,7 +38,7 @@ With `--svelte`, you also get `src/`, `svelte.config.js`, and `vite.config.ts` f
 
 ### `config.yaml`
 
-Main configuration — relay URL, database path, port, OAuth settings, backfill options, and more. See [Configuration](/getting-started/configuration/) for all options.
+Main configuration — relay URL, database path, port, OAuth settings, backfill options, and more. See [Configuration](/getting-started/configuration) for all options.
 
 ### `package.json`
 
@@ -89,7 +89,7 @@ They drive automatic DuckDB table creation and TypeScript type generation.
 
 ### `feeds/`
 
-Feed generators using `defineFeed()`. Each file exports a feed with a `generate` function that queries DuckDB and returns record URIs, plus an optional `hydrate` function for enrichment. See [Feeds guide](/guides/feeds/).
+Feed generators using `defineFeed()`. Each file exports a feed with a `generate` function that queries DuckDB and returns record URIs, plus an optional `hydrate` function for enrichment. See [Feeds guide](/guides/feeds).
 
 ```
 feeds/
@@ -98,7 +98,7 @@ feeds/
 
 ### `xrpc/`
 
-Custom XRPC endpoint handlers organized by namespace path. Each file uses `defineQuery()` or `defineProcedure()` and must have a matching lexicon. See [XRPC Handlers guide](/guides/xrpc-handlers/).
+Custom XRPC endpoint handlers organized by namespace path. Each file uses `defineQuery()` or `defineProcedure()` and must have a matching lexicon. See [XRPC Handlers guide](/guides/xrpc-handlers).
 
 ```
 xrpc/
@@ -108,7 +108,7 @@ xrpc/
 
 ### `og/`
 
-OpenGraph image routes using satori for server-side rendering. Each file exports a `path` and `generate()` function that returns a virtual DOM element. See [OpenGraph guide](/guides/opengraph/).
+OpenGraph image routes using satori for server-side rendering. Each file exports a `path` and `generate()` function that returns a virtual DOM element. See [OpenGraph guide](/guides/opengraph).
 
 ```
 og/
@@ -117,7 +117,7 @@ og/
 
 ### `hooks/`
 
-Lifecycle hooks. Currently supports `on-login.ts`, which fires after a user authenticates via OAuth. The hook receives the user's `did` and an `ensureRepo` helper. See [Hooks guide](/guides/hooks/).
+Lifecycle hooks. Currently supports `on-login.ts`, which fires after a user authenticates via OAuth. The hook receives the user's `did` and an `ensureRepo` helper. See [Hooks guide](/guides/hooks).
 
 ```
 hooks/
@@ -126,7 +126,7 @@ hooks/
 
 ### `labels/`
 
-Label definitions for content moderation. Each file exports a label definition with `evaluate()` logic. See [Labels guide](/guides/labels/).
+Label definitions for content moderation. Each file exports a label definition with `evaluate()` logic. See [Labels guide](/guides/labels).
 
 ```
 labels/
@@ -135,7 +135,7 @@ labels/
 
 ### `seeds/`
 
-Test fixture data. Contains a `seed.ts` that creates accounts and records against the local PDS during development. Run with `hatk seed` or automatically during `hatk dev`. See [Seeds guide](/guides/seeds/).
+Test fixture data. Contains a `seed.ts` that creates accounts and records against the local PDS during development. Run with `hatk seed` or automatically during `hatk dev`. See [Seeds guide](/guides/seeds).
 
 ```
 seeds/
@@ -190,7 +190,7 @@ src/
         └── +page.svelte  # OAuth redirect target
 ```
 
-The Vite plugin proxies API routes to the hatk backend during development. In production, `vite build` compiles to `public/`. See [Frontend guide](/guides/frontend/) for details.
+The Vite plugin proxies API routes to the hatk backend during development. In production, `vite build` compiles to `public/`. See [Frontend guide](/guides/frontend) for details.
 
 ### `test/`
 
@@ -204,7 +204,7 @@ Test files organized by type:
 | `test/browser/`     | Playwright browser tests     |
 | `test/fixtures/`    | Shared test data and helpers |
 
-Run all tests with `hatk test`. See [Testing](/cli/testing/) for details.
+Run all tests with `hatk test`. See [Testing](/cli/testing) for details.
 
 ---
 

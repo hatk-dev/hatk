@@ -113,7 +113,7 @@ export function getAuthFetch(): typeof fetch {
 }
 ```
 
-Pass this to the [API client](/guides/api-client/) so all requests are authenticated when a user is logged in:
+Pass this to the [API client](/guides/api-client) so all requests are authenticated when a user is logged in:
 
 ```typescript
 export const api = createClient<XrpcSchema>(origin, {
@@ -180,4 +180,4 @@ oauth:
       scope: atproto transition:generic
 ```
 
-See [Configuration](/getting-started/configuration/) for all OAuth options.
+See [Configuration](/getting-started/configuration) for all OAuth options.

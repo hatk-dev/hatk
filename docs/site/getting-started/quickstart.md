@@ -66,6 +66,6 @@ This returns the collections your server is indexing, derived from your lexicon 
 
 ## Next steps
 
-- [Project Structure](/getting-started/project-structure/) — understand each file and directory
-- [Configuration](/getting-started/configuration/) — customize `config.yaml`
+- [Project Structure](/getting-started/project-structure) — understand each file and directory
+- [Configuration](/getting-started/configuration) — customize `config.yaml`
 - [CLI Reference](/cli/) — all available commands

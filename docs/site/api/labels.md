@@ -34,4 +34,4 @@ curl "http://localhost:3000/xrpc/dev.hatk.describeLabels"
 
 ---
 
-See [Labels guide](/guides/labels/) for how to define labels and hydrate them in responses.
+See [Labels guide](/guides/labels) for how to define labels and hydrate them in responses.

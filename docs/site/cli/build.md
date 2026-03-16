@@ -37,4 +37,4 @@ To run in production:
    hatk start
    ```
 
-See [Configuration](/getting-started/configuration/) for all available environment variables.
+See [Configuration](/getting-started/configuration) for all available environment variables.

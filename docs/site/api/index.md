@@ -19,7 +19,7 @@ Authenticated endpoints require an OAuth DPoP bearer token in the `Authorization
 Authorization: DPoP <token>
 ```
 
-Configure OAuth in your `config.yaml` to enable authentication. See [Configuration](/getting-started/configuration/).
+Configure OAuth in your `config.yaml` to enable authentication. See [Configuration](/getting-started/configuration).
 
 ## Client usage
 
@@ -47,16 +47,16 @@ const result = await api.upload(file)
 
 | Endpoint                              | Type      | Auth | Description                     |
 | ------------------------------------- | --------- | ---- | ------------------------------- |
-| [`getRecord`](/api/records/)          | Query     | No   | Fetch a single record by AT URI |
-| [`getRecords`](/api/records/)         | Query     | No   | List records with filters       |
-| [`createRecord`](/api/records/)       | Procedure | Yes  | Create a record via user's PDS  |
-| [`putRecord`](/api/records/)          | Procedure | Yes  | Create or update a record       |
-| [`deleteRecord`](/api/records/)       | Procedure | Yes  | Delete a record                 |
-| [`getFeed`](/api/feeds/)              | Query     | No   | Retrieve a named feed           |
-| [`describeFeeds`](/api/feeds/)        | Query     | No   | List available feeds            |
-| [`searchRecords`](/api/search/)       | Query     | No   | Full-text search                |
-| [`uploadBlob`](/api/blobs/)           | Procedure | Yes  | Upload a binary blob            |
-| [`getPreferences`](/api/preferences/) | Query     | Yes  | Get user preferences            |
-| [`putPreference`](/api/preferences/)  | Procedure | Yes  | Set a preference                |
-| [`describeLabels`](/api/labels/)      | Query     | No   | List label definitions          |
+| [`getRecord`](/api/records)          | Query     | No   | Fetch a single record by AT URI |
+| [`getRecords`](/api/records)         | Query     | No   | List records with filters       |
+| [`createRecord`](/api/records)       | Procedure | Yes  | Create a record via user's PDS  |
+| [`putRecord`](/api/records)          | Procedure | Yes  | Create or update a record       |
+| [`deleteRecord`](/api/records)       | Procedure | Yes  | Delete a record                 |
+| [`getFeed`](/api/feeds)              | Query     | No   | Retrieve a named feed           |
+| [`describeFeeds`](/api/feeds)        | Query     | No   | List available feeds            |
+| [`searchRecords`](/api/search)       | Query     | No   | Full-text search                |
+| [`uploadBlob`](/api/blobs)           | Procedure | Yes  | Upload a binary blob            |
+| [`getPreferences`](/api/preferences) | Query     | Yes  | Get user preferences            |
+| [`putPreference`](/api/preferences)  | Procedure | Yes  | Set a preference                |
+| [`describeLabels`](/api/labels)      | Query     | No   | List label definitions          |
 | `describeCollections`                 | Query     | No   | List indexed collections        |

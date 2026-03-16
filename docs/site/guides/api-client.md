@@ -72,7 +72,7 @@ const api = createClient<XrpcSchema>(origin, {
 
 When the user is logged in, requests include `Authorization: DPoP <token>` and a `DPoP` proof header. When logged out, it falls back to plain `fetch`.
 
-See [OAuth](/guides/oauth/) for setting up `getAuthFetch()`.
+See [OAuth](/guides/oauth) for setting up `getAuthFetch()`.
 
 ## Error handling
 
