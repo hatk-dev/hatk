@@ -20,7 +20,7 @@
  */
 import { resolve, relative } from 'node:path'
 import { readdirSync, statSync } from 'node:fs'
-import { log } from './logger.ts'
+import { log, emit, timer } from './logger.ts'
 import {
   querySQL,
   runSQL,
@@ -304,7 +304,15 @@ export async function executeXrpc(
 ): Promise<any | null> {
   const handler = handlers.get(name)
   if (!handler) return null
-  return handler.execute(params, cursor, limit, viewer || null, input)
+  const elapsed = timer()
+  try {
+    const result = await handler.execute(params, cursor, limit, viewer || null, input)
+    emit('xrpc', name, { duration_ms: elapsed(), params, cursor, limit, viewer: viewer?.did })
+    return result
+  } catch (err: any) {
+    emit('xrpc', name, { duration_ms: elapsed(), params, cursor, limit, viewer: viewer?.did, error: err.message })
+    throw err
+  }
 }
 
 /** Call a registered XRPC handler directly (no HTTP). For use in SSR renderers. */
