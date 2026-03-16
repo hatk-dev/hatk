@@ -28,6 +28,7 @@ export default defineConfig({
             { label: 'Seeds', slug: 'guides/seeds' },
             { label: 'OpenGraph Images', slug: 'guides/opengraph' },
             { label: 'Hooks', slug: 'guides/hooks' },
+            { label: 'Deployment', slug: 'guides/deployment' },
           ],
         },
         {
