@@ -1220,97 +1220,9 @@ export async function searchRecords(
   const hasMore = bm25Results.length > limit
   if (hasMore) bm25Results.pop()
 
-  // Phase 2: Exact substring match — boosts phrase matches above BM25 results
-  const exactMatchResults: any[] = []
-  const bm25Uris = new Set(bm25Results.map((r: any) => r.uri))
-  try {
-    const searchParam = `%${query}%`
-    let paramIdx = 1
-    const ilikeConds: string[] = []
-    const params: any[] = []
-
-    // TEXT columns — direct ILIKE/LIKE
-    for (const c of textCols) {
-      ilikeConds.push(`t.${c.name} ${dialect.ilike} $${paramIdx++}`)
-      params.push(searchParam)
-    }
-
-    // JSON columns — cast to text then ILIKE/LIKE
-    const jsonCols = schema.columns.filter((c) => c.sqlType === 'JSON' || c.sqlType === 'TEXT')
-    for (const c of jsonCols) {
-      if (textCols.some((tc) => tc.name === c.name)) continue // skip already-added TEXT cols
-      ilikeConds.push(`CAST(t.${c.name} AS TEXT) ${dialect.ilike} $${paramIdx++}`)
-      params.push(searchParam)
-    }
-
-    // Handle from _repos table
-    ilikeConds.push(`r.handle ${dialect.ilike} $${paramIdx++}`)
-    params.push(searchParam)
-
-    if (ilikeConds.length > 0) {
-      const exactSQL = `SELECT t.* FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did
-        WHERE (${ilikeConds.join(' OR ')})
-        ORDER BY t.indexed_at DESC
-        LIMIT $${paramIdx++}`
-      params.push(limit)
-
-      const rows = await all(exactSQL, params)
-      phasesUsed.push('exact')
-      for (const row of rows) {
-        if (!bm25Uris.has(row.uri)) {
-          exactMatchResults.push(row)
-          bm25Uris.add(row.uri)
-        }
-      }
-    }
-  } catch (err: any) {
-    phaseErrors.push(`exact: ${err.message}`)
-  }
-
-  // Merge: exact matches first, then BM25 results, capped at limit
-  const mergedResults = [...exactMatchResults, ...bm25Results].slice(0, limit + (hasMore ? 1 : 0))
-  // Replace bm25Results with merged for downstream phases
-  bm25Results = mergedResults
-
-  // Phase 3: ILIKE scan of rows written since last FTS rebuild (immediate searchability)
   const existingUris = new Set(bm25Results.map((r: any) => r.uri))
 
-  const { getLastRebuiltAt } = await import('./fts.ts')
-  const rebuiltAt = getLastRebuiltAt(collection)
-  let recentCount = 0
-
-  if (rebuiltAt && bm25Results.length < limit) {
-    const remaining = limit - bm25Results.length
-    const searchParam = `%${query}%`
-    let paramIdx = 1
-    const ilikeParts = textCols.map((c) => `t.${c.name} ${dialect.ilike} $${paramIdx++}`)
-    ilikeParts.push(`r.handle ${dialect.ilike} $${paramIdx++}`)
-    const ilikeConds = ilikeParts.join(' OR ')
-    const params: any[] = [...textCols.map(() => searchParam), searchParam]
-
-    const recentSQL = `SELECT t.* FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did
-      WHERE t.indexed_at >= $${paramIdx++} AND t.uri NOT IN (SELECT uri FROM ${safeName}) AND (${ilikeConds})
-      ORDER BY t.indexed_at DESC
-      LIMIT $${paramIdx++}`
-    params.push(rebuiltAt, remaining + existingUris.size)
-
-    try {
-      const recentRows = await all(recentSQL, params)
-      phasesUsed.push('recent')
-      for (const row of recentRows) {
-        if (bm25Results.length >= limit) break
-        if (!existingUris.has(row.uri)) {
-          existingUris.add(row.uri)
-          bm25Results.push(row)
-          recentCount++
-        }
-      }
-    } catch (err: any) {
-      phaseErrors.push(`recent: ${err.message}`)
-    }
-  }
-
-  // Phase 4: Fuzzy fallback for typo tolerance (if still under limit)
+  // Phase 2: Fuzzy fallback for typo tolerance (if still under limit)
   // Only available on dialects with jaro_winkler_similarity (DuckDB)
   let fuzzyCount = 0
   if (fuzzy && dialect.jaroWinklerSimilarity && bm25Results.length < limit) {
@@ -1362,8 +1274,6 @@ export async function searchRecords(
     collection,
     query,
     bm25_count: bm25Count > limit ? bm25Count - 1 : bm25Count,
-    exact_count: exactMatchResults.length,
-    recent_count: recentCount,
     fuzzy_count: fuzzyCount,
     total_results: records.length,
     duration_ms: elapsed(),
