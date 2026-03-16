@@ -8,7 +8,7 @@ import { log } from './logger.ts'
 import { loadConfig } from './config.ts'
 import { loadLexicons, storeLexicons, discoverCollections, buildSchemas } from './database/schema.ts'
 import { discoverViews } from './views.ts'
-import { initDatabase, getCursor, querySQL, getSqlDialect, getSchemaDump, migrateSchema } from './database/db.ts'
+import { initDatabase, getCursor, querySQL, getSqlDialect, getSchemaDump, migrateSchema, getDatabasePort } from './database/db.ts'
 import { createAdapter } from './database/adapter-factory.ts'
 import { getDialect } from './database/dialect.ts'
 import { setSearchPort } from './database/fts.ts'
@@ -167,12 +167,18 @@ const backfillOpts = {
 
 function runBackfillAndRestart() {
   runBackfill(backfillOpts)
-    .then((recordCount) => {
-      log('[main] Backfill complete, rebuilding FTS indexes...')
-      return rebuildAllIndexes(collections).then(() => recordCount)
+    .then(async (recordCount) => {
+      const port = getDatabasePort()
+      if (port.dialect !== 'sqlite') {
+        log('[main] Backfill complete, rebuilding FTS indexes...')
+        await rebuildAllIndexes(collections)
+        log('[main] FTS indexes ready')
+      } else {
+        log('[main] Backfill complete (FTS updated incrementally)')
+      }
+      return recordCount
     })
     .then((recordCount) => {
-      log('[main] FTS indexes ready')
       if (recordCount > 0 && !process.env.DEV_MODE) {
         logMemory('after-backfill')
         log('[main] Restarting to reclaim memory...')

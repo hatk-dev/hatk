@@ -51,6 +51,15 @@ export interface SearchPort {
   /** Build/rebuild an FTS index for a table */
   buildIndex(shadowTable: string, sourceQuery: string, searchColumns: string[]): Promise<void>
 
+  /** Incrementally update a single record in the FTS index */
+  updateIndex?(shadowTable: string, uri: string, row: Record<string, string | null>, searchColumns: string[]): Promise<void>
+
+  /** Remove a single record from the FTS index */
+  deleteFromIndex?(shadowTable: string, uri: string, searchColumns: string[]): Promise<void>
+
+  /** Check if the FTS index already exists (for skipping rebuild on startup) */
+  indexExists?(shadowTable: string): Promise<boolean>
+
   /** Search a table, returning URIs with scores */
   search(
     shadowTable: string,

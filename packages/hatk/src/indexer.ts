@@ -7,6 +7,7 @@ import {
   setRepoStatus,
   getRepoRetryInfo,
   listAllRepoStatuses,
+  getDatabasePort,
 } from './database/db.ts'
 import { backfillRepo } from './backfill.ts'
 import { rebuildAllIndexes } from './database/fts.ts'
@@ -117,7 +118,11 @@ async function flushBuffer(): Promise<void> {
   writesSinceRebuild += batch.length
   if (writesSinceRebuild >= ftsRebuildInterval) {
     writesSinceRebuild = 0
-    rebuildAllIndexes([...indexerCollections]).catch(() => {})
+    // Skip periodic full rebuild for SQLite — it uses incremental FTS updates
+    const port = getDatabasePort()
+    if (port.dialect !== 'sqlite') {
+      rebuildAllIndexes([...indexerCollections]).catch(() => {})
+    }
   }
 }
 

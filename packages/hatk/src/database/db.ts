@@ -1,6 +1,6 @@
 import { type TableSchema, toSnakeCase } from './schema.ts'
 import type { Row } from '../lex-types.ts'
-import { getSearchColumns, stripStopWords, getSearchPort } from './fts.ts'
+import { getSearchColumns, stripStopWords, getSearchPort, updateFtsRecord, deleteFtsRecord } from './fts.ts'
 import { emit, timer } from '../logger.ts'
 import { OAUTH_DDL } from '../oauth/db.ts'
 import type { DatabasePort } from './ports.ts'
@@ -631,6 +631,9 @@ export async function insertRecord(
       await run(`INSERT INTO ${branch.tableName} (${colNames.join(', ')}) VALUES (${placeholders.join(', ')})`, values)
     }
   }
+
+  // Incrementally update FTS index for this record
+  await updateFtsRecord(collection, uri)
 }
 
 /** Extract branch data from a union value, handling wrapper properties */
@@ -645,6 +648,10 @@ function resolveBranchData(unionValue: any, branch: { wrapperField?: string }): 
 export async function deleteRecord(collection: string, uri: string): Promise<void> {
   const schema = schemas.get(collection)
   if (!schema) return
+
+  // Remove from FTS index before deleting the record data
+  await deleteFtsRecord(collection, uri)
+
   for (const child of schema.children) {
     await run(`DELETE FROM ${child.tableName} WHERE parent_uri = $1`, [uri])
   }

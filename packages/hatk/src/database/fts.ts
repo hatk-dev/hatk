@@ -1,4 +1,4 @@
-import { getSchema, runSQL, getSqlDialect } from './db.ts'
+import { getSchema, runSQL, getSqlDialect, querySQL } from './db.ts'
 import { getLexicon } from './schema.ts'
 import { emit, timer } from '../logger.ts'
 import type { SearchPort } from './ports.ts'
@@ -90,6 +90,9 @@ const lastRebuiltAt = new Map<string, string>()
 // Cache of search column metadata per collection, populated during buildFtsIndex
 const searchColumnCache = new Map<string, string[]>()
 
+// Cache of computed FTS schemas per collection (deterministic, so compute once)
+const ftsSchemaCache = new Map<string, { searchColNames: string[]; sourceQuery: string; safeName: string }>()
+
 export function getSearchColumns(collection: string): string[] {
   return searchColumnCache.get(collection) || []
 }
@@ -107,13 +110,11 @@ export function ftsTableName(collection: string): string {
 }
 
 /**
- * Build FTS index for a collection.
- * Creates a shadow table copy and indexes all TEXT NOT NULL columns
- * using Porter stemmer with English stopwords.
+ * Compute the FTS schema for a collection: search column names, source query, and safe table name.
  */
-export async function buildFtsIndex(collection: string): Promise<void> {
-  if (!searchPort) return // No FTS support for this adapter
-
+function computeFtsSchema(collection: string): { searchColNames: string[]; sourceQuery: string; safeName: string } {
+  const cached = ftsSchemaCache.get(collection)
+  if (cached) return cached
   const schema = getSchema(collection)
   if (!schema) throw new Error(`Unknown collection: ${collection}`)
 
@@ -178,17 +179,89 @@ export async function buildFtsIndex(collection: string): Promise<void> {
   selectExprs.push('r.handle')
   searchColNames.push('handle')
 
-  if (searchColNames.length === 0) {
-    return
-  }
-
   const safeName = ftsTableName(collection)
   const sourceQuery = `SELECT ${selectExprs.join(', ')} FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did`
 
-  await searchPort.buildIndex(safeName, sourceQuery, searchColNames)
+  const result = { searchColNames, sourceQuery, safeName }
+  ftsSchemaCache.set(collection, result)
+  return result
+}
 
+/**
+ * Build FTS index for a collection.
+ * Creates a shadow table copy and indexes all TEXT NOT NULL columns
+ * using Porter stemmer with English stopwords.
+ */
+export async function buildFtsIndex(collection: string): Promise<void> {
+  if (!searchPort) return // No FTS support for this adapter
+
+  const { searchColNames, sourceQuery, safeName } = computeFtsSchema(collection)
+  if (searchColNames.length === 0) return
+
+  // For incremental ports: skip rebuild if index already exists
+  if (searchPort.indexExists) {
+    const exists = await searchPort.indexExists(safeName)
+    if (exists) {
+      searchColumnCache.set(collection, searchColNames)
+      lastRebuiltAt.set(collection, new Date().toISOString())
+      return
+    }
+  }
+
+  await searchPort.buildIndex(safeName, sourceQuery, searchColNames)
   searchColumnCache.set(collection, searchColNames)
   lastRebuiltAt.set(collection, new Date().toISOString())
+}
+
+export async function buildFtsRow(
+  collection: string,
+  uri: string,
+): Promise<Record<string, string | null> | null> {
+  const { searchColNames, sourceQuery } = computeFtsSchema(collection)
+  if (searchColNames.length === 0) return null
+
+  // Append WHERE clause to filter for single record
+  const sql = sourceQuery + ' WHERE t.uri = $1'
+  const rows = await querySQL(sql, [uri])
+  if (!rows || rows.length === 0) return null
+
+  const row = rows[0] as Record<string, any>
+  const result: Record<string, string | null> = {}
+  for (const col of searchColNames) {
+    result[col] = row[col] != null ? String(row[col]) : null
+  }
+  return result
+}
+
+export async function updateFtsRecord(collection: string, uri: string): Promise<void> {
+  if (!searchPort || !searchPort.updateIndex) return
+
+  const searchCols = searchColumnCache.get(collection)
+  if (!searchCols || searchCols.length === 0) return
+
+  try {
+    const row = await buildFtsRow(collection, uri)
+    if (!row) return
+
+    const safeName = ftsTableName(collection)
+    await searchPort.updateIndex(safeName, uri, row, searchCols)
+  } catch (err) {
+    emit('fts', 'update_error', { collection, uri, error: (err as Error).message })
+  }
+}
+
+export async function deleteFtsRecord(collection: string, uri: string): Promise<void> {
+  if (!searchPort || !searchPort.deleteFromIndex) return
+
+  const searchCols = searchColumnCache.get(collection)
+  if (!searchCols || searchCols.length === 0) return
+
+  try {
+    const safeName = ftsTableName(collection)
+    await searchPort.deleteFromIndex(safeName, uri, searchCols)
+  } catch (err) {
+    emit('fts', 'delete_error', { collection, uri, error: (err as Error).message })
+  }
 }
 
 /**
