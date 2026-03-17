@@ -406,6 +406,20 @@ export async function listPendingRepos(): Promise<string[]> {
   return rows.map((r: any) => r.did)
 }
 
+export async function listActiveRepoDids(): Promise<string[]> {
+  const rows = await all(`SELECT did FROM _repos WHERE status = 'active'`)
+  return rows.map((r: any) => r.did)
+}
+
+export async function removeRepo(did: string): Promise<void> {
+  await run(`DELETE FROM _repos WHERE did = $1`, [did])
+}
+
+export async function getRepoHandle(did: string): Promise<string | null> {
+  const rows = await all(`SELECT handle FROM _repos WHERE did = $1`, [did])
+  return rows[0]?.handle ?? null
+}
+
 export async function listAllRepoStatuses(): Promise<Array<{ did: string; status: string }>> {
   return (await all(`SELECT did, status FROM _repos`)) as Array<{ did: string; status: string }>
 }
@@ -453,6 +467,50 @@ export async function getCollectionCounts(): Promise<Record<string, number>> {
     counts[collection] = Number(rows[0]?.count || 0)
   }
   return counts
+}
+
+export async function getRepoStatusCounts(): Promise<Record<string, number>> {
+  const rows = await all(`SELECT status, ${dialect.countAsInteger} as count FROM _repos GROUP BY status`)
+  const counts: Record<string, number> = {}
+  for (const row of rows) counts[row.status as string] = Number(row.count)
+  return counts
+}
+
+export async function getDatabaseSize(): Promise<Record<string, string>> {
+  if (dialect.supportsSequences) {
+    // DuckDB: pragma_database_size returns pre-formatted strings
+    const rows = await all('SELECT database_size, memory_usage, memory_limit FROM pragma_database_size()')
+    return (rows[0] as Record<string, string>) ?? {}
+  }
+  // SQLite: compute from page_count * page_size
+  const pages = await all('SELECT page_count FROM pragma_page_count()')
+  const sizes = await all('SELECT page_size FROM pragma_page_size()')
+  const pageCount = Number(pages[0]?.page_count ?? 0)
+  const pageSize = Number(sizes[0]?.page_size ?? 0)
+  const bytes = pageCount * pageSize
+  const mib = (bytes / 1024 / 1024).toFixed(1)
+  return { database_size: `${mib} MiB`, memory_usage: 'N/A', memory_limit: 'N/A' }
+}
+
+export async function getLabelCount(val: string): Promise<number> {
+  const rows = await all(`SELECT ${dialect.countAsInteger} as count FROM _labels WHERE val = $1`, [val])
+  return Number(rows[0]?.count || 0)
+}
+
+export async function deleteLabels(val: string): Promise<number> {
+  const count = await getLabelCount(val)
+  await run(`DELETE FROM _labels WHERE val = $1`, [val])
+  return count
+}
+
+export async function getRecentRecords(collection: string, limit: number): Promise<any[]> {
+  const schema = schemas.get(collection)
+  if (!schema) return []
+  const rows = await all(
+    `SELECT t.* FROM ${schema.tableName} t JOIN _repos r ON t.did = r.did WHERE t.indexed_at > r.backfilled_at ORDER BY t.indexed_at DESC LIMIT $1`,
+    [limit],
+  )
+  return rows
 }
 
 export async function getSchemaDump(): Promise<string> {

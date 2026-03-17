@@ -783,23 +783,6 @@
         font-size: 1rem;
       }
 
-      /* ── Schema ── */
-      .schema-pre {
-        font-family: var(--mono);
-        font-size: 0.8rem;
-        line-height: 1.6;
-        padding: 1rem;
-        margin: 0;
-        background: var(--bg-recessed);
-        border-radius: 0 0 6px 6px;
-        white-space: pre-wrap;
-        word-break: break-word;
-        color: var(--text);
-        overflow-x: auto;
-      }
-      .schema-section {
-        margin-bottom: 1.5rem;
-      }
       .loading {
         color: var(--text-3);
         font-size: 0.9375rem;
@@ -1220,7 +1203,6 @@
           <button class="tab active" data-tab="overview">Overview</button>
           <button class="tab" data-tab="repos">Repos</button>
           <button class="tab" data-tab="content">Content</button>
-          <button class="tab" data-tab="schema">Schema</button>
         </nav>
 
         <!-- Overview -->
@@ -1277,10 +1259,6 @@
           <div id="repos-results"><div class="loading">Loading</div></div>
         </div>
 
-        <!-- Schema -->
-        <div class="tab-panel" id="panel-schema">
-          <div id="schema-results"><div class="loading">Loading</div></div>
-        </div>
 
         <!-- Content -->
         <div class="tab-panel" id="panel-content">
@@ -1307,7 +1285,6 @@
           <button class="bnav-btn active" data-tab="overview">Overview</button>
           <button class="bnav-btn" data-tab="repos">Repos</button>
           <button class="bnav-btn" data-tab="content">Content</button>
-          <button class="bnav-btn" data-tab="schema">Schema</button>
         </div>
       </div>
     </div>
@@ -1490,7 +1467,6 @@
         document.getElementById(`panel-${tab}`).classList.add('active')
         if (tab === 'overview') loadOverview()
         if (tab === 'repos') loadRepos()
-        if (tab === 'schema') loadSchema()
         if (tab === 'content') loadContent()
         if (push) pushURL({ tab, status: '', q: '', offset: 0, cq: '' })
       }
@@ -1598,36 +1574,6 @@
           toast(e.message, 'error')
         }
       })
-
-      // ── Schema ──
-
-      async function loadSchema() {
-        const container = document.getElementById('schema-results')
-        try {
-          const data = await api('/admin/schema')
-          let html = ''
-
-          // Lexicons section
-          if (data.lexicons && data.lexicons.length) {
-            html += '<div class="schema-section"><div class="section-label">Lexicons</div>'
-            for (const lex of data.lexicons) {
-              html += `<div class="card" style="margin-bottom:0.5rem;"><div style="font-family:var(--mono);font-size:0.8rem;font-weight:600;padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);">${escapeHtml(lex.nsid)}</div><pre class="schema-pre">${escapeHtml(JSON.stringify(lex.lexicon, null, 2))}</pre></div>`
-            }
-            html += '</div>'
-          }
-
-          // DDL section
-          if (data.ddl) {
-            html += '<div class="schema-section"><div class="section-label">Tables (DuckDB DDL)</div>'
-            html += `<div class="card"><pre class="schema-pre">${escapeHtml(data.ddl)}</pre></div>`
-            html += '</div>'
-          }
-
-          container.innerHTML = html || '<div class="empty-state">No schema found</div>'
-        } catch (e) {
-          container.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`
-        }
-      }
 
       // ── Repos ──
 

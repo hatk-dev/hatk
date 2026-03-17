@@ -10,13 +10,18 @@ import {
   setRepoStatus,
   getRepoStatus,
   getRepoRetryInfo,
-  querySQL,
   queryLabelsForUris,
   insertLabels,
   searchAccounts,
   listReposPaginated,
   getCollectionCounts,
-  getSchemaDump,
+  getRepoStatusCounts,
+  getDatabaseSize,
+  deleteLabels,
+  getRecentRecords,
+  listActiveRepoDids,
+  removeRepo,
+  getRepoHandle,
   getPreferences,
   putPreference,
 } from './database/db.ts'
@@ -442,10 +447,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         if (denied) return denied
         const { val } = JSON.parse(await request.text())
         if (!val) return withCors(jsonError(400, 'Missing val', acceptEncoding))
-        const result = await querySQL(`SELECT COUNT(*)::INTEGER as count FROM _labels WHERE val = $1`, [val])
-        const count = Number(result[0]?.count || 0)
-        await querySQL(`DELETE FROM _labels WHERE val = $1`, [val])
-        return withCors(json({ deleted: count }, 200, acceptEncoding))
+        const deleted = await deleteLabels(val)
+        return withCors(json({ deleted }, 200, acceptEncoding))
       }
 
       // POST /admin/labels/negate — negate a label
@@ -497,12 +500,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           const allResults: any[] = []
           for (const col of collections) {
             try {
-              const schema = getSchema(col)
-              if (!schema) continue
-              const rows = await querySQL(
-                `SELECT t.* FROM ${schema.tableName} t JOIN _repos r ON t.did = r.did WHERE t.indexed_at > r.backfilled_at ORDER BY t.indexed_at DESC LIMIT $1`,
-                [limit + offset],
-              )
+              const rows = await getRecentRecords(col, limit + offset)
+              if (!rows.length) continue
               const uris = rows.map((r: any) => r.uri)
               const labelsMap = await queryLabelsForUris(uris)
               for (const rec of rows) {
@@ -585,13 +584,18 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         if (Array.isArray(dids) && dids.length > 0) {
           repoList = dids
         } else {
-          const rows = await querySQL(`SELECT did FROM _repos WHERE status = 'active'`)
-          repoList = rows.map((r: any) => r.did)
+          repoList = await listActiveRepoDids()
         }
         for (const did of repoList) {
           await setRepoStatus(did, 'pending')
         }
-        if (config.onResync) config.onResync()
+        if (config.onResync) {
+          config.onResync()
+        } else {
+          for (const did of repoList) {
+            triggerAutoBackfill(did)
+          }
+        }
         return withCors(json({ resyncing: repoList.length }, 200, acceptEncoding))
       }
 
@@ -602,7 +606,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         const { dids } = JSON.parse(await request.text())
         if (!Array.isArray(dids)) return withCors(jsonError(400, 'Missing dids array', acceptEncoding))
         for (const did of dids) {
-          await querySQL(`DELETE FROM _repos WHERE did = $1`, [did])
+          await removeRepo(did)
         }
         return withCors(json({ removed: dids.length }, 200, acceptEncoding))
       }
@@ -611,11 +615,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       if (url.pathname === '/admin/info') {
         const denied = requireAdmin(viewer, acceptEncoding)
         if (denied) return denied
-        const rows = await querySQL(`SELECT status, COUNT(*)::INTEGER as count FROM _repos GROUP BY status`)
-        const counts: Record<string, number> = {}
-        for (const row of rows) counts[row.status as string] = Number(row.count)
-        const sizeRows = await querySQL(`SELECT database_size, memory_usage, memory_limit FROM pragma_database_size()`)
-        const dbInfo = sizeRows[0] ?? {}
+        const counts = await getRepoStatusCounts()
+        const dbInfo = await getDatabaseSize()
         const collectionCounts = await getCollectionCounts()
         const mem = process.memoryUsage()
         const node = {
@@ -661,15 +662,6 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         const q = url.searchParams.get('q') || undefined
         const result = await listReposPaginated({ limit, offset, status, q })
         return withCors(json(result, 200, acceptEncoding))
-      }
-
-      // GET /admin/schema — full DuckDB DDL dump + lexicons
-      if (url.pathname === '/admin/schema') {
-        const denied = requireAdmin(viewer, acceptEncoding)
-        if (denied) return denied
-        const { getAllLexicons } = await import('./database/schema.ts')
-        const ddl = await getSchemaDump()
-        return withCors(json({ ddl, lexicons: getAllLexicons() }, 200, acceptEncoding))
       }
 
       // ── Public Repo Endpoints (used by hatk clients for auto-sync) ──
@@ -725,8 +717,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       if (url.pathname === '/__dev/login' && devMode && oauth) {
         const did = url.searchParams.get('did')
         if (!did) return withCors(jsonError(400, 'did required', acceptEncoding))
-        const handleRows = await querySQL('SELECT handle FROM _repos WHERE did = $1', [did])
-        const handle = handleRows[0]?.handle ?? did
+        const handle = await getRepoHandle(did) ?? did
         const cookieValue = await createSessionCookie({ did, handle })
         const secure = url.protocol === 'https:'
         return new Response(JSON.stringify({ ok: true }), {
@@ -794,8 +785,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           if (!code) return withCors(jsonError(400, 'Missing code', acceptEncoding))
           const result = await handleCallback(oauth, code, state, iss)
           const isSecure = requestOrigin.startsWith('https')
-          const handleRows = await querySQL('SELECT handle FROM _repos WHERE did = $1', [result.did])
-          const handle = handleRows[0]?.handle ?? result.did
+          const handle = await getRepoHandle(result.did) ?? result.did
           const cookie = await createSessionCookie({ did: result.did, handle })
           // Server-initiated login stores redirectUri as '/' — redirect cleanly without code/iss params
           const redirectTo = result.clientRedirectUri.startsWith('/?code=') ? '/' : result.clientRedirectUri
