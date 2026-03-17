@@ -113,7 +113,10 @@ export async function initLabels(labelsDir: string): Promise<void> {
 }
 
 /** Register a single label module from a scanned server/ module. */
-export function registerLabelModule(name: string, labelMod: { definition?: LabelDefinition; evaluate?: (ctx: LabelRuleContext) => Promise<string[]> }): void {
+export function registerLabelModule(
+  name: string,
+  labelMod: { definition?: LabelDefinition; evaluate?: (ctx: LabelRuleContext) => Promise<string[]> },
+): void {
   if (labelMod.definition) {
     labelDefs.push(labelMod.definition)
   }

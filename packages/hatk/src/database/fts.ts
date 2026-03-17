@@ -213,10 +213,7 @@ export async function buildFtsIndex(collection: string): Promise<void> {
   lastRebuiltAt.set(collection, new Date().toISOString())
 }
 
-export async function buildFtsRow(
-  collection: string,
-  uri: string,
-): Promise<Record<string, string | null> | null> {
+export async function buildFtsRow(collection: string, uri: string): Promise<Record<string, string | null> | null> {
   const { searchColNames, sourceQuery } = computeFtsSchema(collection)
   if (searchColNames.length === 0) return null
 

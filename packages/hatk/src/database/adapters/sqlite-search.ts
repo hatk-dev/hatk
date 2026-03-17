@@ -12,10 +12,10 @@ export class SQLiteSearchPort implements SearchPort {
   constructor(private port: DatabasePort) {}
 
   async indexExists(shadowTable: string): Promise<boolean> {
-    const rows = await this.port.query(
-      `SELECT 1 FROM sqlite_master WHERE type='table' AND name IN ($1, $2)`,
-      [shadowTable, `${shadowTable}_fts`],
-    )
+    const rows = await this.port.query(`SELECT 1 FROM sqlite_master WHERE type='table' AND name IN ($1, $2)`, [
+      shadowTable,
+      `${shadowTable}_fts`,
+    ])
     return rows.length >= 2
   }
 
@@ -25,10 +25,7 @@ export class SQLiteSearchPort implements SearchPort {
 
     // Create shadow data table from source query
     await this.port.execute(`CREATE TABLE ${shadowTable} AS ${sourceQuery}`, [])
-    await this.port.execute(
-      `CREATE UNIQUE INDEX IF NOT EXISTS ${shadowTable}_uri ON ${shadowTable}(uri)`,
-      [],
-    )
+    await this.port.execute(`CREATE UNIQUE INDEX IF NOT EXISTS ${shadowTable}_uri ON ${shadowTable}(uri)`, [])
 
     // Create FTS5 virtual table with external content pointing to shadow table
     const colList = searchColumns.join(', ')
@@ -82,16 +79,9 @@ export class SQLiteSearchPort implements SearchPort {
     await this.port.execute(`DELETE FROM ${shadowTable} WHERE uri = $1`, [uri])
   }
 
-  private async _deleteFromFts(
-    shadowTable: string,
-    uri: string,
-    searchColumns: string[],
-  ): Promise<void> {
+  private async _deleteFromFts(shadowTable: string, uri: string, searchColumns: string[]): Promise<void> {
     const colList = searchColumns.join(', ')
-    const rows = await this.port.query(
-      `SELECT rowid, uri, ${colList} FROM ${shadowTable} WHERE uri = $1`,
-      [uri],
-    )
+    const rows = await this.port.query(`SELECT rowid, uri, ${colList} FROM ${shadowTable} WHERE uri = $1`, [uri])
     if (rows.length === 0) return
 
     const old = rows[0] as any

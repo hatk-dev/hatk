@@ -36,9 +36,9 @@ Set the database path in `hatk.config.ts`:
 
 ```ts
 export default defineConfig({
-  databaseEngine: "sqlite",
-  database: process.env.NODE_ENV === "production" ? "/data/app.db" : "data/app.db",
-});
+  databaseEngine: 'sqlite',
+  database: process.env.NODE_ENV === 'production' ? '/data/app.db' : 'data/app.db',
+})
 ```
 
 ### Health checks
@@ -88,15 +88,15 @@ hatk auto-creates indexes on `indexed_at DESC`, `did`, child table `parent_uri`,
 
 ```ts
 // server/setup/create-indexes.ts
-import { defineSetup } from "$hatk";
+import { defineSetup } from '$hatk'
 
 export default defineSetup(async (ctx) => {
-  const { db } = ctx;
+  const { db } = ctx
   await db.run(
     `CREATE INDEX IF NOT EXISTS idx_plays_played_time
      ON "fm.teal.alpha.feed.play"(played_time DESC)`,
-  );
-});
+  )
+})
 ```
 
 Setup scripts run on every startup. `CREATE INDEX IF NOT EXISTS` makes them idempotent.
@@ -124,19 +124,19 @@ Use `EXPLAIN QUERY PLAN` via SSH to diagnose slow queries. Watch for:
 For expensive aggregation queries (trending lists, category counts), use stale-while-revalidate caching:
 
 ```ts
-let cache: { data: any; expires: number } | null = null;
-const TTL = 5 * 60 * 1000;
+let cache: { data: any; expires: number } | null = null
+const TTL = 5 * 60 * 1000
 
 async function refresh(db) {
-  const rows = await db.query(`...`);
-  cache = { data: rows, expires: Date.now() + TTL };
-  return rows;
+  const rows = await db.query(`...`)
+  cache = { data: rows, expires: Date.now() + TTL }
+  return rows
 }
 
 // In handler:
 if (cache) {
-  if (Date.now() >= cache.expires) refresh(db); // background refresh
-  return ok(cache.data); // serve stale immediately
+  if (Date.now() >= cache.expires) refresh(db) // background refresh
+  return ok(cache.data) // serve stale immediately
 }
-return ok(await refresh(db)); // first request waits
+return ok(await refresh(db)) // first request waits
 ```

@@ -52,7 +52,12 @@ export interface SearchPort {
   buildIndex(shadowTable: string, sourceQuery: string, searchColumns: string[]): Promise<void>
 
   /** Incrementally update a single record in the FTS index */
-  updateIndex?(shadowTable: string, uri: string, row: Record<string, string | null>, searchColumns: string[]): Promise<void>
+  updateIndex?(
+    shadowTable: string,
+    uri: string,
+    row: Record<string, string | null>,
+    searchColumns: string[],
+  ): Promise<void>
 
   /** Remove a single record from the FTS index */
   deleteFromIndex?(shadowTable: string, uri: string, searchColumns: string[]): Promise<void>

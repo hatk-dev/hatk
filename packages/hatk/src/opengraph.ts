@@ -56,10 +56,7 @@ export interface OpengraphResult {
   meta?: { title?: string; description?: string }
 }
 
-export function defineOG(
-  path: string,
-  generate: (ctx: OpengraphContext) => Promise<OpengraphResult>,
-) {
+export function defineOG(path: string, generate: (ctx: OpengraphContext) => Promise<OpengraphResult>) {
   return { __type: 'og' as const, path, generate }
 }
 
@@ -198,7 +195,10 @@ export async function initOpengraph(ogDir: string): Promise<void> {
 }
 
 /** Register a single OG handler from a scanned server/ module. */
-export function registerOgHandler(ogMod: { path: string; generate: (ctx: OpengraphContext) => Promise<OpengraphResult> }): void {
+export function registerOgHandler(ogMod: {
+  path: string
+  generate: (ctx: OpengraphContext) => Promise<OpengraphResult>
+}): void {
   const { pattern, paramNames } = compilePath(ogMod.path)
   const name = ogMod.path.replace(/^\//, '').replace(/\//g, '-').replace(/:/g, '')
 

@@ -63,7 +63,13 @@ export async function initServer(serverDir: string, opts?: { skipSetup?: boolean
   }
 
   log(`[server] Initialized from server/ directory:`)
-  log(`  Feeds: ${listFeeds().map((f) => f.name).join(', ') || 'none'}`)
+  log(
+    `  Feeds: ${
+      listFeeds()
+        .map((f) => f.name)
+        .join(', ') || 'none'
+    }`,
+  )
   log(`  XRPC: ${listXrpc().join(', ') || 'none'}`)
   log(`  Labels: ${getLabelDefinitions().length} definitions`)
 }

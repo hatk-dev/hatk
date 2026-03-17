@@ -15,7 +15,7 @@ export function json(data: unknown, status = 200, acceptEncoding?: string | null
       headers: {
         'Content-Type': 'application/json',
         'Content-Encoding': 'gzip',
-        'Vary': 'Accept-Encoding',
+        Vary: 'Accept-Encoding',
         ...(status === 200 ? { 'Cache-Control': 'no-store' } : {}),
       },
     })

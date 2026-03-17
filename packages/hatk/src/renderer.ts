@@ -44,11 +44,7 @@ export function getSSRManifest(): SSRManifest | null {
  * @param ogMeta - Optional OG meta tags to inject
  * @returns Assembled HTML string, or null if no renderer is registered
  */
-export async function renderPage(
-  template: string,
-  request: Request,
-  ogMeta?: string | null,
-): Promise<string | null> {
+export async function renderPage(template: string, request: Request, ogMeta?: string | null): Promise<string | null> {
   if (!renderer) return null
 
   const manifest = ssrManifest || { getPreloadTags: () => '' }

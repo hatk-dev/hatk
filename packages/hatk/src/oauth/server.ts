@@ -325,10 +325,7 @@ export function buildAuthorizeRedirect(config: OAuthConfig, request: any): strin
 
 // --- Server-initiated login (no DPoP required from browser) ---
 
-export async function serverLogin(
-  config: OAuthConfig,
-  handle: string,
-): Promise<string> {
+export async function serverLogin(config: OAuthConfig, handle: string): Promise<string> {
   // Resolve handle to DID
   let did = handle
   if (!did.startsWith('did:')) {
@@ -345,8 +342,7 @@ export async function serverLogin(
   const pdsState = randomToken()
 
   // PAR to the PDS
-  const parEndpoint =
-    discovery.authServerMetadata.pushed_authorization_request_endpoint || `${pdsAuthServer}/oauth/par`
+  const parEndpoint = discovery.authServerMetadata.pushed_authorization_request_endpoint || `${pdsAuthServer}/oauth/par`
   const serverDpopProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', parEndpoint)
 
   const scope = config.scopes?.join(' ') || 'atproto transition:generic'
@@ -374,7 +370,14 @@ export async function serverLogin(
     if (errBody.error === 'use_dpop_nonce') {
       const nonce = pdsParRes.headers.get('DPoP-Nonce')
       if (nonce) {
-        const retryProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', parEndpoint, undefined, nonce)
+        const retryProof = await createDpopProof(
+          serverPrivateJwk,
+          serverPublicJwk,
+          'POST',
+          parEndpoint,
+          undefined,
+          nonce,
+        )
         const retryRes = await fetch(parEndpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded', DPoP: retryProof },

@@ -45,8 +45,8 @@ const result = await api.upload(file)
 
 ## Built-in endpoints
 
-| Endpoint                              | Type      | Auth | Description                     |
-| ------------------------------------- | --------- | ---- | ------------------------------- |
+| Endpoint                             | Type      | Auth | Description                     |
+| ------------------------------------ | --------- | ---- | ------------------------------- |
 | [`getRecord`](/api/records)          | Query     | No   | Fetch a single record by AT URI |
 | [`getRecords`](/api/records)         | Query     | No   | List records with filters       |
 | [`createRecord`](/api/records)       | Procedure | Yes  | Create a record via user's PDS  |
@@ -59,4 +59,4 @@ const result = await api.upload(file)
 | [`getPreferences`](/api/preferences) | Query     | Yes  | Get user preferences            |
 | [`putPreference`](/api/preferences)  | Procedure | Yes  | Set a preference                |
 | [`describeLabels`](/api/labels)      | Query     | No   | List label definitions          |
-| `describeCollections`                 | Query     | No   | List indexed collections        |
+| `describeCollections`                | Query     | No   | List indexed collections        |

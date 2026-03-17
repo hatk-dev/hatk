@@ -59,8 +59,6 @@ export default defineConfig({
       },
     ],
 
-    socialLinks: [
-      { icon: 'github', link: 'https://github.com/bigmoves/atconf-workshop' },
-    ],
+    socialLinks: [{ icon: 'github', link: 'https://github.com/bigmoves/atconf-workshop' }],
   },
 })
