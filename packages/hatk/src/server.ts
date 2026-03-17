@@ -586,10 +586,15 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         } else {
           repoList = await listActiveRepoDids()
         }
+        const isTargeted = Array.isArray(dids) && dids.length > 0
         for (const did of repoList) {
           await setRepoStatus(did, 'pending')
         }
-        if (config.onResync) {
+        if (isTargeted) {
+          for (const did of repoList) {
+            triggerAutoBackfill(did)
+          }
+        } else if (config.onResync) {
           config.onResync()
         } else {
           for (const did of repoList) {
