@@ -2,13 +2,11 @@
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { registerHatkResolveHook } from './resolve-hatk.ts'
-import { pathToFileURL } from 'node:url'
-import { registerHooks } from 'node:module'
 import { log } from './logger.ts'
 import { loadConfig } from './config.ts'
 import { loadLexicons, storeLexicons, discoverCollections, buildSchemas } from './database/schema.ts'
 import { discoverViews } from './views.ts'
-import { initDatabase, getCursor, querySQL, getSqlDialect, getSchemaDump, migrateSchema, getDatabasePort } from './database/db.ts'
+import { initDatabase, getCursor, querySQL, getSqlDialect, getSchemaDump, migrateSchema } from './database/db.ts'
 import { createAdapter } from './database/adapter-factory.ts'
 import { getDialect } from './database/dialect.ts'
 import { setSearchPort } from './database/fts.ts'
@@ -110,7 +108,13 @@ if (existsSync(serverDir)) {
   await initSetup(resolve(configDir, 'setup'))
   await loadOnLoginHook(resolve(configDir, 'hooks'))
   await initFeeds(resolve(configDir, 'feeds'))
-  log(`[main] Feeds initialized: ${listFeeds().map((f) => f.name).join(', ') || 'none'}`)
+  log(
+    `[main] Feeds initialized: ${
+      listFeeds()
+        .map((f) => f.name)
+        .join(', ') || 'none'
+    }`,
+  )
   await initXrpc(resolve(configDir, 'xrpc'))
   log(`[main] XRPC handlers initialized: ${listXrpc().join(', ') || 'none'}`)
   await initOpengraph(resolve(configDir, 'og'))
@@ -193,7 +197,7 @@ const handler = createHandler({
   onResync: runBackfillAndRestart,
 })
 
-// Expose server bridge on globalThis so SvelteKit SSR can call XRPC handlers directly
+// Expose server bridge on globalThis so SvelteKit SSR can call XRPC handlers directly.
 ;(globalThis as any).__hatk_callXrpc = callXrpc
 ;(globalThis as any).__hatk_parseSessionCookie = parseSessionCookie
 ;(globalThis as any).__hatk_sessionCookieName = getSessionCookieName()

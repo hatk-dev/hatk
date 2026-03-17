@@ -73,7 +73,7 @@ export function hatk(opts?: { port?: number }): Plugin {
 
     // Rewrite $hatk imports in source code so SSR module runners can resolve them.
     // vite-plus's fetchModule bypasses resolve.alias for bare imports.
-    transform(code: string, id: string) {
+    transform(code: string, _id: string) {
       if (!code.includes('$hatk')) return
       const hatk = resolve('hatk.generated.ts')
       const hatkClient = resolve('hatk.generated.client.ts')
@@ -87,7 +87,7 @@ export function hatk(opts?: { port?: number }): Plugin {
         resolve: {
           alias: {
             '$hatk/client': resolve('hatk.generated.client.ts'),
-            '$hatk': resolve('hatk.generated.ts'),
+            $hatk: resolve('hatk.generated.ts'),
           },
         },
         environments: {
@@ -154,7 +154,8 @@ export function hatk(opts?: { port?: number }): Plugin {
       ;(globalThis as any).__hatk_callXrpc = mod.callXrpc
 
       // Capture cookie parser and name for SSR viewer resolution
-      const ssrParseSessionCookie: ((request: Request) => Promise<{ did: string } | null>) | null = mod.parseSessionCookie ?? null
+      const ssrParseSessionCookie: ((request: Request) => Promise<{ did: string } | null>) | null =
+        mod.parseSessionCookie ?? null
       ;(globalThis as any).__hatk_parseSessionCookie = ssrParseSessionCookie
       ;(globalThis as any).__hatk_sessionCookieName = mod.getSessionCookieName?.() ?? '__hatk_session'
 
@@ -263,11 +264,13 @@ export function hatk(opts?: { port?: number }): Plugin {
         if (!reloadTimer) {
           reloadTimer = setTimeout(() => {
             reloadTimer = null
-            reloadServer!().then(() => {
-              console.log('[hatk] Server handlers reloaded')
-            }).catch((err: any) => {
-              console.error('[hatk] Failed to reload server handlers:', err.message)
-            })
+            reloadServer!()
+              .then(() => {
+                console.log('[hatk] Server handlers reloaded')
+              })
+              .catch((err: any) => {
+                console.error('[hatk] Failed to reload server handlers:', err.message)
+              })
           }, 50)
         }
       }

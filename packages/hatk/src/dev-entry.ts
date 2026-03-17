@@ -100,7 +100,8 @@ runBackfill({
   plcUrl: config.plc,
   collections: collectionSet,
   config: config.backfill,
-}).then(() => rebuildAllIndexes(Array.from(collectionSet)))
+})
+  .then(() => rebuildAllIndexes(Array.from(collectionSet)))
   .catch((err) => console.error('[backfill]', err.message))
 
 // Export the handler for Vite middleware

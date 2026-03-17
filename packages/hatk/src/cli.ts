@@ -1410,8 +1410,7 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
 `
   }
 
-  writeFileSync(join(dir, 'AGENTS.md'), agentsMd,
-  )
+  writeFileSync(join(dir, 'AGENTS.md'), agentsMd)
 
   console.log(`Created ${name}/`)
   console.log(`  hatk.config.ts`)
@@ -1778,14 +1777,15 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     const typeExports: string[] = []
     for (const { nsid, defType } of entries) {
       if (!defType) continue
-      if (nsid === 'dev.hatk.createRecord' || nsid === 'dev.hatk.deleteRecord' || nsid === 'dev.hatk.putRecord') continue
+      if (nsid === 'dev.hatk.createRecord' || nsid === 'dev.hatk.deleteRecord' || nsid === 'dev.hatk.putRecord')
+        continue
       typeExports.push(capitalize(varNames.get(nsid)!))
     }
     if (recordEntries.length > 0) {
       typeExports.push('RecordRegistry', 'CreateRecord', 'DeleteRecord', 'PutRecord')
     }
     // Named defs (views, objects) — collect from emittedDefNames minus main types
-    const mainTypeNames = new Set(entries.filter(e => e.defType).map(e => capitalize(varNames.get(e.nsid)!)))
+    const mainTypeNames = new Set(entries.filter((e) => e.defType).map((e) => capitalize(varNames.get(e.nsid)!)))
     for (const name of emittedDefNames) {
       if (!mainTypeNames.has(name) && !typeExports.includes(name)) {
         typeExports.push(name)
@@ -1799,10 +1799,10 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     // SSR: uses globalThis.__hatk_callXrpc bridge (direct handler invocation)
     // Client: fetches via HTTP (GET for queries, POST for procedures, raw POST for blobs)
     if (procedureNsids.length > 0) {
-      clientOut += `\nconst _procedures = new Set([${procedureNsids.map(n => `'${n}'`).join(', ')}])\n`
+      clientOut += `\nconst _procedures = new Set([${procedureNsids.map((n) => `'${n}'`).join(', ')}])\n`
     }
     if (blobInputNsids.length > 0) {
-      clientOut += `const _blobInputs = new Set([${blobInputNsids.map(n => `'${n}'`).join(', ')}])\n`
+      clientOut += `const _blobInputs = new Set([${blobInputNsids.map((n) => `'${n}'`).join(', ')}])\n`
     }
 
     clientOut += `\ntype CallArg<K extends keyof XrpcSchema> =\n`
@@ -1840,6 +1840,7 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     if (procedureNsids.length > 0) {
       clientOut += `  if (_procedures.has(nsid)) {\n`
       clientOut += `    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(arg) })\n`
+      clientOut += `    if (res.status === 401) { window.location.href = '/oauth/login'; return new Promise(() => {}) as any }\n`
       clientOut += `    if (!res.ok) throw new Error(\`XRPC \${nsid} failed: \${res.status}\`)\n`
       clientOut += `    return res.json() as Promise<OutputOf<K>>\n`
       clientOut += `  }\n`
@@ -1848,37 +1849,13 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     clientOut += `    if (v != null) url.searchParams.set(k, String(v))\n`
     clientOut += `  }\n`
     clientOut += `  const res = await fetch(url)\n`
+    clientOut += `  if (res.status === 401) { window.location.href = '/oauth/login'; return new Promise(() => {}) as any }\n`
     clientOut += `  if (!res.ok) throw new Error(\`XRPC \${nsid} failed: \${res.status}\`)\n`
     clientOut += `  return res.json() as Promise<OutputOf<K>>\n`
     clientOut += `}\n`
 
-    // getViewer — async, resolves from cookies on server via getRequestEvent()
-    clientOut += `\nexport async function getViewer(): Promise<{ did: string } | null> {\n`
-    clientOut += `  if (typeof window === 'undefined') {\n`
-    clientOut += `    try {\n`
-    clientOut += `      const parse = (globalThis as any).__hatk_parseSessionCookie\n`
-    clientOut += `      if (parse) {\n`
-    clientOut += `        const { getRequestEvent } = await import('$app/server')\n`
-    clientOut += `        const event = getRequestEvent()\n`
-    clientOut += `        const cookieName = (globalThis as any).__hatk_sessionCookieName ?? '__hatk_session'\n`
-    clientOut += `        const cookieValue = event.cookies.get(cookieName)\n`
-    clientOut += `        if (cookieValue) {\n`
-    clientOut += `          const request = new Request('http://localhost', {\n`
-    clientOut += `            headers: { cookie: \`\${cookieName}=\${cookieValue}\` },\n`
-    clientOut += `          })\n`
-    clientOut += `          return parse(request)\n`
-    clientOut += `        }\n`
-    clientOut += `      }\n`
-    clientOut += `    } catch {}\n`
-    clientOut += `    return (globalThis as any).__hatk_viewer ?? null\n`
-    clientOut += `  }\n`
-    clientOut += `  try {\n`
-    clientOut += `    const mod = (globalThis as any).__hatk_auth\n`
-    clientOut += `    if (mod?.viewerDid) {\n`
-    clientOut += `      const did = mod.viewerDid()\n`
-    clientOut += `      if (did) return { did }\n`
-    clientOut += `    }\n`
-    clientOut += `  } catch {}\n`
+    // getViewer — returns the viewer set by layout load (server) or $effect (client)
+    clientOut += `\nexport function getViewer(): { did: string; handle: string } | null {\n`
     clientOut += `  return (globalThis as any).__hatk_viewer ?? null\n`
     clientOut += `}\n`
 

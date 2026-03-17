@@ -1,7 +1,7 @@
 // Shared PDS proxy functions — used by both HTTP route handlers and XRPC handlers.
 
 import type { OAuthConfig } from './config.ts'
-import { getSession, getServerKey } from './oauth/db.ts'
+import { getSession, getServerKey, deleteSession } from './oauth/db.ts'
 import { createDpopProof } from './oauth/dpop.ts'
 import { refreshPdsSession } from './oauth/server.ts'
 import { validateRecord } from '@bigmoves/lexicon'
@@ -10,8 +10,17 @@ import { insertRecord, deleteRecord as dbDeleteRecord } from './database/db.ts'
 import { emit } from './logger.ts'
 
 export class ProxyError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
     super(message)
+  }
+}
+
+export class ScopeMissingProxyError extends ProxyError {
+  constructor() {
+    super(401, 'ScopeMissingError')
   }
 }
 
@@ -48,7 +57,13 @@ async function withDpopRetry(
     }
   }
 
-  // Step 2: handle expired PDS token — refresh and retry
+  // Step 2: handle insufficient scope — clear session so user re-authenticates with updated scopes
+  if (result.body.error === 'ScopeMissingError') {
+    await deleteSession(session.did)
+    throw new ScopeMissingProxyError()
+  }
+
+  // Step 3: handle expired PDS token — refresh and retry
   if (result.body.error === 'invalid_token') {
     const refreshed = await refreshPdsSession(oauthConfig, session)
     if (refreshed) {
@@ -130,7 +145,10 @@ export async function pdsCreateRecord(
 ): Promise<{ uri?: string; cid?: string }> {
   const validationError = validateRecord(getLexiconArray(), input.collection, input.record)
   if (validationError) {
-    throw new ProxyError(400, `InvalidRecord: ${validationError.path ? validationError.path + ': ' : ''}${validationError.message}`)
+    throw new ProxyError(
+      400,
+      `InvalidRecord: ${validationError.path ? validationError.path + ': ' : ''}${validationError.message}`,
+    )
   }
 
   const session = await getSession(viewer.did)
@@ -150,7 +168,10 @@ export async function pdsCreateRecord(
   try {
     await insertRecord(input.collection, String(pdsRes.body.uri), String(pdsRes.body.cid), viewer.did, input.record)
   } catch (err: unknown) {
-    emit('pds-proxy', 'local_index_error', { op: 'createRecord', error: err instanceof Error ? err.message : String(err) })
+    emit('pds-proxy', 'local_index_error', {
+      op: 'createRecord',
+      error: err instanceof Error ? err.message : String(err),
+    })
   }
 
   return pdsRes.body as { uri?: string; cid?: string }
@@ -178,7 +199,10 @@ export async function pdsDeleteRecord(
     const uri = `at://${viewer.did}/${input.collection}/${input.rkey}`
     await dbDeleteRecord(input.collection, uri)
   } catch (err: unknown) {
-    emit('pds-proxy', 'local_index_error', { op: 'deleteRecord', error: err instanceof Error ? err.message : String(err) })
+    emit('pds-proxy', 'local_index_error', {
+      op: 'deleteRecord',
+      error: err instanceof Error ? err.message : String(err),
+    })
   }
 
   return pdsRes.body
@@ -191,7 +215,10 @@ export async function pdsPutRecord(
 ): Promise<{ uri?: string; cid?: string }> {
   const validationError = validateRecord(getLexiconArray(), input.collection, input.record)
   if (validationError) {
-    throw new ProxyError(400, `InvalidRecord: ${validationError.path ? validationError.path + ': ' : ''}${validationError.message}`)
+    throw new ProxyError(
+      400,
+      `InvalidRecord: ${validationError.path ? validationError.path + ': ' : ''}${validationError.message}`,
+    )
   }
 
   const session = await getSession(viewer.did)

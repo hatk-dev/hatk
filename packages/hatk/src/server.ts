@@ -26,7 +26,7 @@ import { resolveRecords } from './hydrate.ts'
 import { handleOpengraphRequest, buildOgMeta } from './opengraph.ts'
 import { getLabelDefinitions, rescanLabels } from './labels.ts'
 import { triggerAutoBackfill } from './indexer.ts'
-import { log, emit, timer } from './logger.ts'
+import { emit, timer } from './logger.ts'
 import {
   getAuthServerMetadata,
   getProtectedResourceMetadata,
@@ -39,13 +39,31 @@ import {
   handleToken,
   authenticate,
 } from './oauth/server.ts'
-import { createSessionCookie, sessionCookieHeader, clearSessionCookieHeader, parseSessionCookie } from './oauth/session.ts'
+import {
+  createSessionCookie,
+  sessionCookieHeader,
+  clearSessionCookieHeader,
+  parseSessionCookie,
+} from './oauth/session.ts'
 import { getOAuthRequest } from './oauth/db.ts'
 import type { OAuthConfig } from './config.ts'
-import { pdsCreateRecord, pdsDeleteRecord, pdsPutRecord, pdsUploadBlob, ProxyError } from './pds-proxy.ts'
+import {
+  pdsCreateRecord,
+  pdsDeleteRecord,
+  pdsPutRecord,
+  pdsUploadBlob,
+  ProxyError,
+  ScopeMissingProxyError,
+} from './pds-proxy.ts'
 import { json, jsonError, cors, withCors, file, notFound } from './response.ts'
 import { serve } from './adapter.ts'
 import { renderPage } from './renderer.ts'
+
+function scopeMissingResponse(acceptEncoding: string | null): Response {
+  const res = withCors(jsonError(401, 'ScopeMissingError', acceptEncoding))
+  res.headers.append('Set-Cookie', clearSessionCookieHeader())
+  return res
+}
 
 const MIME: Record<string, string> = {
   '.html': 'text/html',
@@ -201,7 +219,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
   function requireAdmin(viewer: { did: string } | null, acceptEncoding: string | null): Response | null {
     if (!viewer) return withCors(jsonError(401, 'Authentication required', acceptEncoding))
-    if (!devMode && !admins.includes(viewer.did)) return withCors(jsonError(403, 'Admin access required', acceptEncoding))
+    if (!devMode && !admins.includes(viewer.did))
+      return withCors(jsonError(403, 'Admin access required', acceptEncoding))
     return null // auth OK
   }
 
@@ -220,7 +239,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
     const requestOrigin = `${request.headers.get('x-forwarded-proto') || 'http'}://${request.headers.get('host') || 'localhost'}`
 
     // Authenticate viewer (optional — unauthenticated requests still work)
-    let viewer: { did: string } | null = config.resolveViewer?.(request) ?? null
+    let viewer: { did: string; handle?: string } | null = config.resolveViewer?.(request) ?? null
     if (!viewer && oauth) {
       try {
         viewer = await authenticate(
@@ -361,7 +380,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       if (url.pathname === coreXrpc('putPreference') && request.method === 'POST') {
         if (!viewer) return withCors(jsonError(401, 'Authentication required', acceptEncoding))
         const body = JSON.parse(await request.text())
-        if (!body.key || typeof body.key !== 'string') return withCors(jsonError(400, 'Missing or invalid key', acceptEncoding))
+        if (!body.key || typeof body.key !== 'string')
+          return withCors(jsonError(400, 'Missing or invalid key', acceptEncoding))
         if (body.value === undefined) return withCors(jsonError(400, 'Missing value', acceptEncoding))
         await putPreference(viewer.did, body.key, body.value)
         return withCors(json({ success: true }, 200, acceptEncoding))
@@ -371,7 +391,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
       // POST /admin/repos/add — enqueue DIDs for backfill
       if (url.pathname === '/admin/repos/add' && request.method === 'POST') {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         const { dids } = JSON.parse(await request.text())
         if (!Array.isArray(dids)) return withCors(jsonError(400, 'Missing dids array', acceptEncoding))
         for (const did of dids) {
@@ -383,7 +404,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
       // POST /admin/labels/rescan — retroactively apply label rules
       if (url.pathname === '/admin/labels/rescan' && request.method === 'POST') {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         const result = await rescanLabels(collections)
         return withCors(json(result, 200, acceptEncoding))
       }
@@ -392,19 +414,22 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
       // GET /admin/whoami — check if current viewer is admin
       if (url.pathname === '/admin/whoami') {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         return withCors(json({ did: viewer!.did, admin: true }, 200, acceptEncoding))
       }
 
       // GET /admin/labels/definitions — get available label definitions
       if (url.pathname === '/admin/labels/definitions') {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         return withCors(json({ definitions: getLabelDefinitions() }, 200, acceptEncoding))
       }
 
       // POST /admin/labels — apply a label
       if (url.pathname === '/admin/labels' && request.method === 'POST') {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         const { uri, val } = JSON.parse(await request.text())
         if (!uri || !val) return withCors(jsonError(400, 'Missing uri or val', acceptEncoding))
         await insertLabels([{ src: 'admin', uri, val }])
@@ -413,7 +438,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
       // POST /admin/labels/reset — delete all labels of a given type
       if (url.pathname === '/admin/labels/reset' && request.method === 'POST') {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         const { val } = JSON.parse(await request.text())
         if (!val) return withCors(jsonError(400, 'Missing val', acceptEncoding))
         const result = await querySQL(`SELECT COUNT(*)::INTEGER as count FROM _labels WHERE val = $1`, [val])
@@ -424,7 +450,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
       // POST /admin/labels/negate — negate a label
       if (url.pathname === '/admin/labels/negate' && request.method === 'POST') {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         const { uri, val } = JSON.parse(await request.text())
         if (!uri || !val) return withCors(jsonError(400, 'Missing uri or val', acceptEncoding))
         await insertLabels([{ src: 'admin', uri, val, neg: true }])
@@ -433,7 +460,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
       // POST /admin/takedown — takedown an account
       if (url.pathname === '/admin/takedown' && request.method === 'POST') {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         const { did } = JSON.parse(await request.text())
         if (!did) return withCors(jsonError(400, 'Missing did', acceptEncoding))
         await setRepoStatus(did, 'takendown')
@@ -442,7 +470,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
       // POST /admin/reverse-takedown — reverse a takedown
       if (url.pathname === '/admin/reverse-takedown' && request.method === 'POST') {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         const { did } = JSON.parse(await request.text())
         if (!did) return withCors(jsonError(400, 'Missing did', acceptEncoding))
         await setRepoStatus(did, 'active')
@@ -451,7 +480,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
       // GET /admin/search — search records or accounts
       if (url.pathname === '/admin/search') {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         const q = url.searchParams.get('q') || ''
         const type = url.searchParams.get('type') || 'records'
         const limit = parseInt(url.searchParams.get('limit') || '20')
@@ -494,9 +524,15 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           const rec = await getRecordByUri(q)
           if (rec) {
             const labelsMap = await queryLabelsForUris([rec.uri])
-            return withCors(json({
-              records: [{ ...reshapeRow(rec, rec?.__childData), labels: labelsMap.get(rec.uri) || [] }],
-            }, 200, acceptEncoding))
+            return withCors(
+              json(
+                {
+                  records: [{ ...reshapeRow(rec, rec?.__childData), labels: labelsMap.get(rec.uri) || [] }],
+                },
+                200,
+                acceptEncoding,
+              ),
+            )
           } else {
             return withCors(json({ records: [] }, 200, acceptEncoding))
           }
@@ -541,7 +577,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
       // POST /admin/repos/resync — re-download repos
       if (url.pathname === '/admin/repos/resync' && request.method === 'POST') {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         const bodyText = await request.text()
         const { dids } = bodyText ? JSON.parse(bodyText) : ({} as { dids?: string[] })
         let repoList: string[]
@@ -560,7 +597,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
       // POST /admin/repos/remove — remove DIDs from tracking
       if (url.pathname === '/admin/repos/remove' && request.method === 'POST') {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         const { dids } = JSON.parse(await request.text())
         if (!Array.isArray(dids)) return withCors(jsonError(400, 'Missing dids array', acceptEncoding))
         for (const did of dids) {
@@ -571,7 +609,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
       // GET /admin/info — aggregate status + db size + collection counts
       if (url.pathname === '/admin/info') {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         const rows = await querySQL(`SELECT status, COUNT(*)::INTEGER as count FROM _repos GROUP BY status`)
         const counts: Record<string, number> = {}
         for (const row of rows) counts[row.status as string] = Number(row.count)
@@ -585,27 +624,37 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           heapTotal: `${(mem.heapTotal / 1024 / 1024).toFixed(1)} MiB`,
           external: `${(mem.external / 1024 / 1024).toFixed(1)} MiB`,
         }
-        return withCors(json({ repos: counts, duckdb: dbInfo, node, collections: collectionCounts }, 200, acceptEncoding))
+        return withCors(
+          json({ repos: counts, duckdb: dbInfo, node, collections: collectionCounts }, 200, acceptEncoding),
+        )
       }
 
       // GET /admin/info/:did — repo status info
       if (url.pathname.startsWith('/admin/info/did:')) {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         const did = url.pathname.slice('/admin/info/'.length)
         const status = await getRepoStatus(did)
         if (!status) return withCors(jsonError(404, 'Repo not found', acceptEncoding))
         const retryInfo = await getRepoRetryInfo(did)
-        return withCors(json({
-          did,
-          status,
-          retry_count: retryInfo?.retryCount ?? 0,
-          retry_after: retryInfo?.retryAfter ?? 0,
-        }, 200, acceptEncoding))
+        return withCors(
+          json(
+            {
+              did,
+              status,
+              retry_count: retryInfo?.retryCount ?? 0,
+              retry_after: retryInfo?.retryAfter ?? 0,
+            },
+            200,
+            acceptEncoding,
+          ),
+        )
       }
 
       // GET /admin/repos — paginated repo listing
       if (url.pathname === '/admin/repos' && request.method === 'GET') {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         const limit = parseInt(url.searchParams.get('limit') || '50')
         const offset = parseInt(url.searchParams.get('offset') || '0')
         const status = url.searchParams.get('status') || undefined
@@ -616,7 +665,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
       // GET /admin/schema — full DuckDB DDL dump + lexicons
       if (url.pathname === '/admin/schema') {
-        const denied = requireAdmin(viewer, acceptEncoding); if (denied) return denied
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
         const { getAllLexicons } = await import('./database/schema.ts')
         const ddl = await getSchemaDump()
         return withCors(json({ ddl, lexicons: getAllLexicons() }, 200, acceptEncoding))
@@ -641,12 +691,18 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         const status = await getRepoStatus(did)
         if (!status) return withCors(jsonError(404, 'Repo not found', acceptEncoding))
         const retryInfo = await getRepoRetryInfo(did)
-        return withCors(json({
-          did,
-          status,
-          retry_count: retryInfo?.retryCount ?? 0,
-          retry_after: retryInfo?.retryAfter ?? 0,
-        }, 200, acceptEncoding))
+        return withCors(
+          json(
+            {
+              did,
+              status,
+              retry_count: retryInfo?.retryCount ?? 0,
+              retry_after: retryInfo?.retryAfter ?? 0,
+            },
+            200,
+            acceptEncoding,
+          ),
+        )
       }
 
       // --- OAuth Endpoints ---
@@ -669,7 +725,9 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       if (url.pathname === '/__dev/login' && devMode && oauth) {
         const did = url.searchParams.get('did')
         if (!did) return withCors(jsonError(400, 'did required', acceptEncoding))
-        const cookieValue = await createSessionCookie(did)
+        const handleRows = await querySQL('SELECT handle FROM _repos WHERE did = $1', [did])
+        const handle = handleRows[0]?.handle ?? did
+        const cookieValue = await createSessionCookie({ did, handle })
         const secure = url.protocol === 'https:'
         return new Response(JSON.stringify({ ok: true }), {
           status: 200,
@@ -686,7 +744,10 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         if (!handle) return withCors(jsonError(400, 'handle required', acceptEncoding))
         try {
           const redirectUrl = await serverLogin(oauth, handle)
-          return new Response(null, { status: 302, headers: { Location: redirectUrl } })
+          return new Response(null, {
+            status: 302,
+            headers: { Location: redirectUrl, 'Set-Cookie': clearSessionCookieHeader() },
+          })
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Login failed'
           return withCors(jsonError(400, message, acceptEncoding))
@@ -733,7 +794,9 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           if (!code) return withCors(jsonError(400, 'Missing code', acceptEncoding))
           const result = await handleCallback(oauth, code, state, iss)
           const isSecure = requestOrigin.startsWith('https')
-          const cookie = await createSessionCookie(result.did)
+          const handleRows = await querySQL('SELECT handle FROM _repos WHERE did = $1', [result.did])
+          const handle = handleRows[0]?.handle ?? result.did
+          const cookie = await createSessionCookie({ did: result.did, handle })
           // Server-initiated login stores redirectUri as '/' — redirect cleanly without code/iss params
           const redirectTo = result.clientRedirectUri.startsWith('/?code=') ? '/' : result.clientRedirectUri
           return new Response(null, {
@@ -778,6 +841,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           const result = await pdsCreateRecord(oauth, viewer, body)
           return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
+          if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding)
           if (err instanceof ProxyError) return withCors(jsonError(err.status, err.message, acceptEncoding))
           throw err
         }
@@ -791,6 +855,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           const result = await pdsDeleteRecord(oauth, viewer, body)
           return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
+          if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding)
           if (err instanceof ProxyError) return withCors(jsonError(err.status, err.message, acceptEncoding))
           throw err
         }
@@ -804,6 +869,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           const result = await pdsPutRecord(oauth, viewer, body)
           return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
+          if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding)
           if (err instanceof ProxyError) return withCors(jsonError(err.status, err.message, acceptEncoding))
           throw err
         }
@@ -818,6 +884,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           const result = await pdsUploadBlob(oauth, viewer, rawBody, contentType)
           return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
+          if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding)
           if (err instanceof ProxyError) return withCors(jsonError(err.status, err.message, acceptEncoding))
           throw err
         }
@@ -881,6 +948,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           const result = await executeXrpc(method, params, cursor, limit, viewer, input)
           if (result) return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
+          if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding)
           if (err instanceof InvalidRequestError) {
             return withCors(jsonError(err.status, err.errorName || err.message, acceptEncoding))
           }
@@ -915,7 +983,13 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           const ogMeta = buildOgMeta(url.pathname, requestOrigin)
 
           // Try SSR first
-          const renderedHtml = await renderPage(template, request, ogMeta)
+          ;(globalThis as any).__hatk_viewer = viewer
+          let renderedHtml: string | null
+          try {
+            renderedHtml = await renderPage(template, request, ogMeta)
+          } finally {
+            ;(globalThis as any).__hatk_viewer = null
+          }
           if (renderedHtml) {
             return withCors(file(Buffer.from(renderedHtml), 'text/html'))
           }
@@ -961,4 +1035,3 @@ export function startServer(
   const handler = createHandler({ collections, publicDir, oauth, admins, resolveViewer, onResync })
   return serve(handler, port)
 }
-

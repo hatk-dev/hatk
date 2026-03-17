@@ -79,7 +79,7 @@ export interface XrpcContext<
   input: I
   cursor?: string
   limit: number
-  viewer: { did: string } | null
+  viewer: { did: string; handle?: string } | null
   packCursor: (primary: string | number, cid: string) => string
   unpackCursor: (cursor: string) => { primary: string; cid: string } | null
   isTakendown: (did: string) => Promise<boolean>
@@ -108,7 +108,7 @@ interface XrpcHandler {
     params: Record<string, string>,
     cursor: string | undefined,
     limit: number,
-    viewer: { did: string } | null,
+    viewer: { did: string; handle?: string } | null,
     input?: unknown,
   ) => Promise<any>
 }
@@ -316,11 +316,7 @@ export async function executeXrpc(
 }
 
 /** Call a registered XRPC handler directly (no HTTP). For use in SSR renderers. */
-export async function callXrpc(
-  nsid: string,
-  params: Record<string, any> = {},
-  input?: unknown,
-): Promise<any> {
+export async function callXrpc(nsid: string, params: Record<string, any> = {}, input?: unknown): Promise<any> {
   const viewer = (globalThis as any).__hatk_viewer ?? null
   // In externalized module context (e.g. SSR), delegate to the runner's callXrpc via globalThis.
   // The runner's module instance has all registered handlers; this (Node's) instance may not.
@@ -348,7 +344,7 @@ export function registerCoreXrpcHandler(
     params: Record<string, string>,
     cursor: string | undefined,
     limit: number,
-    viewer: { did: string } | null,
+    viewer: { did: string; handle?: string } | null,
     input?: unknown,
   ) => Promise<any>,
 ): void {
