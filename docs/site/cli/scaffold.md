@@ -39,7 +39,6 @@ hatk generate feed <name>       # Feed generator in feeds/
 hatk generate xrpc <nsid>       # XRPC handler in xrpc/
 hatk generate label <name>      # Label definition in labels/
 hatk generate og <name>         # OpenGraph image route in og/
-hatk generate job <name>        # Periodic job in jobs/
 ```
 
 Each generator creates the handler file and a corresponding test file in the `test/` directory.
@@ -60,7 +59,7 @@ Remove a previously generated file and its test.
 hatk destroy <type> <name>
 ```
 
-Where `<type>` is one of: `feed`, `xrpc`, `label`, `og`, `job`.
+Where `<type>` is one of: `feed`, `xrpc`, `label`, `og`.
 
 ## `hatk resolve`
 

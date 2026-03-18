@@ -22,7 +22,6 @@ The `hatk` CLI manages your entire development workflow — from scaffolding a n
 | `hatk generate xrpc <nsid>`      | Generate an XRPC handler            |
 | `hatk generate label <name>`     | Generate a label definition         |
 | `hatk generate og <name>`        | Generate an OpenGraph route         |
-| `hatk generate job <name>`       | Generate a periodic job             |
 | `hatk generate types`            | Regenerate TypeScript from lexicons |
 | `hatk destroy <type> <name>`     | Remove a generated file             |
 | `hatk resolve <nsid>`            | Fetch a lexicon from the network    |
