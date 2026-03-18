@@ -1813,9 +1813,10 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     clientOut += `export async function callXrpc<K extends keyof XrpcSchema & string>(\n`
     clientOut += `  nsid: K,\n`
     clientOut += `  arg?: CallArg<K>,\n`
+    clientOut += `  customFetch?: typeof globalThis.fetch,\n`
     clientOut += `): Promise<OutputOf<K>> {\n`
-    // Server-side bridge
-    clientOut += `  if (typeof window === 'undefined') {\n`
+    // Server-side bridge (skip when customFetch is provided — let SvelteKit's fetch handle it)
+    clientOut += `  if (typeof window === 'undefined' && !customFetch) {\n`
     clientOut += `    const bridge = (globalThis as any).__hatk_callXrpc\n`
     clientOut += `    if (!bridge) throw new Error('callXrpc: server bridge not available — is hatk initialized?')\n`
     if (procedureNsids.length > 0 || blobInputNsids.length > 0) {
@@ -1826,30 +1827,35 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     }
     clientOut += `    return bridge(nsid, arg) as Promise<OutputOf<K>>\n`
     clientOut += `  }\n`
-    // Client-side fetch
-    clientOut += `  const url = new URL(\`/xrpc/\${nsid}\`, window.location.origin)\n`
+    // Client-side fetch (or server-side with customFetch for SSR deduplication)
+    clientOut += `  const _fetch = customFetch ?? globalThis.fetch\n`
+    clientOut += `  // Use relative URL so SvelteKit's fetch can deduplicate server/client requests\n`
+    clientOut += `  let path = \`/xrpc/\${nsid}\`\n`
     if (blobInputNsids.length > 0) {
       clientOut += `  if (_blobInputs.has(nsid)) {\n`
       clientOut += `    const blob = arg as Blob | ArrayBuffer\n`
       clientOut += `    const ct = blob instanceof Blob ? blob.type : 'application/octet-stream'\n`
-      clientOut += `    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': ct }, body: blob })\n`
+      clientOut += `    const res = await _fetch(path, { method: 'POST', headers: { 'Content-Type': ct }, body: blob })\n`
       clientOut += `    if (!res.ok) throw new Error(\`XRPC \${nsid} failed: \${res.status}\`)\n`
       clientOut += `    return res.json() as Promise<OutputOf<K>>\n`
       clientOut += `  }\n`
     }
     if (procedureNsids.length > 0) {
       clientOut += `  if (_procedures.has(nsid)) {\n`
-      clientOut += `    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(arg) })\n`
-      clientOut += `    if (res.status === 401) { window.location.href = '/oauth/login'; return new Promise(() => {}) as any }\n`
+      clientOut += `    const res = await _fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(arg) })\n`
+      clientOut += `    if (typeof window !== 'undefined' && res.status === 401) { window.location.href = '/oauth/login'; return new Promise(() => {}) as any }\n`
       clientOut += `    if (!res.ok) throw new Error(\`XRPC \${nsid} failed: \${res.status}\`)\n`
       clientOut += `    return res.json() as Promise<OutputOf<K>>\n`
       clientOut += `  }\n`
     }
+    clientOut += `  const params = new URLSearchParams()\n`
     clientOut += `  for (const [k, v] of Object.entries(arg || {})) {\n`
-    clientOut += `    if (v != null) url.searchParams.set(k, String(v))\n`
+    clientOut += `    if (v != null) params.set(k, String(v))\n`
     clientOut += `  }\n`
-    clientOut += `  const res = await fetch(url)\n`
-    clientOut += `  if (res.status === 401) { window.location.href = '/oauth/login'; return new Promise(() => {}) as any }\n`
+    clientOut += `  const qs = params.toString()\n`
+    clientOut += `  if (qs) path += \`?\${qs}\`\n`
+    clientOut += `  const res = await _fetch(path)\n`
+    clientOut += `  if (typeof window !== 'undefined' && res.status === 401) { window.location.href = '/oauth/login'; return new Promise(() => {}) as any }\n`
     clientOut += `  if (!res.ok) throw new Error(\`XRPC \${nsid} failed: \${res.status}\`)\n`
     clientOut += `  return res.json() as Promise<OutputOf<K>>\n`
     clientOut += `}\n`
