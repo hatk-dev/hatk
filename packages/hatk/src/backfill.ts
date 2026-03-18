@@ -237,6 +237,7 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
     // Insert records in chunks to limit memory usage
     const CHUNK_SIZE = 1000
     let chunk: BulkRecord[] = []
+    const validationSkips: Record<string, number> = {}
     for (const entry of entries) {
       const collection = entry.path.split('/')[0]
       if (!collections.has(collection)) continue
@@ -254,12 +255,7 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
 
         const validationError = validateRecord(getLexiconArray(), collection, record)
         if (validationError) {
-          emit('backfill', 'validation_skip', {
-            uri,
-            collection,
-            path: validationError.path,
-            error: validationError.message,
-          })
+          validationSkips[collection] = (validationSkips[collection] || 0) + 1
           continue
         }
 
@@ -280,6 +276,10 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
     }
     if (chunk.length > 0) {
       count += await bulkInsertRecords(chunk)
+    }
+    const totalSkips = Object.values(validationSkips).reduce((a, b) => a + b, 0)
+    if (totalSkips > 0) {
+      emit('backfill', 'validation_skips', { did, total: totalSkips, by_collection: validationSkips })
     }
     await setRepoStatus(did, 'active', commit.rev, { handle })
     return count
