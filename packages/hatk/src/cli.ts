@@ -1696,7 +1696,7 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     out += `export { InvalidRequestError, NotFoundError } from '@hatk/hatk/xrpc'\n`
     out += `export { defineSetup } from '@hatk/hatk/setup'\n`
     out += `export { defineHook } from '@hatk/hatk/hooks'\n`
-    out += `export { defineLabels } from '@hatk/hatk/labels'\n`
+    out += `export { defineLabel } from '@hatk/hatk/labels'\n`
     out += `export { defineOG } from '@hatk/hatk/opengraph'\n`
     out += `export { defineRenderer } from '@hatk/hatk/renderer'\n`
     out += `export type Ctx<K extends keyof XrpcSchema & keyof Registry> = XrpcContext<\n`

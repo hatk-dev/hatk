@@ -19,7 +19,7 @@ All server-side code lives in a single `server/` directory. hatk recursively sca
 | `defineFeed(name, opts)` | Feed generator | handler + hydrator |
 | `defineHook(event, opts)` | Lifecycle hook | event name (e.g. `'on-login'`) |
 | `defineSetup(fn)` | Boot-time setup | runs before server starts |
-| `defineLabels(defs)` | Label definitions | array of label configs |
+| `defineLabel(defs)` | Label definitions | array of label configs |
 | `defineOG(path, fn)` | OpenGraph image | route path, returns JSX |
 
 **Execution order:** Setup scripts run first (boot), then all other handlers register. During dev, handler files get Vite SSR HMR — edits reload instantly without restarting the database or indexer.
@@ -113,7 +113,7 @@ Both are valid. hatk doesn't enforce directory structure inside `server/` — it
 
 **2. Vite SSR integration** — Replace the `tsx watch` spawn in the Vite plugin with Vite's `ssrLoadModule()` for handler files. The hatk core runtime (database, indexer, OAuth) boots once and stays alive. Handler modules get loaded/reloaded through Vite's module graph, giving us HMR for free.
 
-**3. Define functions** — `defineQuery`, `defineProcedure`, `defineFeed`, `defineHook`, `defineSetup`, `defineLabels`, `defineOG` all export from `@hatk/hatk`. Each returns a typed descriptor object that the scanner knows how to register. The define functions themselves are thin — they just tag the config with a type and return it.
+**3. Define functions** — `defineQuery`, `defineProcedure`, `defineFeed`, `defineHook`, `defineSetup`, `defineLabel`, `defineOG` all export from `@hatk/hatk`. Each returns a typed descriptor object that the scanner knows how to register. The define functions themselves are thin — they just tag the config with a type and return it.
 
 **4. Build output** — `vite build` produces a server entry point alongside static assets. The entry point imports the scanned handlers and boots the hatk runtime. Production runs with `node dist/server.js`.
 

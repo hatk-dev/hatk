@@ -52,7 +52,7 @@ export interface LabelModule {
   evaluate?: (ctx: LabelRuleContext) => Promise<string[]>
 }
 
-export function defineLabels(module: LabelModule) {
+export function defineLabel(module: LabelModule) {
   return { __type: 'labels' as const, ...module }
 }
 

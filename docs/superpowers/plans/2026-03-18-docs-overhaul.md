@@ -334,7 +334,7 @@ git commit -m "docs: rewrite seeds guide"
 **Files:**
 - Modify: `docs/site/guides/labels.md`
 
-Brief. Show `defineLabels()` with `evaluate()`. Source from actual label files if they exist in templates, otherwise from CLI scaffolding output.
+Brief. Show `defineLabel()` with `evaluate()`. Source from actual label files if they exist in templates, otherwise from CLI scaffolding output.
 
 **Step 1: Read current page and find examples**
 **Step 2: Rewrite the page**

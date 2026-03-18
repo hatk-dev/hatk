@@ -122,7 +122,7 @@ All guides follow the same pattern: what it does, minimal example, then details.
 
 **Seeds** — `seed()` helper with `createAccount`, `createRecord`, `uploadBlob`. Complete seed file example. `hatk seed` and `hatk reset` commands.
 
-**Labels** — `defineLabels()` with `evaluate()`. Brief.
+**Labels** — `defineLabel()` with `evaluate()`. Brief.
 
 **OpenGraph** — `defineOG()` with Satori. Brief.
 

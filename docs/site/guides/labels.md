@@ -7,15 +7,15 @@ Labels are metadata tags that get applied to records for moderation or categoriz
 
 ## Defining a label
 
-Create a file in `server/` that exports `defineLabels()` with a `definition` and an `evaluate` function:
+Create a file in `server/` that exports `defineLabel()` with a `definition` and an `evaluate` function:
 
 ```typescript
 // server/labels/explicit.ts
-import { defineLabels } from '$hatk'
+import { defineLabel } from '$hatk'
 
 const EXPLICIT_PATTERNS = [/\(explicit\)/i, /\[explicit\]/i, /\bexplicit version\b/i]
 
-export default defineLabels({
+export default defineLabel({
   definition: {
     identifier: 'explicit',
     severity: 'inform',

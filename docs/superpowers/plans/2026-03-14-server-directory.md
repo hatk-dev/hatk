@@ -4,7 +4,7 @@
 
 **Goal:** Consolidate all server-side code (feeds, xrpc, hooks, labels, og, setup) into a single `server/` directory scanned by export type, with Vite SSR HMR for handler code.
 
-**Architecture:** A new `scanner.ts` module recursively walks `server/`, imports each file, inspects default exports for type tags (`__type: 'feed' | 'query' | 'procedure' | ...`), and routes them to existing subsystem registration. The Vite plugin replaces the `tsx watch` child process with `ssrLoadModule()` for true HMR. Define functions that don't exist yet (`defineSetup`, `defineHook`, `defineLabels`, `defineOG`) are added as thin typed wrappers.
+**Architecture:** A new `scanner.ts` module recursively walks `server/`, imports each file, inspects default exports for type tags (`__type: 'feed' | 'query' | 'procedure' | ...`), and routes them to existing subsystem registration. The Vite plugin replaces the `tsx watch` child process with `ssrLoadModule()` for true HMR. Define functions that don't exist yet (`defineSetup`, `defineHook`, `defineLabel`, `defineOG`) are added as thin typed wrappers.
 
 **Tech Stack:** TypeScript, Vite SSR API (`ssrLoadModule`), existing hatk subsystems
 
@@ -62,14 +62,14 @@ git commit -m "feat: add __type tags to defineFeed/defineQuery/defineProcedure"
 
 ---
 
-### Task 2: Create defineSetup, defineHook, defineLabels, defineOG
+### Task 2: Create defineSetup, defineHook, defineLabel, defineOG
 
 New thin define functions for handler types that currently use raw exports.
 
 **Files:**
 - Modify: `packages/hatk/src/setup.ts` (add `defineSetup`)
 - Modify: `packages/hatk/src/hooks.ts` (add `defineHook`)
-- Modify: `packages/hatk/src/labels.ts` (add `defineLabels`)
+- Modify: `packages/hatk/src/labels.ts` (add `defineLabel`)
 - Modify: `packages/hatk/src/opengraph.ts` (add `defineOG`)
 
 **Step 1: Add `defineSetup` to setup.ts**
@@ -94,7 +94,7 @@ export function defineHook(event: 'on-login', handler: (ctx: OnLoginCtx) => Prom
 }
 ```
 
-**Step 3: Add `defineLabels` to labels.ts**
+**Step 3: Add `defineLabel` to labels.ts**
 
 First read the `LabelDefinition` type from `config.ts`. Add after the `LabelRuleContext` interface (after line 48):
 
@@ -104,7 +104,7 @@ export interface LabelModule {
   evaluate?: (ctx: LabelRuleContext) => Promise<string[]>
 }
 
-export function defineLabels(module: LabelModule) {
+export function defineLabel(module: LabelModule) {
   return { __type: 'labels' as const, ...module }
 }
 ```
@@ -131,7 +131,7 @@ Expected: No errors
 
 ```bash
 git add packages/hatk/src/setup.ts packages/hatk/src/hooks.ts packages/hatk/src/labels.ts packages/hatk/src/opengraph.ts
-git commit -m "feat: add defineSetup, defineHook, defineLabels, defineOG"
+git commit -m "feat: add defineSetup, defineHook, defineLabel, defineOG"
 ```
 
 ---
@@ -541,7 +541,7 @@ git commit -m "feat: wire initServer into main.ts with legacy fallback"
 
 ### Task 7: Export new define functions from package
 
-Users need to import `defineSetup`, `defineHook`, `defineLabels`, `defineOG` from the hatk package.
+Users need to import `defineSetup`, `defineHook`, `defineLabel`, `defineOG` from the hatk package.
 
 **Files:**
 - Modify: `packages/hatk/package.json` (add exports if needed)
@@ -554,7 +554,7 @@ Find where `hatk.generated.ts` emits its imports and re-exports. Add re-exports 
 ```typescript
 out += `export { defineSetup } from '@hatk/hatk/setup'\n`
 out += `export { defineHook } from '@hatk/hatk/hooks'\n`
-out += `export { defineLabels } from '@hatk/hatk/labels'\n`
+out += `export { defineLabel } from '@hatk/hatk/labels'\n`
 out += `export { defineOG } from '@hatk/hatk/opengraph'\n`
 ```
 
