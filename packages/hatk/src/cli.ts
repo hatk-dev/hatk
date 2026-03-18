@@ -1859,6 +1859,45 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     clientOut += `  return (globalThis as any).__hatk_viewer ?? null\n`
     clientOut += `}\n`
 
+    // Auth helpers — login, logout, viewerDid
+    clientOut += `\n// ─── Auth Helpers ────────────────────────────────────────────────────\n\n`
+    clientOut += `export async function login(handle: string): Promise<void> {\n`
+    clientOut += `  const res = await fetch(\`/oauth/login?handle=\${encodeURIComponent(handle)}\`, { redirect: 'manual' })\n`
+    clientOut += `  if (res.type === 'opaqueredirect') {\n`
+    clientOut += `    window.location.href = \`/oauth/login?handle=\${encodeURIComponent(handle)}\`\n`
+    clientOut += `    return\n`
+    clientOut += `  }\n`
+    clientOut += `  if (res.ok) return\n`
+    clientOut += `  const body = await res.json().catch(() => ({ error: 'Login failed' }))\n`
+    clientOut += `  throw new Error(body.error || 'Login failed')\n`
+    clientOut += `}\n\n`
+    clientOut += `export async function logout(): Promise<void> {\n`
+    clientOut += `  ;(globalThis as any).__hatk_viewer = null\n`
+    clientOut += `  await fetch('/auth/logout', { method: 'POST' }).catch(() => {})\n`
+    clientOut += `}\n\n`
+    clientOut += `export function viewerDid(): string | null {\n`
+    clientOut += `  if (typeof window === 'undefined') return null\n`
+    clientOut += `  const viewer = (globalThis as any).__hatk_viewer\n`
+    clientOut += `  return viewer?.did ?? null\n`
+    clientOut += `}\n\n`
+    clientOut += `// Expose viewer for getViewer() bridge\n`
+    clientOut += `;(globalThis as any).__hatk_auth = { viewerDid }\n`
+
+    // parseViewer — server-side session cookie resolution for +layout.server.ts
+    clientOut += `\n// ─── Server Helpers ──────────────────────────────────────────────────\n\n`
+    clientOut += `export async function parseViewer(cookies: { get(name: string): string | undefined }): Promise<{ did: string; handle?: string } | null> {\n`
+    clientOut += `  const parseSessionCookie = (globalThis as any).__hatk_parseSessionCookie\n`
+    clientOut += `  if (!parseSessionCookie) return null\n`
+    clientOut += `  const cookieValue = cookies.get('__hatk_session')\n`
+    clientOut += `  if (!cookieValue) return null\n`
+    clientOut += `  try {\n`
+    clientOut += `    const request = new Request('http://localhost', { headers: { cookie: \`__hatk_session=\${cookieValue}\` } })\n`
+    clientOut += `    const viewer = await parseSessionCookie(request)\n`
+    clientOut += `    if (viewer) (globalThis as any).__hatk_viewer = viewer\n`
+    clientOut += `    return viewer\n`
+    clientOut += `  } catch { return null }\n`
+    clientOut += `}\n`
+
     writeFileSync('./hatk.generated.client.ts', clientOut)
 
     console.log(
