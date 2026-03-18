@@ -1,44 +1,34 @@
 ---
 title: Hooks
-description: Lifecycle hooks for customizing Hatk behavior.
+description: Run custom logic at key points in the server lifecycle.
 ---
 
-Hooks let you run custom logic at key points in the Hatk lifecycle. Place hook files in the `hooks/` directory.
+Hooks let you run custom logic at key points in the Hatk lifecycle, like when a user logs in via OAuth. Define them with `defineHook()` in the `server/` directory.
 
 ## `on-login`
 
-Runs after a successful OAuth login. Use this to trigger backfill of the user's repository so their data is indexed immediately.
-
-Create `hooks/on-login.ts`:
+The `on-login` hook runs after a successful OAuth login. The most common use is calling `ensureRepo` to backfill the user's data so it's available immediately:
 
 ```typescript
-export default async function onLogin({
-  did,
-  ensureRepo,
-}: {
-  did: string
-  ensureRepo: (did: string) => Promise<void>
-}) {
+// server/on-login.ts
+import { defineHook } from '$hatk'
+
+export default defineHook('on-login', async ({ did, ensureRepo }) => {
   await ensureRepo(did)
-}
+})
 ```
 
-### Context
+This is three lines, but it's important: without it, a new user's existing records won't appear until the firehose (the AT Protocol's real-time event stream) delivers them. `ensureRepo` fetches the user's repository from their PDS and indexes it right away.
 
-| Field        | Type     | Description                                              |
-| ------------ | -------- | -------------------------------------------------------- |
-| `did`        | string   | The DID of the user who just logged in                   |
-| `ensureRepo` | function | Marks the user's repo as pending and triggers a backfill |
+## Hook context
 
-### How `ensureRepo` works
+The `on-login` handler receives:
 
-Calling `ensureRepo(did)` does two things:
+| Field | Type | Description |
+| --- | --- | --- |
+| `did` | string | The DID (decentralized identifier) of the user who logged in |
+| `ensureRepo` | `(did: string) => Promise<void>` | Marks the user's repo as pending and triggers a backfill from their PDS |
 
-1. Sets the repo status to `pending` in the database
-2. Triggers an automatic backfill of that user's repository from their PDS
+## Error handling
 
-This means the first time a user logs in, their existing records are fetched and indexed — so their data is available immediately rather than waiting for new firehose events.
-
-### Error handling
-
-If the hook throws an error, it's logged but does not block the login flow. The user still completes authentication successfully.
+If a hook throws, the error is logged but does not block the login flow. The user still completes authentication successfully.

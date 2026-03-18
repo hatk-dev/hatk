@@ -21,14 +21,16 @@ Retrieve a named feed of items.
 ### Example
 
 ```bash
-curl "http://localhost:3000/xrpc/dev.hatk.getFeed?feed=recent&limit=20"
+curl "http://127.0.0.1:3000/xrpc/dev.hatk.getFeed?feed=recent&limit=20"
 ```
 
 ```typescript
-const { items, cursor } = await api.query('dev.hatk.getFeed', {
-  feed: 'recent',
+import { callXrpc } from "$hatk/client";
+
+const { items, cursor } = await callXrpc("dev.hatk.getFeed", {
+  feed: "recent",
   limit: 20,
-})
+});
 ```
 
 ### Response
@@ -53,7 +55,7 @@ List all available feeds.
 ### Example
 
 ```bash
-curl "http://localhost:3000/xrpc/dev.hatk.describeFeeds"
+curl "http://127.0.0.1:3000/xrpc/dev.hatk.describeFeeds"
 ```
 
 ### Response

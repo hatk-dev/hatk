@@ -1,43 +1,32 @@
 ---
 title: Labels
-description: Define labels for content moderation and metadata.
+description: Apply moderation labels to records as they're indexed.
 ---
 
-Labels are metadata tags applied to records for moderation, categorization, or informational purposes. They follow the [AT Protocol labeling spec](https://atproto.com/specs/label).
+Labels are metadata tags that get applied to records for moderation or categorization. They follow the AT Protocol labeling spec (a standard way for services to annotate content with things like "explicit" or "nsfw"). Hatk evaluates label rules automatically each time a record is indexed.
 
-## Defining labels
+## Defining a label
 
-Create label definitions in the `labels/` directory:
-
-```bash
-hatk generate label explicit
-```
-
-Each label module exports a `definition` describing the label and an `evaluate` function that decides when to apply it. Label rules run automatically each time a record is indexed — if `evaluate` returns label identifiers, they're stored in the `_labels` table.
-
-Here's an example that marks `fm.teal.alpha.feed.play` records as explicit when the track name contains common explicit content indicators:
+Create a file in `server/` that exports `defineLabels()` with a `definition` and an `evaluate` function:
 
 ```typescript
-import type { LabelRuleContext } from 'hatk/labels'
+// server/labels/explicit.ts
+import { defineLabels } from '$hatk'
 
 const EXPLICIT_PATTERNS = [/\(explicit\)/i, /\[explicit\]/i, /\bexplicit version\b/i]
 
-export default {
+export default defineLabels({
   definition: {
     identifier: 'explicit',
     severity: 'inform',
     blurs: 'none',
     defaultSetting: 'warn',
     locales: [
-      {
-        lang: 'en',
-        name: 'Explicit',
-        description: 'Track contains explicit content',
-      },
+      { lang: 'en', name: 'Explicit', description: 'Track contains explicit content' },
     ],
   },
 
-  async evaluate(ctx: LabelRuleContext) {
+  async evaluate(ctx) {
     if (ctx.record.collection !== 'fm.teal.alpha.feed.play') return []
 
     const trackName = ctx.record.value.trackName || ''
@@ -45,17 +34,33 @@ export default {
 
     return isExplicit ? ['explicit'] : []
   },
-}
+})
 ```
 
-You can also query the database in `evaluate` for more complex rules — for example, checking an external blocklist table:
+The `evaluate` function runs for every indexed record. Return an array of label identifier strings to apply, or `[]` to skip. Labels are stored in the `_labels` table automatically.
+
+## Evaluate context
+
+The `evaluate` function receives a context with:
+
+| Field | Description |
+| --- | --- |
+| `ctx.db.query(sql, params?)` | Run a SQL query against SQLite |
+| `ctx.db.run(sql, params?)` | Execute a SQL statement |
+| `ctx.record.uri` | AT URI of the record |
+| `ctx.record.cid` | Content hash of the record |
+| `ctx.record.did` | DID (decentralized identifier) of the author |
+| `ctx.record.collection` | Collection NSID (e.g. `fm.teal.alpha.feed.play`) |
+| `ctx.record.value` | The record's fields as an object |
+
+You can query the database in `evaluate` for more complex rules:
 
 ```typescript
-async evaluate(ctx: LabelRuleContext) {
+async evaluate(ctx) {
   if (ctx.record.collection !== 'fm.teal.alpha.feed.play') return []
 
   const rows = await ctx.db.query(
-    `SELECT 1 FROM explicit_tracks WHERE isrc = $1 LIMIT 1`,
+    `SELECT 1 FROM explicit_tracks WHERE isrc = ? LIMIT 1`,
     [ctx.record.value.isrc],
   )
 
@@ -63,108 +68,30 @@ async evaluate(ctx: LabelRuleContext) {
 },
 ```
 
-## `LabelDefinition`
+## Label definition fields
 
-| Field            | Type                                 | Description                        |
-| ---------------- | ------------------------------------ | ---------------------------------- |
-| `identifier`     | string                               | Unique label ID                    |
-| `severity`       | `'alert'` \| `'inform'` \| `'none'`  | How urgently to surface the label  |
-| `blurs`          | `'media'` \| `'content'` \| `'none'` | What to blur when label is applied |
-| `defaultSetting` | `'warn'` \| `'hide'` \| `'ignore'`   | Default user-facing behavior       |
-| `locales`        | array                                | Localized name and description     |
-
-## Evaluation context
-
-The `evaluate` function receives a `LabelRuleContext` with:
-
-| Field               | Type     | Description                          |
-| ------------------- | -------- | ------------------------------------ |
-| `db.query`          | function | Run SQL queries against DuckDB       |
-| `db.run`            | function | Execute SQL statements               |
-| `record.uri`        | string   | AT URI of the record being evaluated |
-| `record.cid`        | string   | CID of the record                    |
-| `record.did`        | string   | DID of the record author             |
-| `record.collection` | string   | Collection NSID                      |
-| `record.value`      | object   | The record's fields                  |
-
-Label rules run automatically when records are indexed. Return an array of label identifier strings to apply, or an empty array to skip.
-
----
+| Field | Type | Description |
+| --- | --- | --- |
+| `identifier` | string | Unique label ID |
+| `severity` | `'alert'` \| `'inform'` \| `'none'` | How urgently to surface the label |
+| `blurs` | `'media'` \| `'content'` \| `'none'` | What to blur when label is applied |
+| `defaultSetting` | `'warn'` \| `'hide'` \| `'ignore'` | Default user-facing behavior |
+| `locales` | array | Localized name and description |
 
 ## Hydrating labels in responses
 
-Labels are stored in a `_labels` table and can be included in feed and query responses during hydration. The `HydrateContext` provides a `labels()` helper that queries active labels for a set of record URIs.
-
-### Using `ctx.labels()` in a hydrate function
+Labels stored in `_labels` can be included in feed and query responses. The `ctx.labels()` helper queries active labels for a set of record URIs:
 
 ```typescript
-import { defineFeed } from '../hatk.generated.ts'
+async hydrate(ctx) {
+  const uris = ctx.items.map((item) => item.uri)
+  const labelMap = await ctx.labels(uris)
 
-export default defineFeed({
-  collection: 'fm.teal.alpha.feed.play',
-  label: 'Recent',
-
-  async generate(ctx) {
-    const rows = await ctx.db.query(
-      `SELECT uri, cid, indexed_at FROM "fm.teal.alpha.feed.play"
-       ORDER BY indexed_at DESC LIMIT $1`,
-      [ctx.limit + 1],
-    )
-    const hasMore = rows.length > ctx.limit
-    if (hasMore) rows.pop()
-    const last = rows[rows.length - 1]
-    return ctx.ok({
-      uris: rows.map((r) => r.uri),
-      cursor: hasMore && last ? ctx.packCursor(last.indexed_at, last.cid) : undefined,
-    })
-  },
-
-  async hydrate(ctx) {
-    const uris = ctx.items.map((item) => item.uri)
-    const labelMap = await ctx.labels(uris)
-
-    return ctx.items.map((item) => ({
-      ...item,
-      labels: labelMap.get(item.uri) || [],
-    }))
-  },
-})
+  return ctx.items.map((item) => ({
+    ...item,
+    labels: labelMap.get(item.uri) || [],
+  }))
+},
 ```
 
-The `ctx.labels()` method returns a `Map<string, Label[]>` where each label has:
-
-| Field | Type           | Description                            |
-| ----- | -------------- | -------------------------------------- |
-| `src` | string         | DID of the label creator               |
-| `uri` | string         | AT URI of the labeled resource         |
-| `val` | string         | Label identifier (e.g. `"explicit"`)   |
-| `neg` | boolean        | If true, this negates a previous label |
-| `cts` | string         | Timestamp when the label was created   |
-| `exp` | string \| null | Expiration timestamp                   |
-
-Only active labels are returned — expired labels and labels that have been negated are automatically filtered out.
-
-### Adding labels to a view lexicon
-
-To include labels in your view's response type, add a field that references `com.atproto.label.defs#label`:
-
-```json
-{
-  "playView": {
-    "type": "object",
-    "required": ["record"],
-    "properties": {
-      "record": {
-        "type": "ref",
-        "ref": "fm.teal.alpha.feed.play"
-      },
-      "labels": {
-        "type": "array",
-        "items": { "type": "ref", "ref": "com.atproto.label.defs#label" }
-      }
-    }
-  }
-}
-```
-
-This gives you a typed `labels` field on the view. You then populate it in your hydrate function using `ctx.labels()` as shown above.
+`ctx.labels()` returns a `Map<string, Label[]>`. Expired and negated labels are automatically filtered out.

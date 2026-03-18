@@ -8,7 +8,7 @@ description: Upload binary data via the user's PDS.
 Upload a binary blob (image, audio, etc.) via the authenticated user's PDS.
 
 - **Type:** Procedure (POST)
-- **Auth:** Required
+- **Auth:** Required (session cookie or DPoP token)
 - **Content-Type:** `*/*` (set to the blob's MIME type)
 
 ### Request
@@ -16,7 +16,7 @@ Upload a binary blob (image, audio, etc.) via the authenticated user's PDS.
 Send the raw binary data as the request body with the appropriate `Content-Type` header.
 
 ```bash
-curl -X POST "http://localhost:3000/xrpc/dev.hatk.uploadBlob" \
+curl -X POST "http://127.0.0.1:3000/xrpc/dev.hatk.uploadBlob" \
   -H "Authorization: DPoP <token>" \
   -H "Content-Type: image/jpeg" \
   --data-binary @photo.jpg
@@ -25,7 +25,9 @@ curl -X POST "http://localhost:3000/xrpc/dev.hatk.uploadBlob" \
 ### Client usage
 
 ```typescript
-const result = await api.upload(file)
+import { callXrpc } from "$hatk/client";
+
+const result = await callXrpc("dev.hatk.uploadBlob", file);
 // result.blob contains the blob reference
 ```
 
@@ -47,14 +49,16 @@ const result = await api.upload(file)
 After uploading, reference the blob in a record field:
 
 ```typescript
-const uploadResult = await api.upload(imageFile)
+import { callXrpc } from "$hatk/client";
 
-await api.call('dev.hatk.createRecord', {
-  collection: 'fm.teal.alpha.feed.play',
+const uploadResult = await callXrpc("dev.hatk.uploadBlob", imageFile);
+
+await callXrpc("dev.hatk.createRecord", {
+  collection: "fm.teal.alpha.feed.play",
   repo: userDid,
   record: {
     createdAt: new Date().toISOString(),
     image: uploadResult.blob,
   },
-})
+});
 ```

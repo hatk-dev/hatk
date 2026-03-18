@@ -8,17 +8,19 @@ description: Store and retrieve per-user preferences.
 Get all preferences for the authenticated user.
 
 - **Type:** Query (GET)
-- **Auth:** Required
+- **Auth:** Required (session cookie or DPoP token)
 
 ### Example
 
 ```bash
-curl "http://localhost:3000/xrpc/dev.hatk.getPreferences" \
+curl "http://127.0.0.1:3000/xrpc/dev.hatk.getPreferences" \
   -H "Authorization: DPoP <token>"
 ```
 
 ```typescript
-const { preferences } = await api.query('dev.hatk.getPreferences')
+import { callXrpc } from "$hatk/client";
+
+const { preferences } = await callXrpc("dev.hatk.getPreferences");
 ```
 
 ### Response
@@ -39,7 +41,7 @@ const { preferences } = await api.query('dev.hatk.getPreferences')
 Set a single preference by key for the authenticated user.
 
 - **Type:** Procedure (POST)
-- **Auth:** Required
+- **Auth:** Required (session cookie or DPoP token)
 
 ### Input
 
@@ -51,17 +53,19 @@ Set a single preference by key for the authenticated user.
 ### Example
 
 ```bash
-curl -X POST "http://localhost:3000/xrpc/dev.hatk.putPreference" \
+curl -X POST "http://127.0.0.1:3000/xrpc/dev.hatk.putPreference" \
   -H "Authorization: DPoP <token>" \
   -H "Content-Type: application/json" \
   -d '{"key":"theme","value":"dark"}'
 ```
 
 ```typescript
-await api.call('dev.hatk.putPreference', {
-  key: 'theme',
-  value: 'dark',
-})
+import { callXrpc } from "$hatk/client";
+
+await callXrpc("dev.hatk.putPreference", {
+  key: "theme",
+  value: "dark",
+});
 ```
 
 ### Response

@@ -3,99 +3,88 @@ title: OpenGraph Images
 description: Generate dynamic OpenGraph images for link previews.
 ---
 
-Hatk can generate dynamic OpenGraph images so your pages get rich previews when shared on social media, chat apps, and other platforms.
+Hatk generates dynamic OpenGraph images so your pages get rich previews when shared. You define a `generate` function that returns a virtual DOM tree, and Hatk renders it to a 1200x630 PNG using [Satori](https://github.com/vercel/satori).
+
+## Defining an OG route
+
+Create a file in `server/og/` that exports `defineOG()` with a path pattern and a generate function:
+
+```typescript
+// server/og/artist.ts
+import { defineOG } from '$hatk'
+
+export default defineOG('/og/artist/:artist', async (ctx) => {
+  const { db, params, fetchImage } = ctx
+
+  const rows = await db.query(
+    `SELECT CAST(COUNT(*) AS INTEGER) AS play_count
+     FROM "fm.teal.alpha.feed.play__artists"
+     WHERE artist_name = ?`,
+    [params.artist],
+  )
+  const stats = rows[0] || { play_count: 0 }
+
+  return {
+    element: {
+      type: 'div',
+      props: {
+        style: {
+          display: 'flex',
+          width: '100%',
+          height: '100%',
+          background: '#070a11',
+          color: 'white',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexDirection: 'column',
+        },
+        children: [
+          { type: 'div', props: { children: params.artist, style: { fontSize: 58, fontWeight: 700 } } },
+          { type: 'div', props: { children: `${stats.play_count} plays`, style: { fontSize: 28, color: '#94a3b8', marginTop: '16px' } } },
+        ],
+      },
+    },
+    meta: { title: params.artist },
+  }
+})
+```
 
 ## How it works
 
-1. You create handler files in the `og/` directory
-2. Each handler defines a URL pattern and a `generate` function that returns a virtual DOM tree
-3. The framework renders it to a 1200x630 PNG using [satori](https://github.com/vercel/satori) and [resvg](https://github.com/nicbarker/resvg-js)
-4. Requests to `/og/*` serve the generated image
-5. For matching page routes, the framework auto-injects `og:image` and `twitter:card` meta tags into your HTML
+The `path` field uses Express-style route parameters. The `/og` prefix is significant:
 
-## Creating an OpenGraph route
+- `GET /og/artist/radiohead` serves the generated PNG
+- `GET /artist/radiohead` (the page route) automatically gets `og:image` meta tags injected pointing to the OG image URL
 
-Generate a new handler:
+This keeps page routes and OG routes in sync. You don't need to add meta tags manually.
 
-```bash
-hatk generate og artist
-```
-
-This creates `og/artist.ts`:
-
-```typescript
-import type { OpengraphContext, OpengraphResult } from 'hatk/opengraph'
-
-export default {
-  path: '/og/artist/:id',
-  async generate(ctx: OpengraphContext): Promise<OpengraphResult> {
-    const { db, params } = ctx
-    return {
-      element: {
-        type: 'div',
-        props: {
-          style: {
-            display: 'flex',
-            width: '100%',
-            height: '100%',
-            background: '#080b12',
-            color: 'white',
-            alignItems: 'center',
-            justifyContent: 'center',
-          },
-          children: params.id,
-        },
-      },
-    }
-  },
-}
-```
-
-## Path convention
-
-The `path` field uses Express-style route parameters. The `/og` prefix is significant — the framework:
-
-- Serves `GET /og/artist/radiohead` as a PNG image
-- Auto-injects meta tags on `GET /artist/radiohead` (the `/og` prefix stripped) pointing to the OG image URL
-
-This means your page routes and OG routes stay in sync automatically. If you have `og/artist.ts` with `path: '/og/artist/:name'`, then any visitor to `/artist/radiohead` gets meta tags injected:
-
-```html
-<meta property="og:image" content="https://yourapp.com/og/artist/radiohead" />
-<meta property="og:image:width" content="1200" />
-<meta property="og:image:height" content="630" />
-<meta name="twitter:card" content="summary_large_image" />
-```
-
-## The generate function
-
-### Context
+## Generate context
 
 The `generate` function receives an `OpengraphContext` with:
 
-| Field        | Type     | Description                                             |
-| ------------ | -------- | ------------------------------------------------------- |
-| `db.query`   | function | Run SQL queries against DuckDB                          |
-| `params`     | object   | URL path parameters (e.g. `{ artist: 'Radiohead' }`)    |
-| `fetchImage` | function | Fetch a remote image and return it as a base64 data URL |
-| `lookup`     | function | Look up records by field value                          |
-| `count`      | function | Count records by field value                            |
-| `labels`     | function | Query labels for record URIs                            |
-| `blobUrl`    | function | Resolve a blob reference to a CDN URL                   |
+| Field | Description |
+| --- | --- |
+| `db.query(sql, params?)` | Run SQL queries against SQLite |
+| `params` | URL path parameters (e.g. `{ artist: 'Radiohead' }`) |
+| `fetchImage(url)` | Fetch a remote image and return it as a base64 data URL for use in `img` elements |
+| `lookup(collection, field, values)` | Look up records by field value |
+| `count(collection, field, values)` | Count records by field value |
+| `labels(uris)` | Query labels for record URIs |
+| `blobUrl(did, cid)` | Resolve a blob reference to a URL |
 
-### Return value
+## Return value
 
 Return an `OpengraphResult`:
 
-| Field     | Required | Description                                                                        |
-| --------- | -------- | ---------------------------------------------------------------------------------- |
-| `element` | Yes      | A satori virtual DOM tree (see below)                                              |
-| `options` | No       | Override `width` (default 1200), `height` (default 630), or provide custom `fonts` |
-| `meta`    | No       | `title` and `description` for the injected meta tags                               |
+| Field | Required | Description |
+| --- | --- | --- |
+| `element` | Yes | A Satori virtual DOM tree |
+| `options` | No | Override `width` (default 1200), `height` (default 630), or provide custom `fonts` |
+| `meta` | No | `title` and `description` for the injected meta tags |
 
-### Virtual DOM
+## Virtual DOM
 
-Satori uses a React-like virtual DOM. Elements are plain objects with `type`, and `props` containing `style` and `children`:
+Satori uses a React-like virtual DOM. Elements are plain objects with `type` and `props` containing `style` and `children`:
 
 ```typescript
 {
@@ -110,132 +99,19 @@ Satori uses a React-like virtual DOM. Elements are plain objects with `type`, an
 }
 ```
 
-Satori supports a subset of CSS flexbox. All layouts must use `display: 'flex'`. See the [satori docs](https://github.com/vercel/satori#css) for supported properties.
-
-## Example: artist page with stats
-
-Here's a real example from teal.fm that queries play counts and fetches an artist image:
-
-```typescript
-import type { OpengraphContext, OpengraphResult } from 'hatk/opengraph'
-
-export default {
-  path: '/og/artist/:artist',
-  async generate(ctx: OpengraphContext): Promise<OpengraphResult> {
-    const { db, params, fetchImage } = ctx
-
-    // Query stats from DuckDB
-    const rows = await db.query(
-      `SELECT COUNT(*)::INTEGER AS play_count,
-              COUNT(DISTINCT p.did)::INTEGER AS listener_count
-       FROM "fm.teal.alpha.feed.play" p,
-            unnest(from_json(p.artists::JSON, '["json"]')) AS a(artist_json)
-       WHERE json_extract_string(a.artist_json, '$.artistName') = $1`,
-      [params.artist],
-    )
-    const stats = rows[0] || { play_count: 0, listener_count: 0 }
-
-    // Fetch artist thumbnail (returns base64 data URL or null)
-    let artUrl = null
-    try {
-      const res = await fetch(
-        `https://www.theaudiodb.com/api/v1/json/2/search.php?s=${encodeURIComponent(params.artist)}`,
-      )
-      const data = await res.json()
-      const thumbUrl = data?.artists?.[0]?.strArtistThumb
-      if (thumbUrl) {
-        artUrl = await fetchImage(`${thumbUrl}/small`)
-      }
-    } catch {}
-
-    return {
-      element: {
-        type: 'div',
-        props: {
-          style: {
-            display: 'flex',
-            width: '100%',
-            height: '100%',
-            background: '#070a11',
-            padding: '48px 64px',
-            alignItems: 'center',
-            gap: '56px',
-          },
-          children: [
-            // Artist image
-            ...(artUrl
-              ? [
-                  {
-                    type: 'img',
-                    props: {
-                      src: artUrl,
-                      width: 300,
-                      height: 300,
-                      style: { borderRadius: '20px', objectFit: 'cover' },
-                    },
-                  },
-                ]
-              : []),
-            // Text content
-            {
-              type: 'div',
-              props: {
-                style: { display: 'flex', flexDirection: 'column' },
-                children: [
-                  {
-                    type: 'div',
-                    props: {
-                      children: params.artist,
-                      style: { fontSize: 58, fontWeight: 700, color: '#f1f5f9' },
-                    },
-                  },
-                  {
-                    type: 'div',
-                    props: {
-                      children: `${stats.play_count.toLocaleString()} plays · ${stats.listener_count.toLocaleString()} listeners`,
-                      style: { fontSize: 28, color: '#94a3b8', marginTop: '16px' },
-                    },
-                  },
-                ],
-              },
-            },
-          ],
-        },
-      },
-      meta: { title: params.artist },
-    }
-  },
-}
-```
+All layouts must use `display: 'flex'`. See the [Satori docs](https://github.com/vercel/satori#css) for supported CSS properties.
 
 ## Using `fetchImage`
 
-Remote images must be converted to base64 data URLs before satori can render them. Use `ctx.fetchImage()`:
+Remote images must be converted to base64 data URLs before Satori can render them:
 
 ```typescript
 const artUrl = await ctx.fetchImage('https://example.com/image.jpg')
-// Returns: "data:image/jpeg;base64,/9j/4AAQ..." or null on failure
+// Returns "data:image/jpeg;base64,..." or null on failure
 ```
 
 Then pass it as the `src` on an `img` element.
 
 ## Caching
 
-Generated images are cached in memory for 5 minutes (up to 200 entries). Subsequent requests for the same path return the cached PNG without re-rendering.
-
-## Fonts
-
-A default Inter font is bundled. To use custom fonts, return them in the `options.fonts` array:
-
-```typescript
-return {
-  element: { ... },
-  options: {
-    fonts: [
-      { name: 'MyFont', data: fontBuffer, weight: 400, style: 'normal' },
-    ],
-  },
-}
-```
-
-Custom fonts are merged with the default Inter font, so you can use either.
+Generated images are cached in memory for 5 minutes (up to 200 entries). A default Inter font is bundled; custom fonts can be provided via `options.fonts`.

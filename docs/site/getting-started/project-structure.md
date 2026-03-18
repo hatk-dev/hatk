@@ -1,223 +1,155 @@
 ---
 title: Project Structure
-description: Understand the files and directories in a Hatk project.
+description: Understand the files and directories in a hatk project.
 ---
 
-After running `hatk new`, your project looks like this:
+After running `npx hatk new`, your project looks like this:
 
 ```
 my-app/
-├── config.yaml
-├── package.json
-├── docker-compose.yml
-├── Dockerfile
-├── hatk.generated.ts
-├── lexicons/
-├── feeds/
-├── xrpc/
-├── og/
-├── hooks/
-├── labels/
+├── app/                        # SvelteKit frontend
+│   ├── app.html                #   HTML shell
+│   ├── app.css                 #   Global styles
+│   ├── lib/                    #   Shared utilities
+│   └── routes/                 #   SvelteKit routes
+│       ├── +layout.svelte      #     Root layout
+│       ├── +layout.server.ts   #     Server-side layout data
+│       ├── +page.svelte        #     Home page
+│       └── oauth/callback/
+│           └── +page.svelte    #     OAuth redirect target
+├── server/                     # Backend logic
+│   ├── recent.ts               #   Feed generator
+│   ├── get-profile.ts          #   XRPC query handler
+│   └── on-login.ts             #   Lifecycle hook
+├── lexicons/                   # AT Protocol schemas
+│   ├── xyz/statusphere/
+│   │   ├── status.json         #   Custom record type
+│   │   └── getProfile.json     #   Custom query endpoint
+│   └── app/bsky/actor/
+│       └── profile.json        #   Bluesky profile (to index)
 ├── seeds/
-├── setup/
-├── jobs/
-├── public/
-└── test/
-    ├── feeds/
-    ├── xrpc/
-    ├── integration/
-    ├── browser/
-    └── fixtures/
+│   └── seed.ts                 # Test fixture data
+├── test/
+│   ├── feeds/                  #   Feed unit tests
+│   ├── xrpc/                   #   XRPC handler tests
+│   ├── browser/                #   Playwright browser tests
+│   └── fixtures/               #   Test data (YAML files)
+├── db/
+│   └── schema.sql              # Custom SQL migrations
+├── hatk.config.ts              # Project configuration
+├── hatk.generated.ts           # Generated types (server)
+├── hatk.generated.client.ts    # Generated types (client)
+├── vite.config.ts              # Vite + SvelteKit config
+├── svelte.config.js            # SvelteKit adapter config
+├── docker-compose.yml          # Local PDS for development
+├── Dockerfile                  # Production container build
+├── tsconfig.json               # TypeScript config (app)
+└── tsconfig.server.json        # TypeScript config (server)
 ```
-
-With `--svelte`, you also get `src/`, `svelte.config.js`, and `vite.config.ts` for a SvelteKit frontend.
 
 ---
 
-## Configuration
+## `app/` -- SvelteKit frontend
 
-### `config.yaml`
+The `app/` directory is a standard SvelteKit application. Routes live in `app/routes/`, shared code goes in `app/lib/`. The `svelte.config.js` maps `app/` as the SvelteKit source directory (instead of the default `src/`).
 
-Main configuration — relay URL, database path, port, OAuth settings, backfill options, and more. See [Configuration](/getting-started/configuration) for all options.
+Auth helpers for login, logout, and reading the current viewer are imported from `$hatk/client`. Data fetching uses `callXrpc()` from the same import to call your backend's typed endpoints.
 
-### `package.json`
+See the [Frontend section](/frontend/setup) for details on routing, data loading, and mutations.
 
-Standard Node.js manifest. The scaffold sets up scripts for `dev`, `test`, and `build`.
+## `server/` -- backend logic
 
-### `docker-compose.yml`
+The `server/` directory contains all your backend code. hatk auto-discovers files in this directory and registers them based on their exports:
 
-Spins up a local PDS and PLC directory for development. Used automatically by `hatk dev`.
+- **Feeds** -- files that export `defineFeed()` become feed generators, queryable via `dev.hatk.getFeed`
+- **XRPC handlers** -- files that export `defineQuery()` or `defineProcedure()` become typed API endpoints
+- **Hooks** -- files named `on-login.ts` fire after OAuth authentication
+- **OG images** -- files in `server/og/` generate dynamic OpenGraph images via satori
+- **Setup scripts** -- files in `server/setup/` run at boot time for custom migrations or data imports
+- **Labels** -- files in `server/labels/` define content moderation rules
 
-### `Dockerfile`
+Files prefixed with `_` (like `_helpers.ts`) are ignored by auto-discovery, so use that convention for shared utilities.
 
-Production container build. Copies your project, installs dependencies, and runs the hatk server.
+See the guides for [Feeds](/guides/feeds), [XRPC Handlers](/guides/xrpc-handlers), [Hooks](/guides/hooks), [OpenGraph](/guides/opengraph), and [Labels](/guides/labels).
 
-### `hatk.generated.ts`
+## `lexicons/` -- AT Protocol schemas
 
-Auto-generated TypeScript types derived from your lexicon schemas. Provides typed helpers like `defineFeed()`, `defineQuery()`, `defineProcedure()`, `seed()`, and a `views` object for constructing view responses. Regenerate with:
+Lexicons are JSON schemas that define your data model. Think of them like Prisma models, but for the AT Protocol -- they describe records (data types stored in user repositories), queries (GET endpoints), and procedures (POST endpoints).
+
+```
+lexicons/
+├── xyz/statusphere/
+│   ├── status.json         # Record: a status emoji
+│   └── getProfile.json     # Query: get a user's profile
+└── app/bsky/actor/
+    └── profile.json        # Bluesky's profile record (to index)
+```
+
+Lexicons drive two things automatically:
+1. **Database tables** -- hatk creates SQLite tables for each record type
+2. **TypeScript types** -- `hatk generate types` produces typed helpers in `hatk.generated.ts`
+
+Organized by reverse-DNS namespace (e.g., `xyz/statusphere/status.json` for the `xyz.statusphere.status` collection).
+
+## `seeds/` -- test fixture data
+
+The `seeds/seed.ts` file creates test accounts and records against the local PDS during development. It runs automatically when you `npm run dev`, or manually with `hatk seed`.
+
+Seeds use the AT Protocol API to create real data -- accounts, records, follows -- so your app has something to display during development without connecting to the live network.
+
+See the [Seeds guide](/guides/seeds).
+
+## `test/` -- tests
+
+Tests are organized by type:
+
+| Directory        | Purpose                        | Runner     |
+| ---------------- | ------------------------------ | ---------- |
+| `test/feeds/`    | Feed generator unit tests      | Vitest     |
+| `test/xrpc/`    | XRPC handler tests             | Vitest     |
+| `test/browser/`  | End-to-end browser tests       | Playwright |
+| `test/fixtures/` | Shared YAML test data          | --         |
+
+Run tests with `npm run test` (unit/integration) or `npm run test:browser` (Playwright).
+
+## `hatk.config.ts` -- configuration
+
+The main configuration file. Controls the relay connection, database path, backfill settings, OAuth, and more. Uses `defineConfig()` for type safety.
+
+See the [Configuration page](/getting-started/configuration) for all options.
+
+## `hatk.generated.ts` / `hatk.generated.client.ts`
+
+Auto-generated TypeScript derived from your lexicon schemas. Do not edit these files directly.
+
+- **`hatk.generated.ts`** -- server-side types and helpers: `defineFeed()`, `defineQuery()`, `defineProcedure()`, `seed()`, typed record interfaces, and view types
+- **`hatk.generated.client.ts`** -- client-safe subset: `callXrpc()` for typed API calls, `login()`/`logout()`/`parseViewer()` for auth, plus re-exported types
+
+Regenerate both with:
 
 ```bash
 npx hatk generate types
 ```
 
----
+## `vite.config.ts` / `svelte.config.js`
 
-## Core directories
+- **`vite.config.ts`** -- loads the `hatk()` Vite plugin (which proxies API routes to the hatk backend during development) and the `sveltekit()` plugin. Also configures test includes/excludes.
+- **`svelte.config.js`** -- sets `app/` as the SvelteKit source directory and configures the `$hatk` and `$hatk/client` import aliases that point to the generated files.
 
-:::note
-Files prefixed with `_` (e.g., `_helpers.ts`) are ignored by the framework's auto-discovery in all convention directories (`feeds/`, `xrpc/`, `og/`, `labels/`, `hooks/`, `setup/`). Use this for shared utilities, helper functions, or types that shouldn't be registered as handlers.
-:::
+## `db/schema.sql`
 
-### `lexicons/`
+Optional custom SQL that runs after hatk creates its auto-generated tables. Use this for custom indexes, views, or tables that go beyond what lexicons define.
 
-JSON schema files following the [AT Protocol Lexicon](https://atproto.com/specs/lexicon) format, organized by namespace:
+## `docker-compose.yml` / `Dockerfile`
 
-```
-lexicons/
-├── fm/teal/alpha/feed/play.json
-├── dev/hatk/unspecced/getPlay.json
-└── app/bsky/actor/profile.json
-```
-
-Lexicons define:
-
-- **Records** — data types stored in user repositories
-- **Queries** — read-only GET endpoints
-- **Procedures** — write POST endpoints
-
-They drive automatic DuckDB table creation and TypeScript type generation.
-
-### `feeds/`
-
-Feed generators using `defineFeed()`. Each file exports a feed with a `generate` function that queries DuckDB and returns record URIs, plus an optional `hydrate` function for enrichment. See [Feeds guide](/guides/feeds).
-
-```
-feeds/
-└── latest.ts
-```
-
-### `xrpc/`
-
-Custom XRPC endpoint handlers organized by namespace path. Each file uses `defineQuery()` or `defineProcedure()` and must have a matching lexicon. See [XRPC Handlers guide](/guides/xrpc-handlers).
-
-```
-xrpc/
-└── dev/hatk/unspecced/
-    └── getPlay.ts
-```
-
-### `og/`
-
-OpenGraph image routes using satori for server-side rendering. Each file exports a `path` and `generate()` function that returns a virtual DOM element. See [OpenGraph guide](/guides/opengraph).
-
-```
-og/
-└── play.ts
-```
-
-### `hooks/`
-
-Lifecycle hooks. Currently supports `on-login.ts`, which fires after a user authenticates via OAuth. The hook receives the user's `did` and an `ensureRepo` helper. See [Hooks guide](/guides/hooks).
-
-```
-hooks/
-└── on-login.ts
-```
-
-### `labels/`
-
-Label definitions for content moderation. Each file exports a label definition with `evaluate()` logic. See [Labels guide](/guides/labels).
-
-```
-labels/
-└── explicit.ts
-```
-
-### `seeds/`
-
-Test fixture data. Contains a `seed.ts` that creates accounts and records against the local PDS during development. Run with `hatk seed` or automatically during `hatk dev`. See [Seeds guide](/guides/seeds).
-
-```
-seeds/
-└── seed.ts
-```
-
-### `setup/`
-
-Boot-time setup scripts that run after the database initializes but before the server starts. Each file exports a handler function that receives a context with `db.query` and `db.run`:
-
-```typescript
-export default async function (ctx) {
-  await ctx.db.run(`CREATE TABLE IF NOT EXISTS my_cache (key TEXT, value TEXT)`)
-}
-```
-
-Setup scripts are skipped in test contexts.
-
-### `jobs/`
-
-Reserved for periodic background tasks. This directory is scaffolded but does not have runtime support yet.
-
-### `public/`
-
-Static files served by the server at the root path. Place your frontend HTML, CSS, and JavaScript here.
-
-```
-public/
-└── index.html
-```
-
-Hatk provides a default `robots.txt` that allows all crawlers. To customize it, add your own `public/robots.txt` — it will take priority over the default.
-
-### `src/` (with `--svelte`)
-
-When scaffolded with `--svelte`, a SvelteKit frontend replaces the plain `public/index.html`:
-
-```
-src/
-├── app.html              # HTML shell
-├── app.css               # Global styles
-├── error.html            # Error fallback
-├── lib/
-│   ├── api.ts            # Typed XRPC client instance
-│   ├── auth.ts           # OAuth helpers (login, logout, viewerDid)
-│   └── query.ts          # TanStack Query client
-└── routes/
-    ├── +layout.svelte    # Root layout (OAuth init + QueryProvider)
-    ├── +page.svelte      # Home page
-    ├── +error.svelte     # Error page
-    └── oauth/callback/
-        └── +page.svelte  # OAuth redirect target
-```
-
-The Vite plugin proxies API routes to the hatk backend during development. In production, `vite build` compiles to `public/`. See [Frontend guide](/guides/frontend) for details.
-
-### `test/`
-
-Test files organized by type:
-
-| Directory           | Purpose                      |
-| ------------------- | ---------------------------- |
-| `test/feeds/`       | Feed generator unit tests    |
-| `test/xrpc/`        | XRPC handler tests           |
-| `test/integration/` | End-to-end integration tests |
-| `test/browser/`     | Playwright browser tests     |
-| `test/fixtures/`    | Shared test data and helpers |
-
-Run all tests with `hatk test`. See [Testing](/cli/testing) for details.
-
----
+- **`docker-compose.yml`** -- runs a local PDS and PLC directory for development. Started automatically by `npm run dev`.
+- **`Dockerfile`** -- production container build for deployment.
 
 ## Runtime files
 
-### `data/`
-
-Created at runtime. Contains the DuckDB database file (`hatk.db`) and its write-ahead log.
+The `data/` directory is created at runtime and contains the SQLite database (`hatk.db`). It is gitignored by default.
 
 ```
 data/
-├── hatk.db
-└── hatk.db.wal
+└── hatk.db
 ```
-
-This directory is gitignored by default.

@@ -35,7 +35,7 @@ The `hatk` CLI manages your entire development workflow — from scaffolding a n
 | `hatk start`  | Start the server (production mode)              |
 | `hatk seed`   | Run seed data against local PDS                 |
 | `hatk reset`  | Wipe database and PDS                           |
-| `hatk schema` | Print DuckDB schema from lexicons               |
+| `hatk schema` | Print SQLite schema from lexicons                |
 
 ## Code Quality
 

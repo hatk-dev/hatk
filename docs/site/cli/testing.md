@@ -24,7 +24,7 @@ Without flags, all test types are run.
 
 ## Writing unit tests
 
-Unit tests use `createTestContext()` from `hatk/test` to boot an in-memory hatk — lexicons, DuckDB, feeds, and XRPC handlers — with no HTTP server, no PDS, and no indexer.
+Unit tests use `createTestContext()` from `hatk/test` to boot an in-memory hatk — lexicons, SQLite, feeds, and XRPC handlers — with no HTTP server, no PDS, and no indexer.
 
 ```typescript
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'

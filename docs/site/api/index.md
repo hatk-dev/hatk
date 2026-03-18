@@ -13,35 +13,43 @@ Hatk serves [XRPC](https://atproto.com/specs/xrpc) endpoints at `/xrpc/{nsid}`. 
 
 ## Authentication
 
-Authenticated endpoints require an OAuth DPoP bearer token in the `Authorization` header:
+hatk supports two authentication methods:
+
+**Session cookies** (recommended for SvelteKit apps) -- `login()`, `logout()`, and `parseViewer()` from `$hatk/client` handle the full OAuth flow and store the session in an encrypted cookie. See the [Auth guide](/guides/auth).
+
+**DPoP browser tokens** -- for direct XRPC calls from external clients, pass an OAuth DPoP bearer token in the `Authorization` header:
 
 ```
 Authorization: DPoP <token>
 ```
 
-Configure OAuth in your `config.yaml` to enable authentication. See [Configuration](/getting-started/configuration).
+Configure OAuth in your `hatk.config.ts` to enable authentication. See [Configuration](/getting-started/configuration).
 
 ## Client usage
 
-The generated client provides typed methods for all endpoints:
+The generated `callXrpc()` function from `$hatk/client` provides typed access to all endpoints:
 
 ```typescript
+import { callXrpc } from "$hatk/client";
+
 // Query (GET)
-const result = await api.query('dev.hatk.getRecords', {
-  collection: 'fm.teal.alpha.feed.play',
+const { items, cursor } = await callXrpc("dev.hatk.getRecords", {
+  collection: "fm.teal.alpha.feed.play",
   limit: 10,
-})
+});
 
 // Procedure (POST)
-const result = await api.call('dev.hatk.createRecord', {
-  collection: 'fm.teal.alpha.feed.play',
+const { uri, cid } = await callXrpc("dev.hatk.createRecord", {
+  collection: "fm.teal.alpha.feed.play",
   repo: userDid,
   record: { createdAt: new Date().toISOString() },
-})
+});
 
-// Upload binary data
-const result = await api.upload(file)
+// Pass SvelteKit's fetch for SSR deduplication
+const data = await callXrpc("dev.hatk.getFeed", { feed: "recent" }, fetch);
 ```
+
+The optional third parameter `customFetch` accepts a fetch function. Pass SvelteKit's `fetch` from load functions to enable request deduplication between server and client renders.
 
 ## Built-in endpoints
 

@@ -14,9 +14,9 @@ hatk new <name> [--svelte]
 | Option     | Description                                               |
 | ---------- | --------------------------------------------------------- |
 | `<name>`   | Project directory name (required)                         |
-| `--svelte` | Include a Svelte frontend with `src/routes` and `src/lib` |
+| `--svelte` | Include a SvelteKit frontend with `app/routes` and `app/lib` |
 
-The command creates the project directory with `config.yaml`, `lexicons/`, `feeds/`, `xrpc/`, `labels/`, `jobs/`, `og/`, `seeds/`, `public/`, `test/`, and the core framework lexicons under `lexicons/dev/hatk/`.
+The command creates the project directory with `hatk.config.ts`, `lexicons/`, `server/`, `seeds/`, `test/`, and the core framework lexicons under `lexicons/dev/hatk/`. With `--svelte`, it also creates `app/`, `vite.config.ts`, and `svelte.config.js`.
 
 ## `hatk generate`
 

@@ -1,40 +1,24 @@
 ---
 title: Configuration
-description: Configure your Hatk project with hatk.config.ts.
+description: Configure your hatk project with hatk.config.ts.
 ---
 
-## Overview
+hatk is configured through `hatk.config.ts` at the project root. The `defineConfig` helper provides type safety and autocompletion.
 
-Hatk is configured through `hatk.config.ts` at the project root. The `defineConfig` helper provides type safety and autocompletion. Most options can be overridden with environment variables.
+## Minimal example
 
-## Complete example
+Most projects only need a few options. Here is a minimal config that works for local development:
 
 ```typescript
 import { defineConfig } from '@hatk/hatk/config'
 
 export default defineConfig({
-  relay: 'ws://localhost:2583',
-  plc: 'http://localhost:2582',
   port: 3000,
   database: 'data/hatk.db',
-  publicDir: './public',
-  admins: [],
-
-  backfill: {
-    parallelism: 10,
-    fetchTimeout: 300,
-    maxRetries: 5,
-    fullNetwork: false,
-  },
-
-  ftsRebuildInterval: 500,
-
   oauth: {
-    issuer: 'http://127.0.0.1:3000',
-    scopes: ['atproto'],
     clients: [
       {
-        client_id: 'http://localhost',
+        client_id: 'http://127.0.0.1:3000/oauth-client-metadata.json',
         client_name: 'My App',
         redirect_uris: ['http://127.0.0.1:3000/oauth/callback'],
       },
@@ -43,98 +27,104 @@ export default defineConfig({
 })
 ```
 
-## Options
+## Production example
 
-### `relay`
+A real-world config that switches between local and production settings:
 
-WebSocket URL for the AT Protocol firehose relay.
+```typescript
+import { defineConfig } from '@hatk/hatk/config'
 
-- **Default:** `ws://localhost:2583`
-- **Env:** `RELAY`
+const isProd = process.env.NODE_ENV === 'production'
+const prodDomain = process.env.RAILWAY_PUBLIC_DOMAIN
 
-In production, point this to a relay like `wss://bsky.network`.
+export default defineConfig({
+  relay: isProd ? 'wss://bsky.network' : 'ws://localhost:2583',
+  plc: isProd ? 'https://plc.directory' : 'http://localhost:2582',
+  port: 3000,
+  database: isProd ? '/data/hatk.db' : 'data/hatk.db',
+  backfill: {
+    parallelism: 5,
+    signalCollections: ['xyz.statusphere.status'],
+  },
+  oauth: {
+    issuer: isProd && prodDomain ? `https://${prodDomain}` : undefined,
+    scopes: ['atproto'],
+    clients: [
+      ...(prodDomain
+        ? [{
+            client_id: `https://${prodDomain}/oauth-client-metadata.json`,
+            client_name: 'My App',
+            redirect_uris: [`https://${prodDomain}/oauth/callback`],
+          }]
+        : []),
+      {
+        client_id: 'http://127.0.0.1:3000/oauth-client-metadata.json',
+        client_name: 'My App',
+        redirect_uris: ['http://127.0.0.1:3000/oauth/callback'],
+      },
+    ],
+  },
+})
+```
 
-### `plc`
+## Server options
 
-PLC directory URL for DID resolution.
+| Option | Type | Default | Env | Description |
+| --- | --- | --- | --- | --- |
+| `relay` | `string` | `'ws://localhost:2583'` | `RELAY` | WebSocket URL for the AT Protocol firehose relay. Use `wss://bsky.network` in production. |
+| `plc` | `string` | `'https://plc.directory'` | `DID_PLC_URL` | PLC directory URL for DID resolution. Use `http://localhost:2582` for local dev. |
+| `port` | `number` | `3000` | `PORT` | HTTP port for the hatk backend server. |
+| `publicDir` | `string \| null` | `'./public'` | -- | Directory for static files. Set to `null` to disable static file serving. |
+| `collections` | `string[]` | `[]` | -- | Collection NSIDs to index. If empty, auto-derived from your lexicon record definitions. |
+| `admins` | `string[]` | `[]` | `ADMINS` | DIDs allowed to access `/admin/*` endpoints. Env var is comma-separated. |
 
-- **Default:** `https://plc.directory`
-- **Env:** `DID_PLC_URL`
+## Database options
 
-### `port`
+| Option | Type | Default | Env | Description |
+| --- | --- | --- | --- | --- |
+| `database` | `string` | `':memory:'` | `DATABASE` | SQLite database file path, resolved relative to the config file. Use an absolute path in production (e.g., `/data/hatk.db`). |
 
-HTTP port for the XRPC server.
+## Backfill options
 
-- **Default:** `3000`
-- **Env:** `PORT`
+The `backfill` object controls how the server catches up on historical data from the AT Protocol network.
 
-### `database`
-
-DuckDB file path. Resolved relative to the config file directory.
-
-- **Default:** `:memory:`
-- **Env:** `DATABASE`
-
-### `publicDir`
-
-Directory for static files. Set to `null` to disable static file serving.
-
-- **Default:** `./public`
-
-### `collections`
-
-Array of collection NSIDs to index. If empty, collections are auto-derived from your lexicon record definitions.
-
-### `admins`
-
-DIDs allowed to access `/admin/*` endpoints.
-
-- **Default:** `[]`
-- **Env:** `ADMINS` (comma-separated)
-
-## Backfill
-
-Controls how the server backfills historical data from the network.
-
-| Option              | Default | Env                      | Description                                                             |
-| ------------------- | ------- | ------------------------ | ----------------------------------------------------------------------- |
-| `parallelism`       | `5`     | `BACKFILL_PARALLELISM`   | Concurrent repo fetches                                                 |
-| `fetchTimeout`      | `300`   | `BACKFILL_FETCH_TIMEOUT` | Timeout per repo (seconds)                                              |
-| `maxRetries`        | `5`     | `BACKFILL_MAX_RETRIES`   | Max retry attempts for failed repos                                     |
-| `fullNetwork`       | `false` | `BACKFILL_FULL_NETWORK`  | Backfill the entire network                                             |
-| `repos`             | —       | `BACKFILL_REPOS`         | Pin specific DIDs to backfill (comma-separated)                         |
-| `signalCollections` | —       | —                        | Collections that trigger backfill (defaults to top-level `collections`) |
+| Option | Type | Default | Env | Description |
+| --- | --- | --- | --- | --- |
+| `backfill.parallelism` | `number` | `3` | `BACKFILL_PARALLELISM` | Number of concurrent repo fetches. |
+| `backfill.fetchTimeout` | `number` | `300` | `BACKFILL_FETCH_TIMEOUT` | Timeout per repo fetch in seconds. |
+| `backfill.maxRetries` | `number` | `5` | `BACKFILL_MAX_RETRIES` | Max retry attempts for failed repo fetches. |
+| `backfill.fullNetwork` | `boolean` | `false` | `BACKFILL_FULL_NETWORK` | Backfill the entire network (not just repos that interact with your collections). |
+| `backfill.repos` | `string[]` | -- | `BACKFILL_REPOS` | Pin specific DIDs to always backfill. Env var is comma-separated. |
+| `backfill.signalCollections` | `string[]` | -- | -- | Collections that trigger a backfill when a new record appears. Defaults to your top-level `collections`. |
 
 ## Full-text search
 
-### `ftsRebuildInterval`
+| Option | Type | Default | Env | Description |
+| --- | --- | --- | --- | --- |
+| `ftsRebuildInterval` | `number` | `5000` | `FTS_REBUILD_INTERVAL` | Rebuild the FTS index every N writes. Lower values mean fresher search results but more CPU usage. |
 
-Rebuild the FTS index every N writes. Lower values mean fresher search results but more CPU usage.
+## OAuth options
 
-- **Default:** `500`
-- **Env:** `FTS_REBUILD_INTERVAL`
+The `oauth` object configures AT Protocol OAuth for authenticated endpoints. Set to `null` or omit entirely to disable auth.
 
-## OAuth
+| Option | Type | Default | Env | Description |
+| --- | --- | --- | --- | --- |
+| `oauth.issuer` | `string` | `'http://127.0.0.1:{port}'` | `OAUTH_ISSUER` | The OAuth issuer URL. Typically your server's public URL. |
+| `oauth.scopes` | `string[]` | `['atproto']` | -- | OAuth scopes to request. Use [granular scopes](https://atproto.com/specs/oauth#scopes) to limit access (e.g., `'repo:xyz.statusphere.status?action=create&action=delete'`). |
+| `oauth.clients` | `OAuthClientConfig[]` | `[]` | -- | Allowed OAuth clients. Each entry needs `client_id`, `client_name`, and `redirect_uris`. |
+| `oauth.cookieName` | `string` | `'__hatk_session'` | -- | Name of the session cookie. |
 
-Configure OAuth for authenticated endpoints. Set to `null` (or omit) to disable.
+### OAuth client fields
 
-### `oauth.issuer`
+Each entry in `oauth.clients` has:
 
-The OAuth issuer URL. Typically your server's public URL.
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `client_id` | `string` | Yes | Client identifier URL (points to your OAuth client metadata JSON). |
+| `client_name` | `string` | Yes | Human-readable name shown during the authorization flow. |
+| `redirect_uris` | `string[]` | Yes | Allowed redirect URIs after authorization. |
+| `scope` | `string` | No | Scope override for this specific client. |
 
-- **Env:** `OAUTH_ISSUER`
+## Environment variable overrides
 
-### `oauth.scopes`
-
-OAuth scopes to request. Defaults to `['atproto']`.
-
-### `oauth.clients`
-
-Array of allowed OAuth clients. Each client needs:
-
-| Field           | Description             |
-| --------------- | ----------------------- |
-| `client_id`     | Client identifier URL   |
-| `client_name`   | Human-readable name     |
-| `redirect_uris` | Allowed redirect URIs   |
-| `scope`         | Optional scope override |
+Every option that lists an **Env** column can be set via environment variables. Environment variables take precedence over values in `hatk.config.ts`. This is useful for production deployments where you set secrets and infrastructure-specific values through your hosting platform's environment configuration.

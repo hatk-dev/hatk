@@ -1,12 +1,13 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
-  title: 'Hatk',
-  description: 'Build AT Protocol applications from scratch.',
+  title: 'hatk',
+  description: 'Build AT Protocol applications with typed XRPC endpoints.',
 
   themeConfig: {
     nav: [
       { text: 'Guide', link: '/getting-started/quickstart' },
+      { text: 'Frontend', link: '/frontend/setup' },
       { text: 'CLI', link: '/cli/' },
       { text: 'API', link: '/api/' },
     ],
@@ -23,16 +24,21 @@ export default defineConfig({
       {
         text: 'Guides',
         items: [
-          { text: 'Frontend (SvelteKit)', link: '/guides/frontend' },
-          { text: 'API Client', link: '/guides/api-client' },
-          { text: 'OAuth', link: '/guides/oauth' },
           { text: 'Feeds', link: '/guides/feeds' },
           { text: 'XRPC Handlers', link: '/guides/xrpc-handlers' },
-          { text: 'Labels', link: '/guides/labels' },
+          { text: 'Auth & OAuth', link: '/guides/auth' },
           { text: 'Seeds', link: '/guides/seeds' },
-          { text: 'OpenGraph Images', link: '/guides/opengraph' },
+          { text: 'Labels', link: '/guides/labels' },
+          { text: 'OpenGraph', link: '/guides/opengraph' },
           { text: 'Hooks', link: '/guides/hooks' },
-          { text: 'Deployment', link: '/guides/deployment' },
+        ],
+      },
+      {
+        text: 'Frontend',
+        items: [
+          { text: 'SvelteKit Setup', link: '/frontend/setup' },
+          { text: 'Data Loading', link: '/frontend/data-loading' },
+          { text: 'Mutations', link: '/frontend/mutations' },
         ],
       },
       {
@@ -59,6 +65,6 @@ export default defineConfig({
       },
     ],
 
-    socialLinks: [{ icon: 'github', link: 'https://github.com/bigmoves/atconf-workshop' }],
+    socialLinks: [{ icon: 'github', link: 'https://github.com/bigmoves/hatk' }],
   },
 })

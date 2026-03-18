@@ -19,13 +19,15 @@ Fetch a single record by its AT URI.
 ### Example
 
 ```bash
-curl "http://localhost:3000/xrpc/dev.hatk.getRecord?uri=at://did:plc:abc/fm.teal.alpha.feed.play/123"
+curl "http://127.0.0.1:3000/xrpc/dev.hatk.getRecord?uri=at://did:plc:abc/fm.teal.alpha.feed.play/123"
 ```
 
 ```typescript
-const { record } = await api.query('dev.hatk.getRecord', {
-  uri: 'at://did:plc:abc/fm.teal.alpha.feed.play/123',
-})
+import { callXrpc } from "$hatk/client";
+
+const { record } = await callXrpc("dev.hatk.getRecord", {
+  uri: "at://did:plc:abc/fm.teal.alpha.feed.play/123",
+});
 ```
 
 ### Response
@@ -60,14 +62,16 @@ Additional filter parameters are accepted based on the collection's schema — a
 ### Example
 
 ```bash
-curl "http://localhost:3000/xrpc/dev.hatk.getRecords?collection=fm.teal.alpha.feed.play&limit=10"
+curl "http://127.0.0.1:3000/xrpc/dev.hatk.getRecords?collection=fm.teal.alpha.feed.play&limit=10"
 ```
 
 ```typescript
-const { items, cursor } = await api.query('dev.hatk.getRecords', {
-  collection: 'fm.teal.alpha.feed.play',
+import { callXrpc } from "$hatk/client";
+
+const { items, cursor } = await callXrpc("dev.hatk.getRecords", {
+  collection: "fm.teal.alpha.feed.play",
   limit: 10,
-})
+});
 ```
 
 ### Response
@@ -86,7 +90,7 @@ const { items, cursor } = await api.query('dev.hatk.getRecords', {
 Create a record via the authenticated user's PDS.
 
 - **Type:** Procedure (POST)
-- **Auth:** Required
+- **Auth:** Required (session cookie or DPoP token)
 
 ### Input
 
@@ -99,15 +103,17 @@ Create a record via the authenticated user's PDS.
 ### Example
 
 ```bash
-curl -X POST "http://localhost:3000/xrpc/dev.hatk.createRecord" \
+curl -X POST "http://127.0.0.1:3000/xrpc/dev.hatk.createRecord" \
   -H "Authorization: DPoP <token>" \
   -H "Content-Type: application/json" \
   -d '{"collection":"fm.teal.alpha.feed.play","repo":"did:plc:abc","record":{"createdAt":"2025-01-01T00:00:00Z"}}'
 ```
 
 ```typescript
-const { uri, cid } = await api.call('dev.hatk.createRecord', {
-  collection: 'fm.teal.alpha.feed.play',
+import { callXrpc } from "$hatk/client";
+
+const { uri, cid } = await callXrpc("dev.hatk.createRecord", {
+  collection: "fm.teal.alpha.feed.play",
   repo: userDid,
   record: { createdAt: new Date().toISOString() },
 })
@@ -129,7 +135,7 @@ const { uri, cid } = await api.call('dev.hatk.createRecord', {
 Create or update a record at a specific rkey via the authenticated user's PDS.
 
 - **Type:** Procedure (POST)
-- **Auth:** Required
+- **Auth:** Required (session cookie or DPoP token)
 
 ### Input
 
@@ -143,18 +149,20 @@ Create or update a record at a specific rkey via the authenticated user's PDS.
 ### Example
 
 ```bash
-curl -X POST "http://localhost:3000/xrpc/dev.hatk.putRecord" \
+curl -X POST "http://127.0.0.1:3000/xrpc/dev.hatk.putRecord" \
   -H "Authorization: DPoP <token>" \
   -H "Content-Type: application/json" \
   -d '{"collection":"fm.teal.alpha.feed.play","rkey":"self","record":{"createdAt":"2025-01-01T00:00:00Z"}}'
 ```
 
 ```typescript
-const { uri, cid } = await api.call('dev.hatk.putRecord', {
-  collection: 'fm.teal.alpha.feed.play',
-  rkey: 'self',
+import { callXrpc } from "$hatk/client";
+
+const { uri, cid } = await callXrpc("dev.hatk.putRecord", {
+  collection: "fm.teal.alpha.feed.play",
+  rkey: "self",
   record: { createdAt: new Date().toISOString() },
-})
+});
 ```
 
 ### Response
@@ -173,7 +181,7 @@ const { uri, cid } = await api.call('dev.hatk.putRecord', {
 Delete a record via the authenticated user's PDS.
 
 - **Type:** Procedure (POST)
-- **Auth:** Required
+- **Auth:** Required (session cookie or DPoP token)
 
 ### Input
 
@@ -185,17 +193,19 @@ Delete a record via the authenticated user's PDS.
 ### Example
 
 ```bash
-curl -X POST "http://localhost:3000/xrpc/dev.hatk.deleteRecord" \
+curl -X POST "http://127.0.0.1:3000/xrpc/dev.hatk.deleteRecord" \
   -H "Authorization: DPoP <token>" \
   -H "Content-Type: application/json" \
   -d '{"collection":"fm.teal.alpha.feed.play","rkey":"123"}'
 ```
 
 ```typescript
-await api.call('dev.hatk.deleteRecord', {
-  collection: 'fm.teal.alpha.feed.play',
-  rkey: '123',
-})
+import { callXrpc } from "$hatk/client";
+
+await callXrpc("dev.hatk.deleteRecord", {
+  collection: "fm.teal.alpha.feed.play",
+  rkey: "123",
+});
 ```
 
 ### Response

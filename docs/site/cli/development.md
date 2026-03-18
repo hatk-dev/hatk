@@ -17,7 +17,7 @@ This runs three steps in sequence:
 2. **Seeds test data** by running `seeds/seed.ts`
 3. **Starts the Hatk server** with file watching for hot reload
 
-The PDS health is checked at `http://localhost:2583/xrpc/_health` before proceeding. If it doesn't start within 30 seconds, the command exits.
+The PDS health is checked at `http://127.0.0.1:2583/xrpc/_health` before proceeding. If it doesn't start within 30 seconds, the command exits.
 
 ## `hatk start`
 
@@ -27,7 +27,7 @@ Start the Hatk server without the PDS or seeding. Use this in production.
 hatk start
 ```
 
-Loads `config.yaml`, connects to the configured relay, and begins serving XRPC endpoints.
+Loads `hatk.config.ts`, connects to the configured relay, and begins serving XRPC endpoints.
 
 ## `hatk seed`
 
@@ -47,11 +47,11 @@ Wipe the database and PDS for a clean development slate.
 hatk reset
 ```
 
-This removes the DuckDB database file and resets the local PDS container, giving you a fresh start.
+This removes the SQLite database file and resets the local PDS container, giving you a fresh start.
 
 ## `hatk schema`
 
-Print the DuckDB table schema derived from your lexicon definitions.
+Print the SQLite table schema derived from your lexicon definitions.
 
 ```bash
 hatk schema

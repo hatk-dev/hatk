@@ -14,7 +14,7 @@ List all available label definitions.
 ### Example
 
 ```bash
-curl "http://localhost:3000/xrpc/dev.hatk.describeLabels"
+curl "http://127.0.0.1:3000/xrpc/dev.hatk.describeLabels"
 ```
 
 ### Response
