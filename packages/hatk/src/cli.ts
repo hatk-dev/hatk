@@ -1843,7 +1843,7 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     if (procedureNsids.length > 0) {
       clientOut += `  if (_procedures.has(nsid)) {\n`
       clientOut += `    const res = await _fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(arg) })\n`
-      clientOut += `    if (typeof window !== 'undefined' && res.status === 401) { window.location.href = '/oauth/login'; return new Promise(() => {}) as any }\n`
+      clientOut += `    if (typeof window !== 'undefined' && res.status === 401) { const _h = getViewer()?.handle; window.location.href = _h ? \`/oauth/login?handle=\${encodeURIComponent(_h)}\` : '/oauth/login'; return new Promise(() => {}) as any }\n`
       clientOut += `    if (!res.ok) throw new Error(\`XRPC \${nsid} failed: \${res.status}\`)\n`
       clientOut += `    return res.json() as Promise<OutputOf<K>>\n`
       clientOut += `  }\n`
