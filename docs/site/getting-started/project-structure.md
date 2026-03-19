@@ -74,7 +74,7 @@ See the guides for [Feeds](/guides/feeds), [XRPC Handlers](/guides/xrpc-handlers
 
 ## `lexicons/` -- AT Protocol schemas
 
-Lexicons are JSON schemas that define your data model. Think of them like Prisma models, but for the AT Protocol -- they describe records (data types stored in user repositories), queries (GET endpoints), and procedures (POST endpoints).
+Lexicons are JSON schemas that define your data model for the AT Protocol. They describe records (data types stored in user repositories), queries (GET endpoints), and procedures (POST endpoints).
 
 ```
 lexicons/

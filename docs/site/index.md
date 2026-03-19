@@ -13,14 +13,14 @@ hero:
       link: /cli/
 
 features:
-  - title: Typed end-to-end
-    details: Lexicons generate TypeScript types for records, queries, and feeds. Your editor catches mistakes before your users do.
-  - title: SQLite by default
-    details: No external database to configure. Data lives in a single file that just works — locally and in production.
-  - title: OAuth built-in
-    details: AT Protocol auth with session cookies. Login, logout, and viewer resolution with zero setup.
-  - title: SvelteKit-first
-    details: Full-stack with SSR, remote commands, and typed XRPC calls from a generated client.
+  - title: Convention-driven storage
+    details: Define lexicons, get tables with full-text search and pagination. No DDL to write.
+  - title: File-based backend
+    details: Files in server/feeds/ become feed generators. Files in server/xrpc/ become endpoints.
+  - title: OAuth included
+    details: Server-side AT Protocol OAuth with session cookies. Configure scopes in hatk.config.ts.
+  - title: Typed from lexicons
+    details: Lexicons generate TypeScript types for records, queries, feeds, and the client.
 ---
 
 ## Project Structure
@@ -41,7 +41,7 @@ my-app/
 │       └── getProfile.ts       # defineQuery('...', ...)
 ├── seeds/
 │   └── seed.ts                 # Test fixture data
-├── lexicons/                   # AT Protocol schemas (like Prisma models)
+├── lexicons/                   # AT Protocol schemas
 ├── hatk.config.ts              # Server configuration
 └── hatk.generated.ts           # Auto-generated types from lexicons
 ```
