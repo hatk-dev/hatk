@@ -101,7 +101,7 @@ The `backfill` object controls how the server catches up on historical data from
 
 | Option | Type | Default | Env | Description |
 | --- | --- | --- | --- | --- |
-| `ftsRebuildInterval` | `number` | `5000` | `FTS_REBUILD_INTERVAL` | Rebuild the FTS index every N writes. Lower values mean fresher search results but more CPU usage. |
+| `ftsRebuildInterval` | `number` | `5000` | `FTS_REBUILD_INTERVAL` | DuckDB only. Rebuild the FTS index every N writes. Lower values mean fresher search results but more CPU usage. SQLite uses incremental FTS updates and ignores this setting. |
 
 ## OAuth options
 
