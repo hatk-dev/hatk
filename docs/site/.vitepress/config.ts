@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
-  base: '/hatk/',
+  base: '/',
   title: 'hatk',
   description: 'Build AT Protocol applications with typed XRPC endpoints.',
 
