@@ -574,7 +574,7 @@ export function buildInsertOp(
 
     if (rawValue === undefined || rawValue === null) {
       values.push(null)
-    } else if (col.sqlType === 'JSON') {
+    } else if (col.isJson) {
       values.push(JSON.stringify(rawValue))
     } else {
       values.push(rawValue)
@@ -617,7 +617,7 @@ export async function insertRecord(
         const raw = item[col.originalName]
         if (raw === undefined || raw === null) {
           values.push(null)
-        } else if (col.sqlType === 'JSON') {
+        } else if (col.isJson) {
           values.push(JSON.stringify(raw))
         } else {
           values.push(raw)
@@ -656,7 +656,7 @@ export async function insertRecord(
           const raw = item[col.originalName]
           if (raw === undefined || raw === null) {
             values.push(null)
-          } else if (col.sqlType === 'JSON') {
+          } else if (col.isJson) {
             values.push(JSON.stringify(raw))
           } else {
             values.push(raw)
@@ -680,7 +680,7 @@ export async function insertRecord(
         const raw = branchData[col.originalName]
         if (raw === undefined || raw === null) {
           values.push(null)
-        } else if (col.sqlType === 'JSON') {
+        } else if (col.isJson) {
           values.push(JSON.stringify(raw))
         } else {
           values.push(raw)
@@ -1496,7 +1496,7 @@ export function reshapeRow(
   if (schema) {
     for (const col of schema.columns) {
       nameMap.set(col.name, col.originalName)
-      if (col.sqlType === 'JSON') jsonCols.add(col.name)
+      if (col.isJson) jsonCols.add(col.name)
     }
   }
 

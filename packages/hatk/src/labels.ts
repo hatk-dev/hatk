@@ -185,7 +185,7 @@ export async function rescanLabels(collections: string[]): Promise<{ scanned: nu
       for (const col of schema.columns) {
         let v = row[col.name]
         if (v === null || v === undefined) continue
-        if (col.sqlType === 'JSON' && typeof v === 'string') {
+        if (col.isJson && typeof v === 'string') {
           try {
             v = JSON.parse(v)
           } catch {}

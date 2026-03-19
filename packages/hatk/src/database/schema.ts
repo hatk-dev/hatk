@@ -6,9 +6,10 @@ import { DUCKDB_DIALECT } from './dialect.ts'
 export interface ColumnDef {
   name: string // snake_case column name
   originalName: string // camelCase lexicon field name
-  sqlType: string // DuckDB type
+  sqlType: string // dialect-specific SQL type (e.g. 'JSON' for DuckDB, 'TEXT' for SQLite)
   notNull: boolean
   isRef: boolean // true if this column holds an AT URI referencing another record
+  isJson: boolean // true if this column stores JSON data (blobs, refs, arrays, objects, unions)
 }
 
 export interface UnionBranchSchema {
@@ -51,29 +52,30 @@ export function toSnakeCase(str: string): string {
 interface TypeMapping {
   sqlType: string
   isRef: boolean
+  isJson: boolean
 }
 
 function mapType(prop: any, dialect: SqlDialect): TypeMapping {
   if (prop.type === 'string') {
-    if (prop.format === 'datetime') return { sqlType: dialect.typeMap.timestamp, isRef: false }
-    if (prop.format === 'at-uri') return { sqlType: dialect.typeMap.text, isRef: true }
-    return { sqlType: dialect.typeMap.text, isRef: false }
+    if (prop.format === 'datetime') return { sqlType: dialect.typeMap.timestamp, isRef: false, isJson: false }
+    if (prop.format === 'at-uri') return { sqlType: dialect.typeMap.text, isRef: true, isJson: false }
+    return { sqlType: dialect.typeMap.text, isRef: false, isJson: false }
   }
-  if (prop.type === 'integer') return { sqlType: dialect.typeMap.integer, isRef: false }
-  if (prop.type === 'boolean') return { sqlType: dialect.typeMap.boolean, isRef: false }
-  if (prop.type === 'bytes') return { sqlType: dialect.typeMap.blob, isRef: false }
-  if (prop.type === 'cid-link') return { sqlType: dialect.typeMap.text, isRef: false }
-  if (prop.type === 'array') return { sqlType: dialect.jsonType, isRef: false }
-  if (prop.type === 'blob') return { sqlType: dialect.jsonType, isRef: false }
-  if (prop.type === 'union') return { sqlType: dialect.jsonType, isRef: false }
-  if (prop.type === 'unknown') return { sqlType: dialect.jsonType, isRef: false }
-  if (prop.type === 'object') return { sqlType: dialect.jsonType, isRef: false }
+  if (prop.type === 'integer') return { sqlType: dialect.typeMap.integer, isRef: false, isJson: false }
+  if (prop.type === 'boolean') return { sqlType: dialect.typeMap.boolean, isRef: false, isJson: false }
+  if (prop.type === 'bytes') return { sqlType: dialect.typeMap.blob, isRef: false, isJson: false }
+  if (prop.type === 'cid-link') return { sqlType: dialect.typeMap.text, isRef: false, isJson: false }
+  if (prop.type === 'array') return { sqlType: dialect.jsonType, isRef: false, isJson: true }
+  if (prop.type === 'blob') return { sqlType: dialect.jsonType, isRef: false, isJson: true }
+  if (prop.type === 'union') return { sqlType: dialect.jsonType, isRef: false, isJson: true }
+  if (prop.type === 'unknown') return { sqlType: dialect.jsonType, isRef: false, isJson: true }
+  if (prop.type === 'object') return { sqlType: dialect.jsonType, isRef: false, isJson: true }
   if (prop.type === 'ref') {
     // strongRef contains { uri, cid } — handled specially in generateTableSchema
-    if (prop.ref === 'com.atproto.repo.strongRef') return { sqlType: 'STRONG_REF', isRef: true }
-    return { sqlType: dialect.jsonType, isRef: false }
+    if (prop.ref === 'com.atproto.repo.strongRef') return { sqlType: 'STRONG_REF', isRef: true, isJson: false }
+    return { sqlType: dialect.jsonType, isRef: false, isJson: true }
   }
-  return { sqlType: dialect.typeMap.text, isRef: false }
+  return { sqlType: dialect.typeMap.text, isRef: false, isJson: false }
 }
 
 // Recursively find all .json files in a directory
@@ -239,7 +241,7 @@ function resolveUnionBranch(
 
   const columns: ColumnDef[] = []
   for (const [propName, prop] of Object.entries(propSource)) {
-    const { sqlType, isRef } = mapType(prop as any, dialect)
+    const { sqlType, isRef, isJson } = mapType(prop as any, dialect)
     // Skip STRONG_REF expansion in branch tables — treat as JSON
     const finalType = sqlType === 'STRONG_REF' ? dialect.jsonType : sqlType
     columns.push({
@@ -247,7 +249,8 @@ function resolveUnionBranch(
       originalName: propName,
       sqlType: finalType,
       notNull: branchRequired.has(propName),
-      isRef: finalType !== 'JSON' && isRef,
+      isRef: finalType !== dialect.jsonType && isRef,
+      isJson: isJson || sqlType === 'STRONG_REF',
     })
   }
 
@@ -296,6 +299,7 @@ export function generateTableSchema(
         sqlType: dialect.jsonType,
         notNull: required.has(fieldName),
         isRef: false,
+        isJson: true,
       })
       continue
     }
@@ -307,13 +311,14 @@ export function generateTableSchema(
         const childColumns: ColumnDef[] = []
         const itemRequired = new Set(p.items?.required || lexicon.defs?.[p.items?.ref?.slice(1)]?.required || [])
         for (const [itemField, itemProp] of Object.entries(itemProps)) {
-          const { sqlType, isRef } = mapType(itemProp as any, dialect)
+          const { sqlType, isRef, isJson } = mapType(itemProp as any, dialect)
           childColumns.push({
             name: toSnakeCase(itemField),
             originalName: itemField,
             sqlType,
             notNull: itemRequired.has(itemField),
             isRef,
+            isJson,
           })
         }
         const snakeField = toSnakeCase(fieldName)
@@ -327,7 +332,7 @@ export function generateTableSchema(
       }
     }
 
-    const { sqlType, isRef } = mapType(p, dialect)
+    const { sqlType, isRef, isJson } = mapType(p, dialect)
 
     if (sqlType === 'STRONG_REF') {
       // Expand strongRef into two columns: {name}_uri and {name}_cid
@@ -337,6 +342,7 @@ export function generateTableSchema(
         sqlType: dialect.typeMap.text,
         notNull: required.has(fieldName),
         isRef: true,
+        isJson: false,
       })
       columns.push({
         name: toSnakeCase(fieldName) + '_cid',
@@ -344,6 +350,7 @@ export function generateTableSchema(
         sqlType: dialect.typeMap.text,
         notNull: required.has(fieldName),
         isRef: false,
+        isJson: false,
       })
     } else {
       columns.push({
@@ -352,6 +359,7 @@ export function generateTableSchema(
         sqlType,
         notNull: required.has(fieldName),
         isRef,
+        isJson,
       })
     }
   }
@@ -410,7 +418,7 @@ export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect 
     childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${childPrefix}_did ON ${child.tableName}(parent_did);`)
 
     for (const col of child.columns) {
-      if (col.sqlType === 'JSON' || col.sqlType === 'BLOB') continue
+      if (col.isJson || col.sqlType === 'BLOB') continue
       childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${childPrefix}_${col.name} ON ${child.tableName}(${col.name});`)
     }
   }
@@ -430,7 +438,7 @@ export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect 
       childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${branchPrefix}_did ON ${branch.tableName}(parent_did);`)
 
       for (const col of branch.columns) {
-        if (col.sqlType === 'JSON' || col.sqlType === 'BLOB') continue
+        if (col.isJson || col.sqlType === 'BLOB') continue
         childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${branchPrefix}_${col.name} ON ${branch.tableName}(${col.name});`)
       }
     }

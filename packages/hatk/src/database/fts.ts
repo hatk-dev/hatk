@@ -130,7 +130,7 @@ function computeFtsSchema(collection: string): { searchColNames: string[]; sourc
     if (col.sqlType === 'TEXT') {
       selectExprs.push(`t.${col.name}`)
       searchColNames.push(col.name)
-    } else if ((col.sqlType === 'JSON' || col.sqlType === 'TEXT') && record?.properties) {
+    } else if (col.isJson && record?.properties) {
       const prop = record.properties[col.originalName]
       if (prop?.type === 'blob') continue // skip blobs
       if (prop && lexicon) {
