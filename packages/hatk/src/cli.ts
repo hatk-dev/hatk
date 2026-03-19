@@ -1524,7 +1524,7 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     out += `import type { ${[...usedWrappers].sort().join(', ')}, LexServerParams, Checked, Prettify, StrictArg } from '@hatk/hatk/lex-types'\n`
     out += `import type { XrpcContext } from '@hatk/hatk/xrpc'\n`
     out += `import { callXrpc as _callXrpc } from '@hatk/hatk/xrpc'\n`
-    out += `import { defineFeed as _defineFeed, type FeedResult, type FeedContext, type HydrateContext } from '@hatk/hatk/feeds'\n`
+    out += `import { defineFeed as _defineFeed, type FeedResult, type FeedContext, type HydrateContext, type Row } from '@hatk/hatk/feeds'\n`
     out += `import { seed as _seed, type SeedOpts } from '@hatk/hatk/seed'\n`
 
     // Emit ALL lexicons as `const ... = {...} as const` (including defs-only)
@@ -1692,7 +1692,7 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
 
     // Emit Ctx helper for typesafe XRPC handler contexts
     out += `\n// ─── XRPC Helpers ───────────────────────────────────────────────────\n\n`
-    out += `export type { HydrateContext } from '@hatk/hatk/feeds'\n`
+    out += `export type { HydrateContext, Row } from '@hatk/hatk/feeds'\n`
     out += `export { InvalidRequestError, NotFoundError } from '@hatk/hatk/xrpc'\n`
     out += `export { defineSetup } from '@hatk/hatk/setup'\n`
     out += `export { defineHook } from '@hatk/hatk/hooks'\n`
