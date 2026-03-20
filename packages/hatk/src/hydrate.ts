@@ -1,11 +1,12 @@
 import {
-  getRecordsByUris,
+  getRecordsMap,
   countByFieldBatch,
   lookupByFieldBatch,
   querySQL,
-  reshapeRow,
   queryLabelsForUris,
   filterTakendownDids,
+  getRecordsByUris,
+  reshapeRow,
 } from './database/db.ts'
 import { blobUrl } from './xrpc.ts'
 import type { Row } from './lex-types.ts'
@@ -78,16 +79,7 @@ export function buildHydrateContext(items: Row<unknown>[], viewer: { did: string
     items,
     viewer,
     db: { query: querySQL },
-    getRecords: async (collection, uris) => {
-      if (uris.length === 0) return new Map()
-      const records = await getRecordsByUris(collection, uris)
-      const map = new Map<string, Row<unknown>>()
-      for (const r of records) {
-        const shaped = reshapeRow(r, r?.__childData, r?.__unionData)
-        if (shaped) map.set(shaped.uri, shaped)
-      }
-      return map as any
-    },
+    getRecords: getRecordsMap,
     lookup: async (collection, field, values) => {
       if (values.length === 0) return new Map()
       const unique = [...new Set(values.filter(Boolean))]

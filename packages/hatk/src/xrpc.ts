@@ -33,6 +33,7 @@ import {
   lookupByFieldBatch,
   countByFieldBatch,
   queryLabelsForUris,
+  getRecordsMap,
 } from './database/db.ts'
 import { resolveRecords } from './hydrate.ts'
 import { getLexicon } from './database/schema.ts'
@@ -90,6 +91,7 @@ export interface XrpcContext<
     opts?: { limit?: number; cursor?: string; fuzzy?: boolean },
   ) => Promise<{ records: Row<Records[K]>[]; cursor?: string }>
   resolve: <R = unknown>(uris: string[]) => Promise<Row<R>[]>
+  getRecords: <R = unknown>(collection: string, uris: string[]) => Promise<Map<string, Row<R>>>
   lookup: <R = any>(collection: string, field: string, values: string[]) => Promise<Map<string, Row<R>>>
   count: (collection: string, field: string, values: string[]) => Promise<Map<string, number>>
   exists: (collection: string, filters: Record<string, string>) => Promise<boolean>
@@ -208,6 +210,7 @@ export async function initXrpc(xrpcDir: string): Promise<void> {
           filterTakendownDids,
           search: searchRecords,
           resolve: resolveRecords as any,
+          getRecords: getRecordsMap,
           lookup: async (collection, field, values) => {
             if (values.length === 0) return new Map()
             const unique = [...new Set(values.filter(Boolean))]
@@ -270,6 +273,7 @@ export function registerXrpcHandler(nsid: string, handlerModule: { handler: (ctx
         filterTakendownDids,
         search: searchRecords,
         resolve: resolveRecords as any,
+        getRecords: getRecordsMap,
         lookup: async (collection, field, values) => {
           if (values.length === 0) return new Map()
           const unique = [...new Set(values.filter(Boolean))]

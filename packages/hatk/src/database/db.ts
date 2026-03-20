@@ -1201,6 +1201,18 @@ export async function getRecordsByUris(collection: string, uris: string[]): Prom
   return uris.map((u) => byUri.get(u)).filter(Boolean)
 }
 
+/** Fetch records by URIs and return as a shaped Map keyed by URI. */
+export async function getRecordsMap<R = unknown>(collection: string, uris: string[]): Promise<Map<string, Row<R>>> {
+  if (uris.length === 0) return new Map()
+  const records = await getRecordsByUris(collection, uris)
+  const map = new Map<string, Row<R>>()
+  for (const r of records) {
+    const shaped = reshapeRow(r, r?.__childData, r?.__unionData)
+    if (shaped) map.set(shaped.uri, shaped as Row<R>)
+  }
+  return map
+}
+
 /**
  * Multi-phase search across any collection's records.
  *

@@ -26,6 +26,7 @@ import {
   lookupByFieldBatch,
   countByFieldBatch,
   queryLabelsForUris,
+  getRecordsMap,
 } from './database/db.ts'
 import { resolveRecords } from './hydrate.ts'
 import { blobUrl } from './xrpc.ts'
@@ -143,6 +144,7 @@ export async function initOpengraph(ogDir: string): Promise<void> {
           filterTakendownDids,
           search: searchRecords,
           resolve: resolveRecords as any,
+          getRecords: getRecordsMap,
           lookup: async (collection, field, values) => {
             if (values.length === 0) return new Map()
             const unique = [...new Set(values.filter(Boolean))]
@@ -229,6 +231,7 @@ export function registerOgHandler(ogMod: {
         filterTakendownDids,
         search: searchRecords,
         resolve: resolveRecords as any,
+        getRecords: getRecordsMap,
         lookup: async (collection, field, values) => {
           if (values.length === 0) return new Map()
           const unique = [...new Set(values.filter(Boolean))]
