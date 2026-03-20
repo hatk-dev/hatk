@@ -1334,8 +1334,11 @@ export async function searchRecords(
     }
   }
 
-  // Remove score columns from results
-  const records = bm25Results.map(({ score: _score, fuzzy_score: _fuzzy_score, ...rest }: any) => rest)
+  // Remove score columns and reshape into Row<T> with value
+  const rawRecords = bm25Results.map(({ score: _score, fuzzy_score: _fuzzy_score, ...rest }: any) => rest)
+  const records = rawRecords
+    .map((r: any) => reshapeRow(r, r?.__childData, r?.__unionData))
+    .filter((r: any): r is Row<unknown> => r != null)
 
   const lastRow = bm25Results[bm25Results.length - 1]
   const nextCursor = hasMore && lastRow?.score != null ? packCursor(lastRow.score, lastRow.cid) : undefined
