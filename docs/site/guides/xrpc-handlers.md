@@ -87,10 +87,11 @@ Both `defineQuery` and `defineProcedure` handlers receive the same context objec
 | `input`               | object                    | Request body (procedures only), typed from the lexicon's input schema |
 | `db.query`            | function                  | Run SQL queries against your SQLite database                          |
 | `db.run`              | function                  | Execute SQL statements (INSERT, UPDATE, DELETE)                       |
-| `viewer`              | `{ did: string }` \| null | The authenticated user, or null                                       |
+| `viewer`              | `{ did: string; handle?: string }` \| null | The authenticated user, or null                              |
 | `limit`               | number                    | Requested page size                                                   |
 | `cursor`              | string \| undefined       | Pagination cursor                                                     |
 | `resolve`             | function                  | Resolve AT URIs into full records                                     |
+| `getRecords`          | function                  | Fetch records by URI from another collection                          |
 | `lookup`              | function                  | Look up records by a field value                                      |
 | `count`               | function                  | Count records by field value                                          |
 | `exists`              | function                  | Check if a record exists matching field filters                       |
@@ -142,7 +143,7 @@ const profile = profiles.get(did1);
 
 ### `ctx.viewer`
 
-`viewer` is `{ did: string }` when the request comes from an authenticated user, or `null` for unauthenticated requests. Check it to protect endpoints that require authentication:
+`viewer` is `{ did: string; handle?: string }` when the request comes from an authenticated user, or `null` for unauthenticated requests. Check it to protect endpoints that require authentication:
 
 ```typescript
 if (!viewer) throw new Error("Authentication required");

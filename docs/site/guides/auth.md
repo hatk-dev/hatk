@@ -181,7 +181,7 @@ export default defineQuery("my.app.getPrivateData", async (ctx) => {
 });
 ```
 
-`ctx.viewer` is the same `{ did: string }` shape in both XRPC handlers and feed `generate`/`hydrate` functions.
+`ctx.viewer` is the same `{ did: string; handle?: string }` shape in both XRPC handlers and feed `generate`/`hydrate` functions.
 
 ## Complete example
 

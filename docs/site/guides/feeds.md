@@ -53,7 +53,7 @@ This feed queries every status record, sorted newest-first, with automatic curso
 | `params`              | `Record<string, string>`  | Query string parameters from the request                            |
 | `limit`               | number                    | Requested page size                                                 |
 | `cursor`              | string \| undefined       | Pagination cursor from the client                                   |
-| `viewer`              | `{ did: string }` \| null | The authenticated user, or null                                     |
+| `viewer`              | `{ did: string; handle?: string }` \| null | The authenticated user, or null                                     |
 | `ok`                  | function                  | Wraps your return value with type checking                          |
 | `paginate`            | function                  | Run a paginated query (handles cursor, ORDER BY, LIMIT)             |
 | `packCursor`          | function                  | Encode a `(primary, cid)` pair into an opaque cursor string         |
@@ -135,12 +135,15 @@ const parsed = unpackCursor(cursor);
 
 The optional `hydrate` function enriches feed results with additional data. After `generate` returns URIs, the framework resolves them into full records, then passes those records to `hydrate`.
 
-### Hydrate context reference
+### Hydrate function signature
+
+`hydrate` receives a `BaseContext` and an array of `Row<T>` items (the resolved records). Each row has `uri`, `did`, `handle`, and `value`.
+
+### BaseContext reference
 
 | Field        | Type                      | Description                                                     |
 | ------------ | ------------------------- | --------------------------------------------------------------- |
-| `items`      | `Row[]`                   | The resolved records (each has `uri`, `did`, `handle`, `value`) |
-| `viewer`     | `{ did: string }` \| null | The authenticated user, or null                                 |
+| `viewer`     | `{ did: string; handle?: string }` \| null | The authenticated user, or null                |
 | `db.query`   | function                  | Run SQL queries against your SQLite database                    |
 | `getRecords` | function                  | Fetch records by URI from another collection                    |
 | `lookup`     | function                  | Look up records by a field value (e.g. profiles by DID)         |
@@ -153,13 +156,13 @@ The optional `hydrate` function enriches feed results with additional data. Afte
 This feed queries status records and hydrates each one with the author's profile:
 
 ```typescript
-import { defineFeed, views, type Status, type Profile, type HydrateContext } from "$hatk";
+import { defineFeed, views, type Status, type Profile, type BaseContext, type Row } from "$hatk";
 
 export default defineFeed({
   collection: "xyz.statusphere.status",
   label: "Recent",
 
-  hydrate: (ctx) => hydrateStatuses(ctx),
+  hydrate: (ctx, items) => hydrateStatuses(ctx, items as Row<Status>[]),
 
   async generate(ctx) {
     const { rows, cursor } = await ctx.paginate<{ uri: string }>(
@@ -171,11 +174,11 @@ export default defineFeed({
   },
 });
 
-async function hydrateStatuses(ctx: HydrateContext<Status>) {
-  const dids = [...new Set(ctx.items.map((item) => item.did).filter(Boolean))];
+async function hydrateStatuses(ctx: BaseContext, items: Row<Status>[]) {
+  const dids = [...new Set(items.map((item) => item.did).filter(Boolean))];
   const profiles = await ctx.lookup<Profile>("app.bsky.actor.profile", "did", dids);
 
-  return ctx.items.map((item) => {
+  return items.map((item) => {
     const author = profiles.get(item.did);
     return views.statusView({
       uri: item.uri,
@@ -204,13 +207,13 @@ Key patterns:
 Hydration can also use `ctx.viewer` to add viewer-specific data like bookmarks:
 
 ```typescript
-async function hydratePlays(ctx: HydrateContext<Play>) {
-  const dids = [...new Set(ctx.items.map((item) => item.did).filter(Boolean))];
+async function hydratePlays(ctx: BaseContext, items: Row<Play>[]) {
+  const dids = [...new Set(items.map((item) => item.did).filter(Boolean))];
   const profiles = await ctx.lookup<Profile>("app.bsky.actor.profile", "did", dids);
 
   // Load viewer's bookmarks
   const bookmarks = new Map<string, string>();
-  if (ctx.viewer?.did && ctx.items.length > 0) {
+  if (ctx.viewer?.did && items.length > 0) {
     const rows = await ctx.db.query(
       `SELECT subject, uri FROM "community.lexicon.bookmarks.bookmark" WHERE did = $1`,
       [ctx.viewer.did],
@@ -220,7 +223,7 @@ async function hydratePlays(ctx: HydrateContext<Play>) {
     }
   }
 
-  return ctx.items.map((item) => {
+  return items.map((item) => {
     const author = profiles.get(item.did);
     return views.playView({
       record: { uri: item.uri, did: item.did, handle: item.handle, ...item.value },
