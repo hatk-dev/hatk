@@ -537,7 +537,7 @@ export async function handleCallback(
     tokenExpiresAt: tokenData.expires_in ? Math.floor(Date.now() / 1000) + tokenData.expires_in : undefined,
   })
 
-  await fireOnLoginHook(did)
+  await fireOnLoginHook(did, config)
 
   // Generate authorization code for the client
   const clientCode = randomToken()

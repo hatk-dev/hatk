@@ -9,7 +9,7 @@ import { initDatabase, migrateSchema, getSchemaDump } from './database/db.ts'
 import { createAdapter } from './database/adapter-factory.ts'
 import { getDialect } from './database/dialect.ts'
 import { setSearchPort } from './database/fts.ts'
-import { configureRelay } from './xrpc.ts'
+import { configureRelay, configureOAuth } from './xrpc.ts'
 import { initOAuth } from './oauth/server.ts'
 import { initServer } from './server-init.ts'
 import { createHandler, registerCoreHandlers } from './server.ts'
@@ -74,6 +74,7 @@ await initServer(resolve(configDir, 'server'))
 
 // Register built-in dev.hatk.* handlers so callXrpc() can find them
 registerCoreHandlers(collections, config.oauth)
+configureOAuth(config.oauth)
 
 if (config.oauth) {
   await initOAuth(config.oauth, config.plc, config.relay)

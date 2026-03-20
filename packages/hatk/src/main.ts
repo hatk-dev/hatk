@@ -11,7 +11,7 @@ import { createAdapter } from './database/adapter-factory.ts'
 import { getDialect } from './database/dialect.ts'
 import { setSearchPort } from './database/fts.ts'
 import { initFeeds, listFeeds } from './feeds.ts'
-import { initXrpc, listXrpc, configureRelay, callXrpc } from './xrpc.ts'
+import { initXrpc, listXrpc, configureRelay, configureOAuth, callXrpc } from './xrpc.ts'
 import { initOpengraph } from './opengraph.ts'
 import { initLabels, getLabelDefinitions } from './labels.ts'
 import { startIndexer } from './indexer.ts'
@@ -125,6 +125,7 @@ if (existsSync(serverDir)) {
 
 // Register built-in dev.hatk.* handlers so callXrpc() can find them
 registerCoreHandlers(collections, config.oauth)
+configureOAuth(config.oauth)
 
 // Write db/schema.sql (after setup, so setup-created tables are included)
 try {

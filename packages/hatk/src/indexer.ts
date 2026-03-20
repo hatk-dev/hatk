@@ -39,6 +39,7 @@ const pendingBuffers = new Map<string, WriteBuffer[]>()
 
 // Track in-flight backfills to avoid duplicates
 const backfillInFlight = new Set<string>()
+const backfillPromises = new Map<string, { promise: Promise<void>; resolve: () => void }>()
 const pendingReschedule = new Set<string>()
 
 // In-memory cache of repo status to avoid flooding the DB read queue
@@ -157,6 +158,12 @@ function bufferWrite(item: WriteBuffer): void {
  * `maxConcurrentBackfills`. Failed backfills retry with exponential delay up
  * to `maxRetries`.
  */
+/** Wait for a DID's backfill to complete if one is in flight. */
+export function awaitBackfill(did: string): Promise<void> {
+  const entry = backfillPromises.get(did)
+  return entry ? entry.promise : Promise.resolve()
+}
+
 export async function triggerAutoBackfill(did: string, attempt = 0): Promise<void> {
   if (backfillInFlight.has(did)) return
   if (backfillInFlight.size >= maxConcurrentBackfills) {
@@ -171,6 +178,11 @@ export async function triggerAutoBackfill(did: string, attempt = 0): Promise<voi
   }
   backfillInFlight.add(did)
   pendingBuffers.set(did, [])
+  if (!backfillPromises.has(did)) {
+    let resolveBackfill!: () => void
+    const promise = new Promise<void>((r) => { resolveBackfill = r })
+    backfillPromises.set(did, { promise, resolve: resolveBackfill })
+  }
   if (attempt === 0) await setRepoStatus(did, 'pending')
   const elapsed = timer()
 
@@ -213,6 +225,13 @@ export async function triggerAutoBackfill(did: string, attempt = 0): Promise<voi
     error,
     retry_count: currentRetryCount,
   })
+
+  // Resolve awaiting callers (e.g. on-login hooks)
+  const entry = backfillPromises.get(did)
+  if (entry) {
+    entry.resolve()
+    backfillPromises.delete(did)
+  }
 
   if (status === 'error' && currentRetryCount < indexerMaxRetries) {
     const delaySecs = Math.min(currentRetryCount * 60, 3600)

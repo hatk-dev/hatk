@@ -102,6 +102,9 @@ Both `defineQuery` and `defineProcedure` handlers receive the same context objec
 | `unpackCursor`        | function                  | Decode a cursor back into `{ primary, cid }`                          |
 | `isTakendown`         | function                  | Check if a DID has been taken down                                    |
 | `filterTakendownDids` | function                  | Filter a list of DIDs, returning those taken down                     |
+| `createRecord`        | function                  | Write a record to the viewer's PDS and index locally                  |
+| `putRecord`           | function                  | Create or update a record on the viewer's PDS                         |
+| `deleteRecord`        | function                  | Delete a record from the viewer's PDS and local index                 |
 
 ### `ctx.ok()`
 

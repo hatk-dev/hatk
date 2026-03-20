@@ -39,8 +39,17 @@ import { resolveRecords, buildBaseContext } from './hydrate.ts'
 import type { BaseContext } from './hydrate.ts'
 import { getLexicon } from './database/schema.ts'
 import type { Row, FlatRow } from './lex-types.ts'
+import type { OAuthConfig } from './config.ts'
+import { pdsCreateRecord, pdsPutRecord, pdsDeleteRecord } from './pds-proxy.ts'
 
 export type { Row, FlatRow }
+
+let _oauthConfig: OAuthConfig | null = null
+
+/** Set the OAuth config used for record write helpers. Called once during boot. */
+export function configureOAuth(config: OAuthConfig | null) {
+  _oauthConfig = config
+}
 
 /** Thrown from XRPC handlers to return a 400 response with an error message. */
 export class InvalidRequestError extends Error {
@@ -92,6 +101,20 @@ export interface XrpcContext<
   ) => Promise<{ records: Row<Records[K]>[]; cursor?: string }>
   resolve: <R = unknown>(uris: string[]) => Promise<Row<R>[]>
   exists: (collection: string, filters: Record<string, string>) => Promise<boolean>
+  createRecord: (
+    collection: string,
+    record: Record<string, unknown>,
+    opts?: { rkey?: string },
+  ) => Promise<{ uri?: string; cid?: string }>
+  putRecord: (
+    collection: string,
+    rkey: string,
+    record: Record<string, unknown>,
+  ) => Promise<{ uri?: string; cid?: string }>
+  deleteRecord: (
+    collection: string,
+    rkey: string,
+  ) => Promise<void>
 }
 
 /** Internal representation of a loaded XRPC handler module. */
@@ -157,6 +180,21 @@ export function buildXrpcContext(
       const conditions = Object.entries(filters).map(([field, value]) => ({ field, value }))
       const uri = await findUriByFields(collection, conditions)
       return uri !== null
+    },
+    createRecord: async (collection, record, opts) => {
+      if (!_oauthConfig) throw new Error('No OAuth config — cannot write to PDS')
+      if (!viewer) throw new Error('Authentication required to write records')
+      return pdsCreateRecord(_oauthConfig, viewer, { collection, record, rkey: opts?.rkey })
+    },
+    putRecord: async (collection, rkey, record) => {
+      if (!_oauthConfig) throw new Error('No OAuth config — cannot write to PDS')
+      if (!viewer) throw new Error('Authentication required to write records')
+      return pdsPutRecord(_oauthConfig, viewer, { collection, rkey, record })
+    },
+    deleteRecord: async (collection, rkey) => {
+      if (!_oauthConfig) throw new Error('No OAuth config — cannot write to PDS')
+      if (!viewer) throw new Error('Authentication required to write records')
+      await pdsDeleteRecord(_oauthConfig, viewer, { collection, rkey })
     },
   }
 }
