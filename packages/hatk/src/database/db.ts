@@ -21,11 +21,11 @@ export function closeDatabase(): void {
   port?.close()
 }
 
-async function run(sql: string, params: any[] = []): Promise<void> {
+async function run(sql: string, params: unknown[] = []): Promise<void> {
   return port.execute(sql, params)
 }
 
-export async function runBatch(operations: Array<{ sql: string; params: any[] }>): Promise<void> {
+export async function runBatch(operations: Array<{ sql: string; params: unknown[] }>): Promise<void> {
   await port.beginTransaction()
   try {
     for (const op of operations) {
@@ -41,8 +41,8 @@ export async function runBatch(operations: Array<{ sql: string; params: any[] }>
   }
 }
 
-async function all(sql: string, params: any[] = []): Promise<any[]> {
-  return port.query(sql, params)
+async function all<T = unknown>(sql: string, params: unknown[] = []): Promise<T[]> {
+  return port.query<T>(sql, params)
 }
 
 export async function initDatabase(
@@ -151,7 +151,7 @@ async function getExistingColumns(tableName: string): Promise<Map<string, string
   const cols = new Map<string, string>()
   try {
     const query = dialect.introspectColumnsQuery(tableName)
-    const rows = await all(query)
+    const rows = await all<{ column_name?: string; name?: string; data_type?: string; type?: string }>(query)
     for (const row of rows) {
       // SQLite PRAGMA returns { name, type }, DuckDB returns { column_name, data_type }
       const name = (row.column_name || row.name) as string
@@ -335,7 +335,7 @@ async function applyMigrationChanges(changes: MigrationChange[]): Promise<void> 
 }
 
 export async function getCursor(key: string): Promise<string | null> {
-  const rows = await all(`SELECT value FROM _cursor WHERE key = $1`, [key])
+  const rows = await all<{ value: string }>(`SELECT value FROM _cursor WHERE key = $1`, [key])
   return rows[0]?.value || null
 }
 
@@ -344,7 +344,7 @@ export async function setCursor(key: string, value: string): Promise<void> {
 }
 
 export async function getRepoStatus(did: string): Promise<string | null> {
-  const rows = await all(`SELECT status FROM _repos WHERE did = $1`, [did])
+  const rows = await all<{ status: string }>(`SELECT status FROM _repos WHERE did = $1`, [did])
   return rows[0]?.status || null
 }
 
@@ -382,28 +382,28 @@ export async function setRepoStatus(
 }
 
 export async function getRepoRev(did: string): Promise<string | null> {
-  const rows = await all(`SELECT rev FROM _repos WHERE did = $1`, [did])
+  const rows = await all<{ rev: string }>(`SELECT rev FROM _repos WHERE did = $1`, [did])
   return rows[0]?.rev ?? null
 }
 
 export async function getRepoRetryInfo(did: string): Promise<{ retryCount: number; retryAfter: number } | null> {
-  const rows = await all(`SELECT retry_count, retry_after FROM _repos WHERE did = $1`, [did])
+  const rows = await all<{ retry_count: number; retry_after: number }>(`SELECT retry_count, retry_after FROM _repos WHERE did = $1`, [did])
   if (rows.length === 0) return null
   return { retryCount: Number(rows[0].retry_count), retryAfter: Number(rows[0].retry_after) }
 }
 
 export async function listRetryEligibleRepos(maxRetries: number): Promise<string[]> {
   const now = Math.floor(Date.now() / 1000)
-  const rows = await all(`SELECT did FROM _repos WHERE status = 'failed' AND retry_after <= $1 AND retry_count < $2`, [
+  const rows = await all<{ did: string }>(`SELECT did FROM _repos WHERE status = 'failed' AND retry_after <= $1 AND retry_count < $2`, [
     now,
     maxRetries,
   ])
-  return rows.map((r: any) => r.did)
+  return rows.map((r) => r.did)
 }
 
 export async function listPendingRepos(): Promise<string[]> {
-  const rows = await all(`SELECT did FROM _repos WHERE status = 'pending'`)
-  return rows.map((r: any) => r.did)
+  const rows = await all<{ did: string }>(`SELECT did FROM _repos WHERE status = 'pending'`)
+  return rows.map((r) => r.did)
 }
 
 export async function listActiveRepoDids(): Promise<string[]> {
@@ -416,7 +416,7 @@ export async function removeRepo(did: string): Promise<void> {
 }
 
 export async function getRepoHandle(did: string): Promise<string | null> {
-  const rows = await all(`SELECT handle FROM _repos WHERE did = $1`, [did])
+  const rows = await all<{ handle: string }>(`SELECT handle FROM _repos WHERE did = $1`, [did])
   return rows[0]?.handle ?? null
 }
 
@@ -449,7 +449,7 @@ export async function listReposPaginated(
 
   const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : ''
 
-  const countRows = await all(`SELECT ${dialect.countAsInteger} as total FROM _repos${where}`, params)
+  const countRows = await all<{ total: number }>(`SELECT ${dialect.countAsInteger} as total FROM _repos${where}`, params)
   const total = Number(countRows[0]?.total || 0)
 
   const rows = await all(
@@ -463,16 +463,16 @@ export async function listReposPaginated(
 export async function getCollectionCounts(): Promise<Record<string, number>> {
   const counts: Record<string, number> = {}
   for (const [collection, schema] of schemas) {
-    const rows = await all(`SELECT ${dialect.countAsInteger} as count FROM ${schema.tableName}`)
+    const rows = await all<{ count: number }>(`SELECT ${dialect.countAsInteger} as count FROM ${schema.tableName}`)
     counts[collection] = Number(rows[0]?.count || 0)
   }
   return counts
 }
 
 export async function getRepoStatusCounts(): Promise<Record<string, number>> {
-  const rows = await all(`SELECT status, ${dialect.countAsInteger} as count FROM _repos GROUP BY status`)
+  const rows = await all<{ status: string; count: number }>(`SELECT status, ${dialect.countAsInteger} as count FROM _repos GROUP BY status`)
   const counts: Record<string, number> = {}
-  for (const row of rows) counts[row.status as string] = Number(row.count)
+  for (const row of rows) counts[row.status] = Number(row.count)
   return counts
 }
 
@@ -483,8 +483,8 @@ export async function getDatabaseSize(): Promise<Record<string, string>> {
     return (rows[0] as Record<string, string>) ?? {}
   }
   // SQLite: compute from page_count * page_size
-  const pages = await all('SELECT page_count FROM pragma_page_count()')
-  const sizes = await all('SELECT page_size FROM pragma_page_size()')
+  const pages = await all<{ page_count: number }>('SELECT page_count FROM pragma_page_count()')
+  const sizes = await all<{ page_size: number }>('SELECT page_size FROM pragma_page_size()')
   const pageCount = Number(pages[0]?.page_count ?? 0)
   const pageSize = Number(sizes[0]?.page_size ?? 0)
   const bytes = pageCount * pageSize
@@ -493,7 +493,7 @@ export async function getDatabaseSize(): Promise<Record<string, string>> {
 }
 
 export async function getLabelCount(val: string): Promise<number> {
-  const rows = await all(`SELECT ${dialect.countAsInteger} as count FROM _labels WHERE val = $1`, [val])
+  const rows = await all<{ count: number }>(`SELECT ${dialect.countAsInteger} as count FROM _labels WHERE val = $1`, [val])
   return Number(rows[0]?.count || 0)
 }
 
@@ -751,13 +751,13 @@ export async function queryLabelsForUris(
 > {
   if (uris.length === 0) return new Map()
   const placeholders = uris.map((_, i) => `$${i + 1}`).join(',')
-  const rows = await all(
+  const rows = await all<{ src: string; uri: string; val: string; neg: boolean; cts: string; exp: string | null }>(
     `SELECT src, uri, val, neg, cts, exp FROM _labels l1 WHERE uri IN (${placeholders}) AND (exp IS NULL OR exp > CURRENT_TIMESTAMP) AND neg = false AND NOT EXISTS (SELECT 1 FROM _labels l2 WHERE l2.uri = l1.uri AND l2.val = l1.val AND l2.neg = true AND l2.id > l1.id)`,
     uris,
   )
   const result = new Map<string, Array<any>>()
   for (const row of rows) {
-    const key = row.uri as string
+    const key = row.uri
     if (!result.has(key)) result.set(key, [])
     result.get(key)!.push({
       src: row.src,
@@ -1122,8 +1122,8 @@ export async function queryRecords(
     }
   }
 
-  const lastRow = rows[rows.length - 1]
-  const nextCursor = hasMore && lastRow ? packCursor(lastRow[sortName], lastRow.cid) : undefined
+  const lastRow = rows[rows.length - 1] as Record<string, unknown> | undefined
+  const nextCursor = hasMore && lastRow ? packCursor(lastRow[sortName] as string, lastRow.cid as string) : undefined
 
   return { records: rows, cursor: nextCursor }
 }
@@ -1320,7 +1320,7 @@ export async function searchRecords(
       LIMIT $2`
 
     try {
-      const fuzzyRows = await all(fuzzySQL, [query, remaining + existingUris.size])
+      const fuzzyRows = await all<Record<string, unknown>>(fuzzySQL, [query, remaining + existingUris.size])
       phasesUsed.push('fuzzy')
       for (const row of fuzzyRows) {
         if (bm25Results.length >= limit) break
@@ -1358,11 +1358,11 @@ export async function searchRecords(
 }
 
 // Raw SQL for script feeds
-export async function querySQL(sql: string, params: any[] = []): Promise<any[]> {
+export async function querySQL(sql: string, params: unknown[] = []): Promise<unknown[]> {
   return all(sql, params)
 }
 
-export async function runSQL(sql: string, params: any[] = []): Promise<void> {
+export async function runSQL(sql: string, params: unknown[] = []): Promise<void> {
   return run(sql, params)
 }
 
@@ -1381,7 +1381,7 @@ export function getSchema(collection: string): TableSchema | undefined {
 export async function countByField(collection: string, field: string, value: string): Promise<number> {
   const schema = schemas.get(collection)
   if (!schema) return 0
-  const rows = await all(`SELECT COUNT(*) as count FROM ${schema.tableName} WHERE ${field} = $1`, [value])
+  const rows = await all<{ count: number }>(`SELECT COUNT(*) as count FROM ${schema.tableName} WHERE ${field} = $1`, [value])
   return Number(rows[0]?.count || 0)
 }
 
@@ -1394,13 +1394,13 @@ export async function countByFieldBatch(
   const schema = schemas.get(collection)
   if (!schema) return new Map()
   const placeholders = values.map((_, i) => `$${i + 1}`).join(',')
-  const rows = await all(
+  const rows = await all<Record<string, unknown>>(
     `SELECT ${field}, COUNT(*) as count FROM ${schema.tableName} WHERE ${field} IN (${placeholders}) GROUP BY ${field}`,
     values,
   )
   const result = new Map<string, number>()
   for (const row of rows) {
-    result.set(row[field], Number(row.count))
+    result.set(row[field] as string, Number(row.count))
   }
   return result
 }
@@ -1421,20 +1421,20 @@ export async function findByFieldBatch(
   const schema = schemas.get(collection)
   if (!schema) return new Map()
   const placeholders = values.map((_, i) => `$${i + 1}`).join(',')
-  const rows = await all(
+  const rows = await all<Record<string, any>>(
     `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE t.${field} IN (${placeholders})`,
     values,
   )
   // Attach child data if this collection has decomposed arrays
   if (schema.children.length > 0 && rows.length > 0) {
-    const uris = rows.map((r: any) => r.uri)
+    const uris = rows.map((r) => r.uri)
     const childData = new Map<string, Map<string, any[]>>()
     for (const child of schema.children) {
       const childRows = await getChildRows(child.tableName, uris)
       childData.set(child.fieldName, childRows)
     }
     for (const row of rows) {
-      ;(row as any).__childData = childData
+      row.__childData = childData
     }
   }
 
@@ -1470,7 +1470,7 @@ export async function findUriByFields(
   if (!schema) return null
   const where = conditions.map((c, i) => `${c.field} = $${i + 1}`).join(' AND ')
   const params = conditions.map((c) => c.value)
-  const rows = await all(`SELECT uri FROM ${schema.tableName} WHERE ${where} LIMIT 1`, params)
+  const rows = await all<{ uri: string }>(`SELECT uri FROM ${schema.tableName} WHERE ${where} LIMIT 1`, params)
   return rows[0]?.uri || null
 }
 
@@ -1486,7 +1486,7 @@ export function normalizeValue(v: any): any {
 export async function getChildRows(childTableName: string, parentUris: string[]): Promise<Map<string, any[]>> {
   if (parentUris.length === 0) return new Map()
   const placeholders = parentUris.map((_, i) => `$${i + 1}`).join(',')
-  const rows = await all(`SELECT * FROM ${childTableName} WHERE parent_uri IN (${placeholders})`, parentUris)
+  const rows = await all<Record<string, any>>(`SELECT * FROM ${childTableName} WHERE parent_uri IN (${placeholders})`, parentUris)
   const result = new Map<string, any[]>()
   for (const row of rows) {
     const key = row.parent_uri as string
@@ -1631,7 +1631,7 @@ export async function searchAccounts(query: string, limit: number = 20): Promise
 export async function getAccountRecordCount(did: string): Promise<number> {
   let total = 0
   for (const [, schema] of schemas) {
-    const rows = await all(`SELECT COUNT(*) as count FROM ${schema.tableName} WHERE did = $1`, [did])
+    const rows = await all<{ count: number }>(`SELECT COUNT(*) as count FROM ${schema.tableName} WHERE did = $1`, [did])
     total += Number(rows[0]?.count || 0)
   }
   return total
@@ -1640,8 +1640,8 @@ export async function getAccountRecordCount(did: string): Promise<number> {
 export async function getAllRecordUrisForDid(did: string): Promise<string[]> {
   const uris: string[] = []
   for (const [, schema] of schemas) {
-    const rows = await all(`SELECT uri FROM ${schema.tableName} WHERE did = $1`, [did])
-    uris.push(...rows.map((r: any) => r.uri))
+    const rows = await all<{ uri: string }>(`SELECT uri FROM ${schema.tableName} WHERE did = $1`, [did])
+    uris.push(...rows.map((r) => r.uri))
   }
   return uris
 }
@@ -1652,13 +1652,13 @@ export async function isTakendownDid(did: string): Promise<boolean> {
 }
 
 export async function getPreferences(did: string): Promise<Record<string, any>> {
-  const rows = await all(`SELECT key, value FROM _preferences WHERE did = $1`, [did])
+  const rows = await all<{ key: string; value: string }>(`SELECT key, value FROM _preferences WHERE did = $1`, [did])
   const prefs: Record<string, any> = {}
   for (const row of rows) {
     try {
-      prefs[row.key as string] = typeof row.value === 'string' ? JSON.parse(row.value as string) : row.value
+      prefs[row.key] = typeof row.value === 'string' ? JSON.parse(row.value) : row.value
     } catch {
-      prefs[row.key as string] = row.value
+      prefs[row.key] = row.value
     }
   }
   return prefs
@@ -1676,6 +1676,6 @@ export async function putPreference(did: string, key: string, value: any): Promi
 export async function filterTakendownDids(dids: string[]): Promise<Set<string>> {
   if (dids.length === 0) return new Set()
   const placeholders = dids.map((_, i) => `$${i + 1}`).join(',')
-  const rows = await all(`SELECT did FROM _repos WHERE did IN (${placeholders}) AND status = 'takendown'`, dids)
-  return new Set(rows.map((r: any) => r.did))
+  const rows = await all<{ did: string }>(`SELECT did FROM _repos WHERE did IN (${placeholders}) AND status = 'takendown'`, dids)
+  return new Set(rows.map((r) => r.did))
 }

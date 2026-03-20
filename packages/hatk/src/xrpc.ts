@@ -35,7 +35,8 @@ import {
   queryLabelsForUris,
   getRecordsMap,
 } from './database/db.ts'
-import { resolveRecords } from './hydrate.ts'
+import { resolveRecords, buildBaseContext } from './hydrate.ts'
+import type { BaseContext } from './hydrate.ts'
 import { getLexicon } from './database/schema.ts'
 import type { Row, FlatRow } from './lex-types.ts'
 
@@ -71,16 +72,15 @@ export interface XrpcContext<
   P = Record<string, string>,
   Records extends Record<string, any> = Record<string, any>,
   I = unknown,
-> {
+> extends BaseContext {
   db: {
-    query: (sql: string, params?: any[]) => Promise<any[]>
-    run: (sql: string, ...params: any[]) => Promise<void>
+    query: (sql: string, params?: unknown[]) => Promise<unknown[]>
+    run: (sql: string, params?: unknown[]) => Promise<void>
   }
   params: P
   input: I
   cursor?: string
   limit: number
-  viewer: { did: string; handle?: string } | null
   packCursor: (primary: string | number, cid: string) => string
   unpackCursor: (cursor: string) => { primary: string; cid: string } | null
   isTakendown: (did: string) => Promise<boolean>
@@ -91,16 +91,7 @@ export interface XrpcContext<
     opts?: { limit?: number; cursor?: string; fuzzy?: boolean },
   ) => Promise<{ records: Row<Records[K]>[]; cursor?: string }>
   resolve: <R = unknown>(uris: string[]) => Promise<Row<R>[]>
-  getRecords: <R = unknown>(collection: string, uris: string[]) => Promise<Map<string, Row<R>>>
-  lookup: <R = any>(collection: string, field: string, values: string[]) => Promise<Map<string, Row<R>>>
-  count: (collection: string, field: string, values: string[]) => Promise<Map<string, number>>
   exists: (collection: string, filters: Record<string, string>) => Promise<boolean>
-  labels: (uris: string[]) => Promise<Map<string, any[]>>
-  blobUrl: (
-    did: string,
-    ref: unknown,
-    preset?: 'avatar' | 'banner' | 'feed_thumbnail' | 'feed_fullsize',
-  ) => string | undefined
 }
 
 /** Internal representation of a loaded XRPC handler module. */
@@ -138,6 +129,36 @@ export function blobUrl(
     return `http://localhost:2583/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${p.ref.$link}`
   }
   return `https://cdn.bsky.app/img/${preset}/plain/${did}/${p.ref.$link}@jpeg`
+}
+
+/** Build a full XrpcContext from request parameters. Reuses buildBaseContext for shared fields. */
+export function buildXrpcContext(
+  params: Record<string, string>,
+  cursor: string | undefined,
+  limit: number,
+  viewer: { did: string; handle?: string } | null,
+  input?: unknown,
+): XrpcContext {
+  const base = buildBaseContext(viewer)
+  return {
+    ...base,
+    db: { query: querySQL, run: runSQL },
+    params,
+    input: input || {},
+    cursor,
+    limit,
+    packCursor,
+    unpackCursor,
+    isTakendown: isTakendownDid,
+    filterTakendownDids,
+    search: searchRecords,
+    resolve: resolveRecords as any,
+    exists: async (collection, filters) => {
+      const conditions = Object.entries(filters).map(([field, value]) => ({ field, value }))
+      const uri = await findUriByFields(collection, conditions)
+      return uri !== null
+    },
+  }
 }
 
 const handlers = new Map<string, XrpcHandler>()
@@ -197,38 +218,7 @@ export async function initXrpc(xrpcDir: string): Promise<void> {
           }
         }
 
-        const ctx: XrpcContext = {
-          db: { query: querySQL, run: runSQL },
-          params,
-          input: input || {},
-          cursor,
-          limit,
-          viewer,
-          packCursor,
-          unpackCursor,
-          isTakendown: isTakendownDid,
-          filterTakendownDids,
-          search: searchRecords,
-          resolve: resolveRecords as any,
-          getRecords: getRecordsMap,
-          lookup: async (collection, field, values) => {
-            if (values.length === 0) return new Map()
-            const unique = [...new Set(values.filter(Boolean))]
-            return lookupByFieldBatch(collection, field, unique) as any
-          },
-          count: async (collection, field, values) => {
-            if (values.length === 0) return new Map()
-            const unique = [...new Set(values.filter(Boolean))]
-            return countByFieldBatch(collection, field, unique)
-          },
-          exists: async (collection, filters) => {
-            const conditions = Object.entries(filters).map(([field, value]) => ({ field, value }))
-            const uri = await findUriByFields(collection, conditions)
-            return uri !== null
-          },
-          labels: queryLabelsForUris,
-          blobUrl,
-        }
+        const ctx = buildXrpcContext(params, cursor, limit, viewer, input)
         return handler.handler(ctx)
       },
     })
@@ -260,38 +250,7 @@ export function registerXrpcHandler(nsid: string, handlerModule: { handler: (ctx
         }
       }
 
-      const ctx: XrpcContext = {
-        db: { query: querySQL, run: runSQL },
-        params,
-        input: input || {},
-        cursor,
-        limit,
-        viewer,
-        packCursor,
-        unpackCursor,
-        isTakendown: isTakendownDid,
-        filterTakendownDids,
-        search: searchRecords,
-        resolve: resolveRecords as any,
-        getRecords: getRecordsMap,
-        lookup: async (collection, field, values) => {
-          if (values.length === 0) return new Map()
-          const unique = [...new Set(values.filter(Boolean))]
-          return lookupByFieldBatch(collection, field, unique) as any
-        },
-        count: async (collection, field, values) => {
-          if (values.length === 0) return new Map()
-          const unique = [...new Set(values.filter(Boolean))]
-          return countByFieldBatch(collection, field, unique)
-        },
-        exists: async (collection, filters) => {
-          const conditions = Object.entries(filters).map(([field, value]) => ({ field, value }))
-          const uri = await findUriByFields(collection, conditions)
-          return uri !== null
-        },
-        labels: queryLabelsForUris,
-        blobUrl,
-      }
+      const ctx = buildXrpcContext(params, cursor, limit, viewer, input)
       return handlerModule.handler(ctx)
     },
   })

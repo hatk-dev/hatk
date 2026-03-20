@@ -15,9 +15,8 @@ export type { Row }
 
 // --- Types ---
 
-export interface HydrateContext<T = unknown> {
-  items: Row<T>[]
-  viewer: { did: string } | null
+export interface BaseContext {
+  viewer: { did: string; handle?: string } | null
   db: { query: (sql: string, params?: unknown[]) => Promise<unknown[]> }
   getRecords: <R = unknown>(collection: string, uris: string[]) => Promise<Map<string, Row<R>>>
   lookup: <R = unknown>(collection: string, field: string, values: string[]) => Promise<Map<string, Row<R>>>
@@ -73,10 +72,9 @@ export async function resolveRecords(uris: string[]): Promise<Row<unknown>[]> {
 
 // --- Context Builder ---
 
-/** Build a HydrateContext for a feed's hydrate function. */
-export function buildHydrateContext(items: Row<unknown>[], viewer: { did: string } | null): HydrateContext {
+/** Build a BaseContext for hydration. */
+export function buildBaseContext(viewer: { did: string; handle?: string } | null): BaseContext {
   return {
-    items,
     viewer,
     db: { query: querySQL },
     getRecords: getRecordsMap,

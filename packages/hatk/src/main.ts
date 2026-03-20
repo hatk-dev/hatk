@@ -140,7 +140,7 @@ try {
 
 // Detect orphaned tables
 try {
-  const existingTables = await querySQL(getSqlDialect().listTablesQuery)
+  const existingTables = (await querySQL(getSqlDialect().listTablesQuery)) as { table_name: string }[]
   for (const row of existingTables) {
     const tableName = row.table_name
     const isChildTable = collections.some((c) => tableName.startsWith(c + '__'))

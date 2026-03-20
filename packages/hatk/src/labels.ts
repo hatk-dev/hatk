@@ -169,7 +169,7 @@ export async function runLabelRules(record: {
  * @returns Count of records scanned and new labels applied
  */
 export async function rescanLabels(collections: string[]): Promise<{ scanned: number; labeled: number }> {
-  const beforeRows = await querySQL(`SELECT COUNT(*) as count FROM _labels`)
+  const beforeRows = (await querySQL(`SELECT COUNT(*) as count FROM _labels`)) as { count: number }[]
   const beforeCount = Number(beforeRows[0]?.count || 0)
 
   let scanned = 0
@@ -178,7 +178,7 @@ export async function rescanLabels(collections: string[]): Promise<{ scanned: nu
     const schema = getSchema(collection)
     if (!schema) continue
 
-    const rows = await querySQL(`SELECT * FROM ${schema.tableName}`)
+    const rows = (await querySQL(`SELECT * FROM ${schema.tableName}`)) as Record<string, any>[]
     for (const row of rows) {
       scanned++
       const value: Record<string, any> = {}
@@ -203,7 +203,7 @@ export async function rescanLabels(collections: string[]): Promise<{ scanned: nu
     }
   }
 
-  const afterRows = await querySQL(`SELECT COUNT(*) as count FROM _labels`)
+  const afterRows = (await querySQL(`SELECT COUNT(*) as count FROM _labels`)) as { count: number }[]
   const afterCount = Number(afterRows[0]?.count || 0)
 
   return { scanned, labeled: afterCount - beforeCount }

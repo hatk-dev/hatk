@@ -67,9 +67,9 @@ CREATE TABLE IF NOT EXISTS _oauth_dpop_jtis (
 // --- Key Management ---
 
 export async function getServerKey(kid: string): Promise<{ privateKey: string; publicKey: string } | null> {
-  const rows = await querySQL('SELECT private_key, public_key FROM _oauth_keys WHERE kid = $1', [kid])
+  const rows = (await querySQL('SELECT private_key, public_key FROM _oauth_keys WHERE kid = $1', [kid])) as { private_key: string; public_key: string }[]
   if (rows.length === 0) return null
-  return { privateKey: rows[0].private_key as string, publicKey: rows[0].public_key as string }
+  return { privateKey: rows[0].private_key, publicKey: rows[0].public_key }
 }
 
 export async function storeServerKey(kid: string, privateKey: string, publicKey: string): Promise<void> {
@@ -147,10 +147,10 @@ export async function storeAuthCode(code: string, requestUri: string): Promise<v
 }
 
 export async function consumeAuthCode(code: string): Promise<string | null> {
-  const rows = await querySQL('SELECT request_uri FROM _oauth_codes WHERE code = $1', [code])
+  const rows = (await querySQL('SELECT request_uri FROM _oauth_codes WHERE code = $1', [code])) as { request_uri: string }[]
   if (rows.length === 0) return null
   await runSQL('DELETE FROM _oauth_codes WHERE code = $1', [code])
-  return rows[0].request_uri as string
+  return rows[0].request_uri
 }
 
 // --- Sessions ---

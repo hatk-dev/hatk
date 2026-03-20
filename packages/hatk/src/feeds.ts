@@ -2,11 +2,11 @@ import { resolve } from 'node:path'
 import { readdirSync } from 'node:fs'
 import { log } from './logger.ts'
 import { querySQL, packCursor, unpackCursor, isTakendownDid, filterTakendownDids } from './database/db.ts'
-import { resolveRecords, buildHydrateContext } from './hydrate.ts'
-import type { HydrateContext, Row } from './hydrate.ts'
+import { resolveRecords, buildBaseContext } from './hydrate.ts'
+import type { BaseContext, Row } from './hydrate.ts'
 import type { Checked } from './lex-types.ts'
 
-export type { HydrateContext, Row }
+export type { BaseContext, Row }
 
 export interface FeedResult {
   uris: string[]
@@ -25,7 +25,7 @@ export interface PaginateResult<T> {
 }
 
 export interface FeedContext {
-  db: { query: (sql: string, params?: any[]) => Promise<any[]> }
+  db: { query: (sql: string, params?: unknown[]) => Promise<unknown[]> }
   params: Record<string, string>
   cursor?: string
   limit: number
@@ -48,7 +48,7 @@ interface FeedHandler {
     limit: number,
     viewer: { did: string } | null,
   ) => Promise<FeedResult>
-  hydrate?: (ctx: HydrateContext) => Promise<unknown[]>
+  hydrate?: (ctx: BaseContext, items: Row<unknown>[]) => Promise<unknown[]>
 }
 
 // --- Typed feed helper ---
@@ -63,18 +63,18 @@ type FeedOpts =
       view?: string
       label: string
       generate: FeedGenerate
-      hydrate?: (ctx: HydrateContext<any>) => Promise<unknown[]>
+      hydrate?: (ctx: BaseContext, items: Row<any>[]) => Promise<unknown[]>
     }
   | {
       collection?: never
       view?: never
       label: string
       generate: FeedGenerate
-      hydrate: (ctx: HydrateContext<any>) => Promise<unknown[]>
+      hydrate: (ctx: BaseContext, items: Row<any>[]) => Promise<unknown[]>
     }
 
 export function createPaginate(deps: {
-  db: { query: (sql: string, params?: any[]) => Promise<any[]> }
+  db: { query: (sql: string, params?: unknown[]) => Promise<unknown[]> }
   cursor?: string
   limit: number
   packCursor: (primary: string | number, cid: string) => string
@@ -260,8 +260,8 @@ export async function executeFeed(
 
   if (handler.hydrate) {
     const items = await resolveRecords(result.uris)
-    const ctx = buildHydrateContext(items, viewer || null)
-    const hydrated = await handler.hydrate(ctx)
+    const ctx = buildBaseContext(viewer || null)
+    const hydrated = await handler.hydrate(ctx, items)
     return { items: hydrated, cursor: result.cursor }
   }
 

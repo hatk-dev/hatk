@@ -465,10 +465,10 @@ export async function runBackfill(opts: BackfillOpts): Promise<number> {
 
     // Wait until the earliest retry_after has passed
     const now = Math.floor(Date.now() / 1000)
-    const rows = await querySQL(
+    const rows = (await querySQL(
       `SELECT MIN(retry_after) as earliest FROM _repos WHERE status = 'failed' AND retry_after > $1 AND retry_count < $2`,
       [now, maxRetries],
-    )
+    )) as { earliest: number | null }[]
     const earliest = rows[0]?.earliest ? Number(rows[0].earliest) : 0
     if (earliest > now) {
       await new Promise((resolve) => setTimeout(resolve, (earliest - now) * 1000))

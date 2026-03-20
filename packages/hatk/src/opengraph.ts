@@ -14,22 +14,7 @@ async function getResvg() {
   if (!_Resvg) _Resvg = (await import('@resvg/resvg-js')).Resvg
   return _Resvg
 }
-import {
-  querySQL,
-  runSQL,
-  packCursor,
-  unpackCursor,
-  isTakendownDid,
-  filterTakendownDids,
-  searchRecords,
-  findUriByFields,
-  lookupByFieldBatch,
-  countByFieldBatch,
-  queryLabelsForUris,
-  getRecordsMap,
-} from './database/db.ts'
-import { resolveRecords } from './hydrate.ts'
-import { blobUrl } from './xrpc.ts'
+import { buildXrpcContext } from './xrpc.ts'
 import type { XrpcContext } from './xrpc.ts'
 
 /** Virtual DOM node for satori rendering */
@@ -132,37 +117,7 @@ export async function initOpengraph(ogDir: string): Promise<void> {
       pattern,
       paramNames,
       execute: async (params) => {
-        const ctx: XrpcContext = {
-          db: { query: querySQL, run: runSQL },
-          params,
-          input: {},
-          limit: 1,
-          viewer: null,
-          packCursor,
-          unpackCursor,
-          isTakendown: isTakendownDid,
-          filterTakendownDids,
-          search: searchRecords,
-          resolve: resolveRecords as any,
-          getRecords: getRecordsMap,
-          lookup: async (collection, field, values) => {
-            if (values.length === 0) return new Map()
-            const unique = [...new Set(values.filter(Boolean))]
-            return lookupByFieldBatch(collection, field, unique) as any
-          },
-          count: async (collection, field, values) => {
-            if (values.length === 0) return new Map()
-            const unique = [...new Set(values.filter(Boolean))]
-            return countByFieldBatch(collection, field, unique)
-          },
-          exists: async (collection, filters) => {
-            const conditions = Object.entries(filters).map(([field, value]) => ({ field, value }))
-            const uri = await findUriByFields(collection, conditions)
-            return uri !== null
-          },
-          labels: queryLabelsForUris,
-          blobUrl,
-        }
+        const ctx = buildXrpcContext(params, undefined, 1, null)
         ;(ctx as any).fetchImage = async (url: string): Promise<string | null> => {
           try {
             const resp = await fetch(url, { redirect: 'follow' })
@@ -219,37 +174,7 @@ export function registerOgHandler(ogMod: {
     pattern,
     paramNames,
     execute: async (params) => {
-      const ctx: XrpcContext = {
-        db: { query: querySQL, run: runSQL },
-        params,
-        input: {},
-        limit: 1,
-        viewer: null,
-        packCursor,
-        unpackCursor,
-        isTakendown: isTakendownDid,
-        filterTakendownDids,
-        search: searchRecords,
-        resolve: resolveRecords as any,
-        getRecords: getRecordsMap,
-        lookup: async (collection, field, values) => {
-          if (values.length === 0) return new Map()
-          const unique = [...new Set(values.filter(Boolean))]
-          return lookupByFieldBatch(collection, field, unique) as any
-        },
-        count: async (collection, field, values) => {
-          if (values.length === 0) return new Map()
-          const unique = [...new Set(values.filter(Boolean))]
-          return countByFieldBatch(collection, field, unique)
-        },
-        exists: async (collection, filters) => {
-          const conditions = Object.entries(filters).map(([field, value]) => ({ field, value }))
-          const uri = await findUriByFields(collection, conditions)
-          return uri !== null
-        },
-        labels: queryLabelsForUris,
-        blobUrl,
-      }
+      const ctx = buildXrpcContext(params, undefined, 1, null)
       ;(ctx as any).fetchImage = async (url: string): Promise<string | null> => {
         try {
           const resp = await fetch(url, { redirect: 'follow' })
