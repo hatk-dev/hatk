@@ -532,6 +532,8 @@ export async function getSchemaDump(): Promise<string> {
       sql = sql.replace(/\n\s*"(\w+)"/g, '\n$1')
       // Ensure closing paren is on its own line
       sql = sql.replace(/([^(\s])\)$/, '$1\n)')
+      // Normalize leading-comma columns added by ALTER TABLE into trailing commas
+      sql = sql.replace(/\n\s*,\s*/g, ',\n')
       // Split into lines and re-indent consistently
       const lines = sql.split('\n').map((l) => l.trim())
       sql = lines

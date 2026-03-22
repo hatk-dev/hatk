@@ -26,6 +26,7 @@ import {
   storeAuthCode,
   consumeAuthCode,
   storeSession,
+  deleteSession,
   checkAndStoreDpopJti,
   cleanupExpiredOAuth,
   storeRefreshToken,
@@ -779,6 +780,7 @@ export async function refreshPdsSession(
       did: session.did,
       pds_endpoint: session.pds_endpoint,
     })
+    await deleteSession(session.did)
     return null
   }
 
