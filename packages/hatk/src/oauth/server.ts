@@ -207,9 +207,12 @@ export async function handlePar(
   let pdsCodeVerifier: string | undefined
   let pdsState: string | undefined
 
+  let pdsEndpoint: string | undefined
+
   if (did) {
     const discovery = await discoverAuthServer(did, _plcUrl)
     pdsAuthServer = discovery.authServerEndpoint
+    pdsEndpoint = discovery.pdsEndpoint
 
     // Create PKCE for our PAR to the PDS
     pdsCodeVerifier = randomToken()
@@ -301,6 +304,7 @@ export async function handlePar(
     dpopJkt: dpop.jkt,
     pdsRequestUri,
     pdsAuthServer,
+    pdsEndpoint,
     pdsCodeVerifier,
     pdsState,
     did,
@@ -336,6 +340,7 @@ export async function serverLogin(config: OAuthConfig, handle: string): Promise<
   // Discover PDS auth server
   const discovery = await discoverAuthServer(did, _plcUrl)
   const pdsAuthServer = discovery.authServerEndpoint
+  const pdsEndpoint = discovery.pdsEndpoint
 
   // Create PKCE for PAR to PDS
   const pdsCodeVerifier = randomToken()
@@ -413,6 +418,7 @@ export async function serverLogin(config: OAuthConfig, handle: string): Promise<
     dpopJkt: serverJkt,
     pdsRequestUri,
     pdsAuthServer,
+    pdsEndpoint,
     pdsCodeVerifier,
     pdsState,
     did,
@@ -529,9 +535,10 @@ export async function handleCallback(
   const did = tokenData.sub
   if (!did) throw new Error('PDS token response missing sub (DID)')
 
-  // Store PDS session server-side
+  // Store PDS session server-side — pds_endpoint is the actual data PDS
+  // (e.g. leccinum.us-west.host.bsky.network), not the auth server (bsky.social)
   await storeSession(did, {
-    pdsEndpoint: request.pds_auth_server.replace('/oauth', ''),
+    pdsEndpoint: request.pds_endpoint,
     accessToken: tokenData.access_token,
     refreshToken: tokenData.refresh_token,
     dpopJkt: serverJkt,

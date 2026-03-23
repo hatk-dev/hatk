@@ -65,7 +65,10 @@ async function withDpopRetry(
   }
 
   // Step 3: handle expired PDS token — refresh and retry
-  if (result.body.error === 'invalid_token') {
+  // The PDS returns 'InvalidToken' or 'ExpiredToken' (AT Proto PascalCase convention)
+  // while the OAuth spec uses 'invalid_token' (RFC 6750 snake_case)
+  const err = result.body.error
+  if (err === 'invalid_token' || err === 'InvalidToken' || err === 'ExpiredToken') {
     const refreshed = await refreshPdsSession(oauthConfig, session)
     if (refreshed) {
       accessToken = refreshed.accessToken

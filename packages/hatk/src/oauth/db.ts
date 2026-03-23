@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS _oauth_requests (
   dpop_jkt TEXT NOT NULL,
   pds_request_uri TEXT,
   pds_auth_server TEXT,
+  pds_endpoint TEXT,
   pds_code_verifier TEXT,
   pds_state TEXT,
   did TEXT,
@@ -94,6 +95,7 @@ export async function storeOAuthRequest(
     dpopJkt: string
     pdsRequestUri?: string
     pdsAuthServer?: string
+    pdsEndpoint?: string
     pdsCodeVerifier?: string
     pdsState?: string
     did?: string
@@ -102,8 +104,8 @@ export async function storeOAuthRequest(
   },
 ): Promise<void> {
   await runSQL(
-    `INSERT INTO _oauth_requests (request_uri, client_id, redirect_uri, scope, state, code_challenge, code_challenge_method, dpop_jkt, pds_request_uri, pds_auth_server, pds_code_verifier, pds_state, did, login_hint, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+    `INSERT INTO _oauth_requests (request_uri, client_id, redirect_uri, scope, state, code_challenge, code_challenge_method, dpop_jkt, pds_request_uri, pds_auth_server, pds_endpoint, pds_code_verifier, pds_state, did, login_hint, expires_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
     [
       requestUri,
       data.clientId,
@@ -115,6 +117,7 @@ export async function storeOAuthRequest(
       data.dpopJkt,
       data.pdsRequestUri || null,
       data.pdsAuthServer || null,
+      data.pdsEndpoint || null,
       data.pdsCodeVerifier || null,
       data.pdsState || null,
       data.did || null,
