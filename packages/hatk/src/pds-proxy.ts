@@ -8,6 +8,7 @@ import { validateRecord } from '@bigmoves/lexicon'
 import { getLexiconArray } from './database/schema.ts'
 import { insertRecord, deleteRecord as dbDeleteRecord } from './database/db.ts'
 import { emit } from './logger.ts'
+import { runLabelRules } from './labels.ts'
 
 export class ProxyError extends Error {
   constructor(
@@ -167,6 +168,13 @@ export async function pdsCreateRecord(
 
   try {
     await insertRecord(input.collection, String(pdsRes.body.uri), String(pdsRes.body.cid), viewer.did, input.record)
+    await runLabelRules({
+      uri: String(pdsRes.body.uri),
+      cid: String(pdsRes.body.cid),
+      did: viewer.did,
+      collection: input.collection,
+      value: input.record,
+    })
   } catch (err: unknown) {
     emit('pds-proxy', 'local_index_error', {
       op: 'createRecord',
@@ -237,6 +245,13 @@ export async function pdsPutRecord(
 
   try {
     await insertRecord(input.collection, String(pdsRes.body.uri), String(pdsRes.body.cid), viewer.did, input.record)
+    await runLabelRules({
+      uri: String(pdsRes.body.uri),
+      cid: String(pdsRes.body.cid),
+      did: viewer.did,
+      collection: input.collection,
+      value: input.record,
+    })
   } catch (err: unknown) {
     emit('pds-proxy', 'local_index_error', { op: 'putRecord', error: err instanceof Error ? err.message : String(err) })
   }

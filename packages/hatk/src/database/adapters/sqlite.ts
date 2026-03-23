@@ -12,7 +12,8 @@ function translateParams(sql: string, params: unknown[]): { sql: string; params:
   const expandedParams: unknown[] = []
   const translated = sql.replace(/\$(\d+)/g, (_match, numStr) => {
     const idx = parseInt(numStr) - 1 // $1 → index 0
-    expandedParams.push(params[idx])
+    const val = params[idx]
+    expandedParams.push(typeof val === 'boolean' ? (val ? 1 : 0) : val)
     return '?'
   })
 

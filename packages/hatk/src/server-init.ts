@@ -3,7 +3,7 @@ import { log } from './logger.ts'
 import { scanServerDir } from './scanner.ts'
 import { registerFeed, listFeeds } from './feeds.ts'
 import { registerXrpcHandler, listXrpc } from './xrpc.ts'
-import { registerLabelModule, getLabelDefinitions } from './labels.ts'
+import { registerLabelModule, getLabelDefinitions, clearLabels } from './labels.ts'
 import { registerOgHandler } from './opengraph.ts'
 import { registerHook } from './hooks.ts'
 import { runSetupHandler } from './setup.ts'
@@ -47,7 +47,8 @@ export async function initServer(serverDir: string, opts?: { skipSetup?: boolean
     registerHook(entry.mod.event, entry.mod.handler)
   }
 
-  // 5. Register labels
+  // 5. Register labels (clear first for hot-reload)
+  clearLabels()
   for (const entry of scanned.labels) {
     registerLabelModule(entry.name, entry.mod)
   }

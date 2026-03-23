@@ -112,6 +112,12 @@ export async function initLabels(labelsDir: string): Promise<void> {
   }
 }
 
+/** Clear all registered label definitions and rules (for hot-reload). */
+export function clearLabels(): void {
+  labelDefs.length = 0
+  rules.length = 0
+}
+
 /** Register a single label module from a scanned server/ module. */
 export function registerLabelModule(
   name: string,
