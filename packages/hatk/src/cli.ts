@@ -107,149 +107,24 @@ if (!command) usage()
 
 // --- Templates ---
 
-const templates: Record<string, (name: string) => string> = {
-  feed: (name) => `import { defineFeed } from '../hatk.generated.ts'
+const templateDir = join(import.meta.dirname!, 'templates')
 
-export default defineFeed({
-  collection: 'your.collection.here',
-  label: '${name.charAt(0).toUpperCase() + name.slice(1)}',
-
-  async generate(ctx) {
-    const { rows, cursor } = await ctx.paginate<{ uri: string }>(
-      \`SELECT uri, cid, indexed_at FROM "your.collection.here"\`,
-    )
-
-    return ctx.ok({ uris: rows.map((r) => r.uri), cursor })
-  },
-})
-`,
-  xrpc: (name) => `import { defineQuery } from '../hatk.generated.ts'
-
-export default defineQuery('${name}', async (ctx) => {
-  const { ok, db, params, packCursor, unpackCursor } = ctx
-  const limit = params.limit ?? 30
-  const cursor = params.cursor
-
-  const conditions: string[] = []
-  const sqlParams: (string | number)[] = []
-  let paramIdx = 1
-
-  if (cursor) {
-    const parsed = unpackCursor(cursor)
-    if (parsed) {
-      conditions.push(\`(s.indexed_at < $\${paramIdx} OR (s.indexed_at = $\${paramIdx + 1} AND s.cid < $\${paramIdx + 2}))\`)
-      sqlParams.push(parsed.primary, parsed.primary, parsed.cid)
-      paramIdx += 3
-    }
-  }
-
-  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''
-
-  const rows = await db.query(
-    \`SELECT s.* FROM "your.collection.here" s \${where} ORDER BY s.indexed_at DESC, s.cid DESC LIMIT $\${paramIdx}\`,
-    sqlParams.concat([limit + 1]),
-  )
-
-  const hasMore = rows.length > limit
-  if (hasMore) rows.pop()
-  const lastRow = rows[rows.length - 1]
-
-  return ok({
-    items: rows,
-    cursor: hasMore && lastRow ? packCursor(lastRow.indexed_at, lastRow.cid) : undefined,
-  })
-})
-`,
-  label: (name) => `import type { LabelRuleContext } from '@hatk/hatk/labels'
-
-export default {
-  definition: {
-    identifier: '${name}',
-    severity: 'inform',
-    blurs: 'none',
-    defaultSetting: 'warn',
-    locales: [{ lang: 'en', name: '${name.charAt(0).toUpperCase() + name.slice(1)}', description: 'Description here' }],
-  },
-  async evaluate(ctx: LabelRuleContext) {
-    // Return array of label identifiers to apply, or empty array
-    return []
-  },
-}
-`,
-  og: (name) => `import type { OpengraphContext, OpengraphResult } from '@hatk/hatk/opengraph'
-
-export default {
-  path: '/og/${name}/:id',
-  async generate(ctx: OpengraphContext): Promise<OpengraphResult> {
-    const { db, params } = ctx
-    return {
-      element: {
-        type: 'div',
-        props: {
-          style: { display: 'flex', width: '100%', height: '100%', background: '#080b12', color: 'white', alignItems: 'center', justifyContent: 'center' },
-          children: params.id,
-        },
-      },
-    }
-  },
-}
-`,
-  hook: (name) => `import { defineHook } from '../hatk.generated.ts'
-
-export default defineHook('${name}', async (ctx) => {
-  // Hook logic here
-})
-`,
-  setup: (_name) => `import { defineSetup } from '../hatk.generated.ts'
-
-export default defineSetup(async (ctx) => {
-  // Setup logic here — runs before the server starts
-})
-`,
+function loadTemplate(file: string, name: string): string {
+  const raw = readFileSync(join(templateDir, file), 'utf-8')
+  const capitalized = name.charAt(0).toUpperCase() + name.slice(1)
+  return raw.replaceAll('{{name}}', name).replaceAll('{{Name}}', capitalized)
 }
 
-const testTemplates: Record<string, (name: string) => string> = {
-  feed: (name) => `import { describe, test, expect, beforeAll, afterAll } from 'vitest'
-import { createTestContext } from '@hatk/hatk/test'
+const templateTypes = ['feed', 'xrpc', 'label', 'og', 'hook', 'setup'] as const
+const testTemplateTypes = ['feed', 'xrpc'] as const
 
-let ctx: Awaited<ReturnType<typeof createTestContext>>
+const templates: Record<string, (name: string) => string> = Object.fromEntries(
+  templateTypes.map((t) => [t, (name: string) => loadTemplate(`${t}.tpl`, name)]),
+)
 
-beforeAll(async () => {
-  ctx = await createTestContext()
-  await ctx.loadFixtures()
-})
-
-afterAll(async () => ctx?.close())
-
-describe('${name} feed', () => {
-  test('returns results', async () => {
-    const feed = ctx.loadFeed('${name}')
-    const result = await feed.generate(ctx.feedContext({ limit: 10 }))
-    expect(result).toBeDefined()
-  })
-})
-`,
-  xrpc: (name) => `import { describe, test, expect, beforeAll, afterAll } from 'vitest'
-import { createTestContext } from '@hatk/hatk/test'
-
-let ctx: Awaited<ReturnType<typeof createTestContext>>
-
-beforeAll(async () => {
-  ctx = await createTestContext()
-  await ctx.loadFixtures()
-})
-
-afterAll(async () => ctx?.close())
-
-describe('${name}', () => {
-  test('returns response', async () => {
-    const handler = ctx.loadXrpc('${name}')
-    const result = await handler.handler({ params: {} })
-    expect(result).toBeDefined()
-  })
-})
-`,
-}
+const testTemplates: Record<string, (name: string) => string> = Object.fromEntries(
+  testTemplateTypes.map((t) => [t, (name: string) => loadTemplate(`test-${t}.tpl`, name)]),
+)
 
 const lexiconTemplates: Record<string, (nsid: string) => object> = {
   record: (nsid) => ({
@@ -921,18 +796,7 @@ export default defineConfig({
 
   writeFileSync(
     join(dir, 'seeds', 'seed.ts'),
-    `import { seed } from '../hatk.generated.ts'
-
-const { createAccount, createRecord } = seed()
-
-const alice = await createAccount('alice.test')
-
-// await createRecord(alice, 'your.collection.here', {
-//   field: 'value',
-// }, { rkey: 'my-record' })
-
-console.log('\\n[seed] Done!')
-`,
+    loadTemplate('seed.tpl', ''),
   )
 
   writeFileSync(
@@ -1843,7 +1707,7 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     if (procedureNsids.length > 0) {
       clientOut += `  if (_procedures.has(nsid)) {\n`
       clientOut += `    const res = await _fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(arg) })\n`
-      clientOut += `    if (typeof window !== 'undefined' && res.status === 401) { const _h = getViewer()?.handle; window.location.href = _h ? \`/oauth/login?handle=\${encodeURIComponent(_h)}\` : '/oauth/login'; return new Promise(() => {}) as any }\n`
+      clientOut += `    if (typeof window !== 'undefined' && res.status === 401) { const _b = await res.json().catch(() => ({})); const _h = _b.handle ?? getViewer()?.handle; window.location.href = _h ? \`/oauth/login?handle=\${encodeURIComponent(_h)}\` : '/oauth/login'; return new Promise(() => {}) as any }\n`
       clientOut += `    if (!res.ok) throw new Error(\`XRPC \${nsid} failed: \${res.status}\`)\n`
       clientOut += `    return res.json() as Promise<OutputOf<K>>\n`
       clientOut += `  }\n`
@@ -1855,7 +1719,7 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
     clientOut += `  const qs = params.toString()\n`
     clientOut += `  if (qs) path += \`?\${qs}\`\n`
     clientOut += `  const res = await _fetch(path)\n`
-    clientOut += `  if (typeof window !== 'undefined' && res.status === 401) { window.location.href = '/oauth/login'; return new Promise(() => {}) as any }\n`
+    clientOut += `  if (typeof window !== 'undefined' && res.status === 401) { const _b = await res.json().catch(() => ({})); const _h = _b.handle ?? getViewer()?.handle; window.location.href = _h ? \`/oauth/login?handle=\${encodeURIComponent(_h)}\` : '/oauth/login'; return new Promise(() => {}) as any }\n`
     clientOut += `  if (!res.ok) throw new Error(\`XRPC \${nsid} failed: \${res.status}\`)\n`
     clientOut += `  return res.json() as Promise<OutputOf<K>>\n`
     clientOut += `}\n`

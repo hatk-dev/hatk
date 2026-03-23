@@ -64,8 +64,8 @@ import { json, jsonError, cors, withCors, file, notFound } from './response.ts'
 import { serve } from './adapter.ts'
 import { renderPage } from './renderer.ts'
 
-function scopeMissingResponse(acceptEncoding: string | null): Response {
-  const res = withCors(jsonError(401, 'ScopeMissingError', acceptEncoding))
+function scopeMissingResponse(acceptEncoding: string | null, handle?: string): Response {
+  const res = withCors(json({ error: 'ScopeMissingError', ...(handle ? { handle } : {}) }, 401, acceptEncoding))
   res.headers.append('Set-Cookie', clearSessionCookieHeader())
   return res
 }
@@ -836,8 +836,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           const result = await pdsCreateRecord(oauth, viewer, body)
           return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
-          if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding)
-          if (err instanceof ProxyError) return withCors(jsonError(err.status, err.message, acceptEncoding))
+          if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding, viewer?.handle)
+          if (err instanceof ProxyError) return withCors(json({ error: err.message, ...(viewer?.handle ? { handle: viewer.handle } : {}) }, err.status, acceptEncoding))
           throw err
         }
       }
@@ -850,8 +850,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           const result = await pdsDeleteRecord(oauth, viewer, body)
           return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
-          if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding)
-          if (err instanceof ProxyError) return withCors(jsonError(err.status, err.message, acceptEncoding))
+          if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding, viewer?.handle)
+          if (err instanceof ProxyError) return withCors(json({ error: err.message, ...(viewer?.handle ? { handle: viewer.handle } : {}) }, err.status, acceptEncoding))
           throw err
         }
       }
@@ -864,8 +864,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           const result = await pdsPutRecord(oauth, viewer, body)
           return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
-          if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding)
-          if (err instanceof ProxyError) return withCors(jsonError(err.status, err.message, acceptEncoding))
+          if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding, viewer?.handle)
+          if (err instanceof ProxyError) return withCors(json({ error: err.message, ...(viewer?.handle ? { handle: viewer.handle } : {}) }, err.status, acceptEncoding))
           throw err
         }
       }
@@ -879,8 +879,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           const result = await pdsUploadBlob(oauth, viewer, rawBody, contentType)
           return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
-          if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding)
-          if (err instanceof ProxyError) return withCors(jsonError(err.status, err.message, acceptEncoding))
+          if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding, viewer?.handle)
+          if (err instanceof ProxyError) return withCors(json({ error: err.message, ...(viewer?.handle ? { handle: viewer.handle } : {}) }, err.status, acceptEncoding))
           throw err
         }
       }
@@ -943,7 +943,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           const result = await executeXrpc(method, params, cursor, limit, viewer, input)
           if (result) return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
-          if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding)
+          if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding, viewer?.handle)
           if (err instanceof InvalidRequestError) {
             return withCors(jsonError(err.status, err.errorName || err.message, acceptEncoding))
           }
