@@ -760,7 +760,7 @@ export async function insertLabels(
 ): Promise<void> {
   if (labels.length === 0) return
   for (const label of labels) {
-    // Skip if an active (non-negated, non-expired, not-superseded-by-negation) label already exists
+    // Skip if an active (non-negated, non-expired, not-superseded-by-negation) label already exists for this src+uri+val
     const existing = await all(
       `SELECT 1 FROM _labels l1 WHERE l1.src = $1 AND l1.uri = $2 AND l1.val = $3 AND l1.neg = false AND (l1.exp IS NULL OR l1.exp > CURRENT_TIMESTAMP) AND NOT EXISTS (SELECT 1 FROM _labels l2 WHERE l2.uri = l1.uri AND l2.val = l1.val AND l2.neg = true AND l2.id > l1.id) LIMIT 1`,
       [label.src, label.uri, label.val],
@@ -786,7 +786,7 @@ export async function queryLabelsForUris(
   if (uris.length === 0) return new Map()
   const placeholders = uris.map((_, i) => `$${i + 1}`).join(',')
   const rows = await all<{ src: string; uri: string; val: string; neg: boolean; cts: string; exp: string | null }>(
-    `SELECT src, uri, val, neg, cts, exp FROM _labels l1 WHERE uri IN (${placeholders}) AND (exp IS NULL OR exp > CURRENT_TIMESTAMP) AND neg = false AND NOT EXISTS (SELECT 1 FROM _labels l2 WHERE l2.uri = l1.uri AND l2.val = l1.val AND l2.neg = true AND l2.id > l1.id)`,
+    `SELECT src, uri, val, neg, cts, exp FROM _labels l1 WHERE uri IN (${placeholders}) AND (exp IS NULL OR exp > CURRENT_TIMESTAMP) AND neg = false AND NOT EXISTS (SELECT 1 FROM _labels l2 WHERE l2.uri = l1.uri AND l2.val = l1.val AND l2.neg = true AND l2.id > l1.id) GROUP BY uri, val`,
     uris,
   )
   const result = new Map<string, Array<any>>()
