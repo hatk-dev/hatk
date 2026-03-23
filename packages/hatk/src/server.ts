@@ -24,6 +24,10 @@ import {
   getRepoHandle,
   getPreferences,
   putPreference,
+  insertReport,
+  queryReports,
+  resolveReport,
+  getOpenReportCount,
 } from './database/db.ts'
 import { executeFeed, listFeeds } from './feeds.ts'
 import { executeXrpc, InvalidRequestError, NotFoundError, registerCoreXrpcHandler } from './xrpc.ts'
@@ -199,6 +203,53 @@ export function registerCoreHandlers(collections: string[], oauth: OAuthConfig |
     registerCoreXrpcHandler('dev.hatk.uploadBlob', async (_params, _cursor, _limit, viewer, input) => {
       if (!viewer) throw new InvalidRequestError('Authentication required')
       return pdsUploadBlob(oauth, viewer, input as any, 'application/octet-stream')
+    })
+
+    registerCoreXrpcHandler('dev.hatk.createReport', async (_params, _cursor, _limit, viewer, input) => {
+      if (!viewer) throw new InvalidRequestError('Authentication required')
+      const body = input as { subject?: any; label?: string; reason?: string }
+      if (!body.subject) throw new InvalidRequestError('Missing subject')
+      if (!body.label || typeof body.label !== 'string') throw new InvalidRequestError('Missing or invalid label')
+
+      const defs = getLabelDefinitions()
+      if (!defs.some((d) => d.identifier === body.label)) {
+        throw new InvalidRequestError(`Unknown label: ${body.label}`)
+      }
+
+      if (body.reason && body.reason.length > 2000) {
+        throw new InvalidRequestError('Reason must be 2000 characters or less')
+      }
+
+      let subjectUri: string
+      let subjectDid: string
+      if (body.subject.uri) {
+        subjectUri = body.subject.uri
+        const match = body.subject.uri.match(/^at:\/\/(did:[^/]+)/)
+        if (!match) throw new InvalidRequestError('Invalid subject URI')
+        subjectDid = match[1]
+      } else if (body.subject.did) {
+        subjectUri = `at://${body.subject.did}`
+        subjectDid = body.subject.did
+      } else {
+        throw new InvalidRequestError('Subject must have uri or did')
+      }
+
+      const result = await insertReport({
+        subjectUri,
+        subjectDid,
+        label: body.label,
+        reason: body.reason,
+        reportedBy: viewer.did,
+      })
+
+      return {
+        id: result.id,
+        subject: body.subject,
+        label: body.label,
+        reason: body.reason || null,
+        reportedBy: viewer.did,
+        createdAt: new Date().toISOString(),
+      }
     })
   }
 }
@@ -630,9 +681,40 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           heapTotal: `${(mem.heapTotal / 1024 / 1024).toFixed(1)} MiB`,
           external: `${(mem.external / 1024 / 1024).toFixed(1)} MiB`,
         }
+        const openReports = await getOpenReportCount()
         return withCors(
-          json({ repos: counts, duckdb: dbInfo, node, collections: collectionCounts }, 200, acceptEncoding),
+          json({ repos: counts, duckdb: dbInfo, node, collections: collectionCounts, openReports }, 200, acceptEncoding),
         )
+      }
+
+      // GET /admin/reports — list reports
+      if (url.pathname === '/admin/reports' && request.method === 'GET') {
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
+        const status = url.searchParams.get('status') || 'open'
+        const label = url.searchParams.get('label') || undefined
+        const limit = parseInt(url.searchParams.get('limit') || '50')
+        const offset = parseInt(url.searchParams.get('offset') || '0')
+        const result = await queryReports({ status, label, limit, offset })
+        return withCors(json(result, 200, acceptEncoding))
+      }
+
+      // POST /admin/reports/resolve — resolve or dismiss a report
+      if (url.pathname === '/admin/reports/resolve' && request.method === 'POST') {
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
+        const { id, action } = JSON.parse(await request.text())
+        if (!id || !action) return withCors(jsonError(400, 'Missing id or action', acceptEncoding))
+        if (action !== 'resolve' && action !== 'dismiss')
+          return withCors(jsonError(400, 'Action must be resolve or dismiss', acceptEncoding))
+
+        const report = await resolveReport(id, action === 'resolve' ? 'resolved' : 'dismissed', viewer!.did)
+        if (!report) return withCors(jsonError(404, 'Report not found or already resolved', acceptEncoding))
+
+        if (action === 'resolve') {
+          await insertLabels([{ src: 'admin', uri: report.subjectUri, val: report.label }])
+        }
+        return withCors(json({ ok: true }, 200, acceptEncoding))
       }
 
       // GET /admin/info/:did — repo status info

@@ -1203,6 +1203,7 @@
           <button class="tab active" data-tab="overview">Overview</button>
           <button class="tab" data-tab="repos">Repos</button>
           <button class="tab" data-tab="content">Content</button>
+          <button class="tab" data-tab="reports">Reports</button>
         </nav>
 
         <!-- Overview -->
@@ -1277,6 +1278,21 @@
             <div class="loading">Loading</div>
           </div>
         </div>
+
+        <!-- Reports -->
+        <div class="tab-panel" id="panel-reports">
+          <div class="search-bar">
+            <select class="search-input" id="reports-status" style="max-width: 200px">
+              <option value="open">Open</option>
+              <option value="resolved">Resolved</option>
+              <option value="dismissed">Dismissed</option>
+            </select>
+            <select class="search-input" id="reports-label-filter" style="max-width: 200px">
+              <option value="">All labels</option>
+            </select>
+          </div>
+          <div id="reports-results"></div>
+        </div>
       </div>
 
       <!-- Bottom nav (mobile) -->
@@ -1285,6 +1301,7 @@
           <button class="bnav-btn active" data-tab="overview">Overview</button>
           <button class="bnav-btn" data-tab="repos">Repos</button>
           <button class="bnav-btn" data-tab="content">Content</button>
+          <button class="bnav-btn" data-tab="reports">Reports</button>
         </div>
       </div>
     </div>
@@ -1468,6 +1485,7 @@
         if (tab === 'overview') loadOverview()
         if (tab === 'repos') loadRepos()
         if (tab === 'content') loadContent()
+        if (tab === 'reports') loadReports()
         if (push) pushURL({ tab, status: '', q: '', offset: 0, cq: '' })
       }
 
@@ -1494,6 +1512,7 @@
       <div class="stat-card"><div class="stat-label">Pending</div><div class="stat-value yellow">${fmt(repoStatuses.pending)}</div></div>
       <div class="stat-card"><div class="stat-label">Failed</div><div class="stat-value red">${fmt(repoStatuses.failed)}</div></div>
       <div class="stat-card"><div class="stat-label">Taken Down</div><div class="stat-value red">${fmt(repoStatuses.takendown)}</div></div>
+      ${info.openReports > 0 ? `<div class="stat-card" style="cursor:pointer" onclick="activateTab('reports')"><div class="stat-label">Open Reports</div><div class="stat-value yellow">${fmt(info.openReports)}</div></div>` : ''}
     `
 
           const collectionCards = document.getElementById('collection-cards')
@@ -2101,6 +2120,120 @@
               toast(`Applied: ${val}`, 'success')
               sel.value = ''
               loadContent()
+            } catch (e) {
+              toast(e.message, 'error')
+            }
+          })
+        })
+      }
+
+      // ── Reports ──
+
+      const reportsPage = { limit: 50, offset: 0 }
+
+      function populateReportsLabelFilter() {
+        const select = document.getElementById('reports-label-filter')
+        const current = select.value
+        select.innerHTML = '<option value="">All labels</option>' +
+          labelDefinitions.map(d => `<option value="${d.identifier}">${d.identifier}</option>`).join('')
+        select.value = current
+      }
+
+      document.getElementById('reports-status').addEventListener('change', () => {
+        reportsPage.offset = 0
+        loadReports()
+      })
+      document.getElementById('reports-label-filter').addEventListener('change', () => {
+        reportsPage.offset = 0
+        loadReports()
+      })
+
+      async function loadReports() {
+        populateReportsLabelFilter()
+        const status = document.getElementById('reports-status').value
+        const label = document.getElementById('reports-label-filter').value
+        const container = document.getElementById('reports-results')
+        container.innerHTML = '<div class="loading">Loading</div>'
+        try {
+          let url = `/admin/reports?status=${status}&limit=${reportsPage.limit}&offset=${reportsPage.offset}`
+          if (label) url += `&label=${encodeURIComponent(label)}`
+          const result = await api(url)
+          renderReports(result.reports || [], result.total)
+        } catch (e) {
+          container.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`
+        }
+      }
+
+      function renderReports(reports, total) {
+        const container = document.getElementById('reports-results')
+        if (!reports.length) {
+          container.innerHTML = '<div class="empty-state">No reports found</div>'
+          return
+        }
+
+        const showPagination = total != null && total > reportsPage.limit
+        const paginationHtml = showPagination ? `
+          <div class="pagination">
+            <span>${reportsPage.offset + 1}\u2013${Math.min(reportsPage.offset + reportsPage.limit, total)} of ${total.toLocaleString()}</span>
+            <div class="pagination-buttons">
+              <button class="btn btn-sm" data-reports-page="prev" ${reportsPage.offset === 0 ? 'disabled' : ''}>Prev</button>
+              <button class="btn btn-sm" data-reports-page="next" ${reportsPage.offset + reportsPage.limit >= total ? 'disabled' : ''}>Next</button>
+            </div>
+          </div>
+        ` : ''
+
+        const countLabel = total != null
+          ? `${total.toLocaleString()} report${total !== 1 ? 's' : ''}`
+          : `${reports.length} result${reports.length !== 1 ? 's' : ''}`
+
+        const isOpen = document.getElementById('reports-status').value === 'open'
+
+        container.innerHTML = `
+          <div class="card">
+            <div class="result-count">${countLabel}</div>
+            ${reports.map(r => {
+              const reporterDisplay = r.reported_by_handle ? `@${escapeHtml(r.reported_by_handle)}` : escapeHtml(r.reported_by)
+              const date = new Date(r.created_at).toLocaleString()
+              return `<div class="record-card">
+                <div class="record-header">
+                  <div class="record-meta">
+                    <div class="record-uri" title="${escapeHtml(r.subject_uri)}">${escapeHtml(r.subject_uri)}</div>
+                    <div class="record-summary">
+                      <span class="label-tag">${escapeHtml(r.label)}</span>
+                      reported by ${reporterDisplay} &middot; ${date}
+                    </div>
+                    ${r.reason ? `<div class="record-summary" style="margin-top:0.25rem">${escapeHtml(r.reason)}</div>` : ''}
+                    ${!isOpen ? `<div class="record-summary" style="margin-top:0.25rem;opacity:0.6">${escapeHtml(r.status)}${r.resolved_by ? ` by ${escapeHtml(r.resolved_by)}` : ''}</div>` : ''}
+                  </div>
+                  ${isOpen ? `<div class="record-actions">
+                    <button class="btn btn-sm" data-action="resolve-report" data-id="${r.id}" data-resolve="resolve" style="background:var(--accent);color:white">Apply Label</button>
+                    <button class="btn btn-sm" data-action="resolve-report" data-id="${r.id}" data-resolve="dismiss">Dismiss</button>
+                  </div>` : ''}
+                </div>
+              </div>`
+            }).join('')}
+            ${paginationHtml}
+          </div>
+        `
+
+        container.querySelectorAll('[data-reports-page="prev"]').forEach(b => {
+          b.addEventListener('click', () => { reportsPage.offset = Math.max(0, reportsPage.offset - reportsPage.limit); loadReports() })
+        })
+        container.querySelectorAll('[data-reports-page="next"]').forEach(b => {
+          b.addEventListener('click', () => { reportsPage.offset += reportsPage.limit; loadReports() })
+        })
+
+        container.querySelectorAll('[data-action="resolve-report"]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const action = btn.dataset.resolve
+            try {
+              await api('/admin/reports/resolve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: parseInt(btn.dataset.id), action }),
+              })
+              toast(action === 'resolve' ? 'Label applied & report resolved' : 'Report dismissed', 'success')
+              loadReports()
             } catch (e) {
               toast(e.message, 'error')
             }

@@ -122,6 +122,38 @@ export async function initDatabase(
     PRIMARY KEY (did, key)
   )`)
 
+  // Reports table (user-submitted moderation reports)
+  if (dialect.supportsSequences) {
+    await run(`CREATE SEQUENCE IF NOT EXISTS _reports_seq START 1`)
+    await run(`CREATE TABLE IF NOT EXISTS _reports (
+      id INTEGER PRIMARY KEY DEFAULT nextval('_reports_seq'),
+      subject_uri TEXT NOT NULL,
+      subject_did TEXT NOT NULL,
+      label TEXT NOT NULL,
+      reason TEXT,
+      reported_by TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      resolved_by TEXT,
+      resolved_at ${dialect.timestampType},
+      created_at ${dialect.timestampType} NOT NULL
+    )`)
+  } else {
+    await run(`CREATE TABLE IF NOT EXISTS _reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      subject_uri TEXT NOT NULL,
+      subject_did TEXT NOT NULL,
+      label TEXT NOT NULL,
+      reason TEXT,
+      reported_by TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      resolved_by TEXT,
+      resolved_at TEXT,
+      created_at TEXT NOT NULL
+    )`)
+  }
+  await run(`CREATE INDEX IF NOT EXISTS idx_reports_status ON _reports(status)`)
+  await run(`CREATE INDEX IF NOT EXISTS idx_reports_subject_uri ON _reports(subject_uri)`)
+
   // OAuth tables
   await port.executeMultiple(OAUTH_DDL)
 }
@@ -765,9 +797,9 @@ export async function queryLabelsForUris(
       src: row.src,
       uri: row.uri,
       val: row.val,
-      neg: row.neg,
+      neg: !!row.neg,
       cts: normalizeValue(row.cts),
-      exp: row.exp ? String(row.exp) : null,
+      ...(row.exp ? { exp: String(row.exp) } : {}),
     })
   }
   return result
@@ -1680,4 +1712,84 @@ export async function filterTakendownDids(dids: string[]): Promise<Set<string>> 
   const placeholders = dids.map((_, i) => `$${i + 1}`).join(',')
   const rows = await all<{ did: string }>(`SELECT did FROM _repos WHERE did IN (${placeholders}) AND status = 'takendown'`, dids)
   return new Set(rows.map((r) => r.did))
+}
+
+export async function insertReport(report: {
+  subjectUri: string
+  subjectDid: string
+  label: string
+  reason?: string
+  reportedBy: string
+}): Promise<{ id: number }> {
+  const createdAt = new Date().toISOString()
+  const rows = await all<{ id: number }>(
+    `INSERT INTO _reports (subject_uri, subject_did, label, reason, reported_by, created_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [report.subjectUri, report.subjectDid, report.label, report.reason || null, report.reportedBy, createdAt],
+  )
+  return { id: rows[0].id }
+}
+
+export async function queryReports(opts: {
+  status?: string
+  label?: string
+  limit?: number
+  offset?: number
+}): Promise<{ reports: any[]; total: number }> {
+  const conditions: string[] = []
+  const params: unknown[] = []
+  let idx = 1
+
+  if (opts.status) {
+    conditions.push(`r.status = $${idx++}`)
+    params.push(opts.status)
+  }
+  if (opts.label) {
+    conditions.push(`r.label = $${idx++}`)
+    params.push(opts.label)
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  const limit = opts.limit || 50
+  const offset = opts.offset || 0
+
+  const countRows = await all<{ count: number }>(
+    `SELECT ${dialect.countAsInteger} as count FROM _reports r ${where}`,
+    params,
+  )
+  const total = Number(countRows[0]?.count || 0)
+
+  const rows = await all(
+    `SELECT r.*, rp.handle as reported_by_handle FROM _reports r LEFT JOIN _repos rp ON r.reported_by = rp.did ${where} ORDER BY r.created_at DESC LIMIT $${idx++} OFFSET $${idx++}`,
+    [...params, limit, offset],
+  )
+
+  return { reports: rows, total }
+}
+
+export async function resolveReport(
+  id: number,
+  action: 'resolved' | 'dismissed',
+  resolvedBy: string,
+): Promise<{ subjectUri: string; label: string } | null> {
+  const rows = await all<{ subject_uri: string; label: string; status: string }>(
+    `SELECT subject_uri, label, status FROM _reports WHERE id = $1`,
+    [id],
+  )
+  if (!rows.length) return null
+  if (rows[0].status !== 'open') return null
+
+  await run(`UPDATE _reports SET status = $1, resolved_by = $2, resolved_at = $3 WHERE id = $4`, [
+    action,
+    resolvedBy,
+    new Date().toISOString(),
+    id,
+  ])
+  return { subjectUri: rows[0].subject_uri, label: rows[0].label }
+}
+
+export async function getOpenReportCount(): Promise<number> {
+  const rows = await all<{ count: number }>(
+    `SELECT ${dialect.countAsInteger} as count FROM _reports WHERE status = 'open'`,
+  )
+  return Number(rows[0]?.count || 0)
 }
