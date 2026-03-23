@@ -28,7 +28,7 @@
     "./renderer": "./dist/renderer.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && cp -r src/templates dist/templates",
+    "build": "tsc -p tsconfig.build.json && cp -r src/templates dist/templates && cp -r src/lexicons dist/lexicons",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

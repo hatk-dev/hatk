@@ -1,0 +1,31 @@
+{
+  "lexicon": 1,
+  "id": "dev.hatk.describeLabels",
+  "defs": {
+    "main": {
+      "type": "query",
+      "description": "List available label definitions.",
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "definitions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["identifier", "severity", "blurs", "defaultSetting"],
+                "properties": {
+                  "identifier": { "type": "string" },
+                  "severity": { "type": "string" },
+                  "blurs": { "type": "string" },
+                  "defaultSetting": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
