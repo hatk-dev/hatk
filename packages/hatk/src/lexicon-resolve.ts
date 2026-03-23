@@ -2,6 +2,8 @@
 // and recursively resolves all $ref dependencies.
 
 import { isValidDid } from '@bigmoves/lexicon'
+import { join } from 'node:path'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 
 // --- Authority ---
 
@@ -80,128 +82,38 @@ async function resolveDid(did: string, opts: { plcUrl?: string; fetch?: typeof f
   }
 }
 
-// --- Built-in core schemas (not published via DNS) ---
-
-const coreSchemas: Record<string, Lexicon> = {
-  'com.atproto.repo.strongRef': {
-    lexicon: 1,
-    id: 'com.atproto.repo.strongRef',
-    description: 'A URI with a content-hash fingerprint.',
-    defs: {
-      main: {
-        type: 'object',
-        required: ['uri', 'cid'],
-        properties: { uri: { type: 'string', format: 'at-uri' }, cid: { type: 'string', format: 'cid' } },
-      },
-    },
-  },
-  'com.atproto.label.defs': {
-    lexicon: 1,
-    id: 'com.atproto.label.defs',
-    defs: {
-      label: {
-        type: 'object',
-        description: 'Metadata tag on an atproto resource (eg, repo or record).',
-        required: ['src', 'uri', 'val', 'cts'],
-        properties: {
-          ver: { type: 'integer' },
-          src: { type: 'string', format: 'did' },
-          uri: { type: 'string', format: 'uri' },
-          cid: { type: 'string', format: 'cid' },
-          val: { type: 'string', maxLength: 128 },
-          neg: { type: 'boolean' },
-          cts: { type: 'string', format: 'datetime' },
-          exp: { type: 'string', format: 'datetime' },
-          sig: { type: 'bytes' },
-        },
-      },
-      selfLabels: {
-        type: 'object',
-        description: 'Metadata tags on an atproto record, published by the author within the record.',
-        required: ['values'],
-        properties: { values: { type: 'array', items: { type: 'ref', ref: '#selfLabel' }, maxLength: 10 } },
-      },
-      selfLabel: { type: 'object', required: ['val'], properties: { val: { type: 'string', maxLength: 128 } } },
-      labelValueDefinition: {
-        type: 'object',
-        description: 'Declares a label value and its expected interpretations and behaviors.',
-        required: ['identifier', 'severity', 'blurs', 'locales'],
-        properties: {
-          identifier: { type: 'string', maxLength: 100 },
-          severity: { type: 'string', knownValues: ['inform', 'alert', 'none'] },
-          blurs: { type: 'string', knownValues: ['content', 'media', 'none'] },
-          defaultSetting: { type: 'string', knownValues: ['ignore', 'warn', 'hide'] },
-          adultOnly: { type: 'boolean' },
-          locales: { type: 'array', items: { type: 'ref', ref: '#labelValueDefinitionStrings' } },
-        },
-      },
-      labelValueDefinitionStrings: {
-        type: 'object',
-        required: ['lang', 'name', 'description'],
-        properties: {
-          lang: { type: 'string', format: 'language' },
-          name: { type: 'string', maxLength: 640 },
-          description: { type: 'string', maxLength: 100000 },
-        },
-      },
-      labelValue: {
-        type: 'string',
-        knownValues: [
-          '!hide',
-          '!no-promote',
-          '!warn',
-          '!no-unauthenticated',
-          'dmca-violation',
-          'doxxing',
-          'porn',
-          'sexual',
-          'nudity',
-          'nsfl',
-          'gore',
-        ],
-      },
-    },
-  },
-  'com.atproto.moderation.defs': {
-    lexicon: 1,
-    id: 'com.atproto.moderation.defs',
-    defs: {
-      reasonType: {
-        type: 'string',
-        knownValues: [
-          'com.atproto.moderation.defs#reasonSpam',
-          'com.atproto.moderation.defs#reasonViolation',
-          'com.atproto.moderation.defs#reasonMisleading',
-          'com.atproto.moderation.defs#reasonSexual',
-          'com.atproto.moderation.defs#reasonRude',
-          'com.atproto.moderation.defs#reasonOther',
-          'com.atproto.moderation.defs#reasonAppeal',
-        ],
-      },
-      reasonSpam: { type: 'token', description: 'Spam: frequent unwanted promotion, replies, mentions.' },
-      reasonViolation: { type: 'token', description: 'Direct violation of server rules, laws, terms of service.' },
-      reasonMisleading: { type: 'token', description: 'Misleading identity, affiliation, or content.' },
-      reasonSexual: { type: 'token', description: 'Unwanted or mislabeled sexual content.' },
-      reasonRude: { type: 'token', description: 'Rude, harassing, explicit, or otherwise unwelcoming behavior.' },
-      reasonOther: { type: 'token', description: 'Reports not falling under another report category.' },
-      reasonAppeal: { type: 'token', description: 'Appeal a previously taken moderation action.' },
-      subjectType: {
-        type: 'string',
-        description: 'Tag describing a type of subject that might be reported.',
-        knownValues: ['account', 'record', 'chat'],
-      },
-    },
-  },
-}
-
-// --- Resolver ---
-
 interface Lexicon {
   lexicon: number
   id: string
   defs: Record<string, any>
   [key: string]: any
 }
+
+// --- Built-in core schemas (loaded from src/lexicons/) ---
+
+function loadCoreSchemas(): Record<string, Lexicon> {
+  const schemas: Record<string, Lexicon> = {}
+  const lexDir = join(import.meta.dirname!, 'lexicons')
+
+  function walk(dir: string) {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry)
+      if (statSync(full).isDirectory()) {
+        walk(full)
+      } else if (entry.endsWith('.json')) {
+        const lexicon = JSON.parse(readFileSync(full, 'utf-8'))
+        if (lexicon.id) schemas[lexicon.id] = lexicon
+      }
+    }
+  }
+
+  try { walk(lexDir) } catch {}
+  return schemas
+}
+
+const coreSchemas: Record<string, Lexicon> = loadCoreSchemas()
+
+// --- Resolver ---
 
 function refToNsid(ref: string): string | null {
   let nsid = ref.startsWith('lex:') ? ref.slice(4) : ref

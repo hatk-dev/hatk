@@ -292,11 +292,9 @@ export default defineConfig({
 `,
   )
 
-  // Copy core framework lexicons under dev.hatk namespace
-  const coreLexDir = join(dir, 'lexicons', 'dev', 'hatk')
-  mkdirSync(coreLexDir, { recursive: true })
-  const builtinLexDir = join(import.meta.dirname!, 'lexicons', 'dev', 'hatk')
-  cpSync(builtinLexDir, coreLexDir, { recursive: true })
+  // Copy core framework lexicons (dev.hatk.* and dependencies like com.atproto.repo.strongRef)
+  const builtinLexDir = join(import.meta.dirname!, 'lexicons')
+  cpSync(builtinLexDir, join(dir, 'lexicons'), { recursive: true })
 
   writeFileSync(
     join(dir, 'seeds', 'seed.ts'),

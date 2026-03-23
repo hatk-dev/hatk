@@ -14,7 +14,7 @@
             "subject": {
               "type": "union",
               "description": "The account or record being reported.",
-              "refs": ["#repoRef", "#strongRef"]
+              "refs": ["#repoRef", "com.atproto.repo.strongRef"]
             },
             "label": { "type": "string", "description": "Label identifier for the report reason." },
             "reason": { "type": "string", "maxLength": 2000, "description": "Optional free-text explanation." }
@@ -42,14 +42,6 @@
       "required": ["did"],
       "properties": {
         "did": { "type": "string", "format": "did" }
-      }
-    },
-    "strongRef": {
-      "type": "object",
-      "required": ["uri", "cid"],
-      "properties": {
-        "uri": { "type": "string", "format": "at-uri" },
-        "cid": { "type": "string", "format": "cid" }
       }
     }
   }
