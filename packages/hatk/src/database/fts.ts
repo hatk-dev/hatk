@@ -1,5 +1,5 @@
 import { getSchema, runSQL, getSqlDialect, querySQL } from './db.ts'
-import { getLexicon } from './schema.ts'
+import { getLexicon, q } from './schema.ts'
 import { emit, timer } from '../logger.ts'
 import type { SearchPort } from './ports.ts'
 
@@ -128,13 +128,13 @@ function computeFtsSchema(collection: string): { searchColNames: string[]; sourc
 
   for (const col of schema.columns) {
     if (col.sqlType === 'TEXT') {
-      selectExprs.push(`t.${col.name}`)
+      selectExprs.push(`t.${q(col.name)}`)
       searchColNames.push(col.name)
     } else if (col.isJson && record?.properties) {
       const prop = record.properties[col.originalName]
       if (prop?.type === 'blob') continue // skip blobs
       if (prop && lexicon) {
-        const derived = jsonSearchColumns(`t.${col.name}`, prop, lexicon, dialect)
+        const derived = jsonSearchColumns(`t.${q(col.name)}`, prop, lexicon, dialect)
         if (derived.length > 0) {
           for (const d of derived) {
             selectExprs.push(`${d.expr} AS ${d.alias}`)
@@ -144,7 +144,7 @@ function computeFtsSchema(collection: string): { searchColNames: string[]; sourc
         }
       }
       // Fallback: cast JSON to TEXT
-      selectExprs.push(`CAST(t.${col.name} AS TEXT) AS ${col.name}`)
+      selectExprs.push(`CAST(t.${q(col.name)} AS TEXT) AS ${q(col.name)}`)
       searchColNames.push(col.name)
     }
   }
@@ -154,7 +154,7 @@ function computeFtsSchema(collection: string): { searchColNames: string[]; sourc
     for (const col of child.columns) {
       if (col.sqlType === 'TEXT') {
         const alias = `${child.fieldName}_${col.name}`
-        const agg = dialect.stringAgg(`c.${col.name}`, "' '")
+        const agg = dialect.stringAgg(`c.${q(col.name)}`, "' '")
         selectExprs.push(`(SELECT ${agg} FROM ${child.tableName} c WHERE c.parent_uri = t.uri) AS ${alias}`)
         searchColNames.push(alias)
       }
@@ -167,7 +167,7 @@ function computeFtsSchema(collection: string): { searchColNames: string[]; sourc
       for (const col of branch.columns) {
         if (col.sqlType === 'TEXT') {
           const alias = `${union.fieldName}_${branch.branchName}_${col.name}`
-          const agg = dialect.stringAgg(`c.${col.name}`, "' '")
+          const agg = dialect.stringAgg(`c.${q(col.name)}`, "' '")
           selectExprs.push(`(SELECT ${agg} FROM ${branch.tableName} c WHERE c.parent_uri = t.uri) AS ${alias}`)
           searchColNames.push(alias)
         }

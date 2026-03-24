@@ -1,4 +1,4 @@
-import { type TableSchema, toSnakeCase } from './schema.ts'
+import { type TableSchema, toSnakeCase, q } from './schema.ts'
 import type { Row } from '../lex-types.ts'
 import { getSearchColumns, stripStopWords, getSearchPort, updateFtsRecord, deleteFtsRecord } from './fts.ts'
 import { emit, timer } from '../logger.ts'
@@ -603,7 +603,7 @@ export function buildInsertOp(
     } else if (col.originalName.endsWith('__cid') && record[col.originalName.replace('__cid', '')]) {
       rawValue = record[col.originalName.replace('__cid', '')].cid
     }
-    colNames.push(col.name)
+    colNames.push(q(col.name))
     placeholders.push(`$${paramIdx++}`)
 
     if (rawValue === undefined || rawValue === null) {
@@ -646,7 +646,7 @@ export async function insertRecord(
       let idx = 3
 
       for (const col of child.columns) {
-        colNames.push(col.name)
+        colNames.push(q(col.name))
         placeholders.push(`$${idx++}`)
         const raw = item[col.originalName]
         if (raw === undefined || raw === null) {
@@ -685,7 +685,7 @@ export async function insertRecord(
         const values: any[] = [uri, authorDid]
         let idx = 3
         for (const col of branch.columns) {
-          colNames.push(col.name)
+          colNames.push(q(col.name))
           placeholders.push(`$${idx++}`)
           const raw = item[col.originalName]
           if (raw === undefined || raw === null) {
@@ -709,7 +709,7 @@ export async function insertRecord(
       const values: any[] = [uri, authorDid]
       let idx = 3
       for (const col of branch.columns) {
-        colNames.push(col.name)
+        colNames.push(q(col.name))
         placeholders.push(`$${idx++}`)
         const raw = branchData[col.originalName]
         if (raw === undefined || raw === null) {
@@ -830,7 +830,7 @@ export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> 
     if (!schema) continue
 
     const stagingTable = `_staging_${collection.replace(/\./g, '_')}`
-    const allCols = ['uri', 'cid', 'did', 'indexed_at', ...schema.columns.map((c) => c.name)]
+    const allCols = ['uri', 'cid', 'did', 'indexed_at', ...schema.columns.map((c) => q(c.name))]
     const colDefs = [
       'uri TEXT',
       'cid TEXT',
@@ -839,7 +839,7 @@ export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> 
       ...schema.columns.map((c) => {
         const t = c.sqlType
         // Use TEXT for timestamp columns in staging (will cast on merge)
-        return `${c.name} ${t === 'TIMESTAMP' || t === 'TIMESTAMPTZ' ? 'TEXT' : t}`
+        return `${q(c.name)} ${t === 'TIMESTAMP' || t === 'TIMESTAMPTZ' ? 'TEXT' : t}`
       }),
     ]
 
@@ -867,7 +867,7 @@ export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> 
 
     // Merge into target, filtering rows that would violate NOT NULL
     const selectCols = allCols.map((name) => {
-      const col = schema.columns.find((c) => c.name === name)
+      const col = schema.columns.find((c) => q(c.name) === name)
       if (name === 'indexed_at' || (col && (col.sqlType === 'TIMESTAMP' || col.sqlType === 'TIMESTAMPTZ'))) {
         return `${dialect.tryCastTimestamp(name)} AS ${name}`
       }
@@ -877,9 +877,9 @@ export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> 
     for (const col of schema.columns) {
       if (col.notNull) {
         if (col.sqlType === 'TIMESTAMP' || col.sqlType === 'TIMESTAMPTZ') {
-          notNullChecks.push(`${dialect.tryCastTimestamp(col.name)} IS NOT NULL`)
+          notNullChecks.push(`${dialect.tryCastTimestamp(q(col.name))} IS NOT NULL`)
         } else {
-          notNullChecks.push(`${col.name} IS NOT NULL`)
+          notNullChecks.push(`${q(col.name)} IS NOT NULL`)
         }
       }
     }
@@ -898,10 +898,10 @@ export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> 
         'parent_did TEXT',
         ...child.columns.map((c) => {
           const t = c.sqlType
-          return `${c.name} ${t === 'TIMESTAMP' || t === 'TIMESTAMPTZ' ? 'TEXT' : t}`
+          return `${q(c.name)} ${t === 'TIMESTAMP' || t === 'TIMESTAMPTZ' ? 'TEXT' : t}`
         }),
       ]
-      const childAllCols = ['parent_uri', 'parent_did', ...child.columns.map((c) => c.name)]
+      const childAllCols = ['parent_uri', 'parent_did', ...child.columns.map((c) => q(c.name))]
 
       await port.execute(`DROP TABLE IF EXISTS ${childStagingTable}`, [])
       await port.execute(`CREATE TABLE ${childStagingTable} (${childColDefs.join(', ')})`, [])
@@ -935,7 +935,7 @@ export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> 
       )
 
       const childSelectCols = childAllCols.map((name) => {
-        const col = child.columns.find((c) => c.name === name)
+        const col = child.columns.find((c) => q(c.name) === name)
         if (col && (col.sqlType === 'TIMESTAMP' || col.sqlType === 'TIMESTAMPTZ')) {
           return `${dialect.tryCastTimestamp(name)} AS ${name}`
         }
@@ -957,10 +957,10 @@ export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> 
           'parent_did TEXT',
           ...branch.columns.map((c) => {
             const t = c.sqlType
-            return `${c.name} ${t === 'TIMESTAMP' || t === 'TIMESTAMPTZ' ? 'TEXT' : t}`
+            return `${q(c.name)} ${t === 'TIMESTAMP' || t === 'TIMESTAMPTZ' ? 'TEXT' : t}`
           }),
         ]
-        const branchAllCols = ['parent_uri', 'parent_did', ...branch.columns.map((c) => c.name)]
+        const branchAllCols = ['parent_uri', 'parent_did', ...branch.columns.map((c) => q(c.name))]
 
         await port.execute(`DROP TABLE IF EXISTS ${branchStagingTable}`, [])
         await port.execute(`CREATE TABLE ${branchStagingTable} (${branchColDefs.join(', ')})`, [])
@@ -1010,7 +1010,7 @@ export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> 
         )
 
         const branchSelectCols = branchAllCols.map((name) => {
-          const col = branch.columns.find((c) => c.name === name)
+          const col = branch.columns.find((c) => q(c.name) === name)
           if (col && (col.sqlType === 'TIMESTAMP' || col.sqlType === 'TIMESTAMPTZ')) {
             return `${dialect.tryCastTimestamp(name)} AS ${name}`
           }
@@ -1333,7 +1333,7 @@ export async function searchRecords(
     const remaining = limit - bm25Results.length
     const jwFn = dialect.jaroWinklerSimilarity
     const simExprs = [
-      ...textCols.map((c) => `${jwFn}(lower(t.${c.name}), lower($1))`),
+      ...textCols.map((c) => `${jwFn}(lower(t.${q(c.name)}), lower($1))`),
       `${jwFn}(lower(r.handle), lower($1))`,
     ]
     // Include child table TEXT columns via correlated subquery
@@ -1341,7 +1341,7 @@ export async function searchRecords(
       for (const col of child.columns) {
         if (col.sqlType === 'TEXT') {
           simExprs.push(
-            `COALESCE((SELECT MAX(${jwFn}(lower(c.${col.name}), lower($1))) FROM ${child.tableName} c WHERE c.parent_uri = t.uri), 0)`,
+            `COALESCE((SELECT MAX(${jwFn}(lower(c.${q(col.name)}), lower($1))) FROM ${child.tableName} c WHERE c.parent_uri = t.uri), 0)`,
           )
         }
       }

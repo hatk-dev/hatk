@@ -48,6 +48,11 @@ export function toSnakeCase(str: string): string {
   return str.replace(/([A-Z])/g, '_$1').toLowerCase()
 }
 
+// Quote a column name to avoid conflicts with SQL reserved words
+export function q(name: string): string {
+  return `"${name}"`
+}
+
 // Map lexicon property type to SQL type using dialect config
 interface TypeMapping {
   sqlType: string
@@ -387,7 +392,7 @@ export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect 
 
   for (const col of schema.columns) {
     const nullable = col.notNull ? ' NOT NULL' : ''
-    lines.push(`  ${col.name} ${col.sqlType}${nullable}`)
+    lines.push(`  ${q(col.name)} ${col.sqlType}${nullable}`)
   }
 
   const createTable = `CREATE TABLE IF NOT EXISTS ${schema.tableName} (\n${lines.join(',\n')}\n);`
@@ -400,7 +405,7 @@ export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect 
 
   // Index ref columns for hydration lookups
   for (const refCol of schema.refColumns) {
-    indexes.push(`CREATE INDEX IF NOT EXISTS idx_${prefix}_${refCol} ON ${schema.tableName}(${refCol});`)
+    indexes.push(`CREATE INDEX IF NOT EXISTS idx_${prefix}_${refCol} ON ${schema.tableName}(${q(refCol)});`)
   }
 
   // Child table DDL
@@ -409,7 +414,7 @@ export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect 
     const childLines: string[] = ['  parent_uri TEXT NOT NULL', '  parent_did TEXT NOT NULL']
     for (const col of child.columns) {
       const nullable = col.notNull ? ' NOT NULL' : ''
-      childLines.push(`  ${col.name} ${col.sqlType}${nullable}`)
+      childLines.push(`  ${q(col.name)} ${col.sqlType}${nullable}`)
     }
     childDDL.push(`CREATE TABLE IF NOT EXISTS ${child.tableName} (\n${childLines.join(',\n')}\n);`)
 
@@ -419,7 +424,7 @@ export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect 
 
     for (const col of child.columns) {
       if (col.isJson || col.sqlType === 'BLOB') continue
-      childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${childPrefix}_${col.name} ON ${child.tableName}(${col.name});`)
+      childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${childPrefix}_${col.name} ON ${child.tableName}(${q(col.name)});`)
     }
   }
 
@@ -429,7 +434,7 @@ export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect 
       const branchLines: string[] = ['  parent_uri TEXT NOT NULL', '  parent_did TEXT NOT NULL']
       for (const col of branch.columns) {
         const nullable = col.notNull ? ' NOT NULL' : ''
-        branchLines.push(`  ${col.name} ${col.sqlType}${nullable}`)
+        branchLines.push(`  ${q(col.name)} ${col.sqlType}${nullable}`)
       }
       childDDL.push(`CREATE TABLE IF NOT EXISTS ${branch.tableName} (\n${branchLines.join(',\n')}\n);`)
 
@@ -439,7 +444,7 @@ export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect 
 
       for (const col of branch.columns) {
         if (col.isJson || col.sqlType === 'BLOB') continue
-        childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${branchPrefix}_${col.name} ON ${branch.tableName}(${col.name});`)
+        childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${branchPrefix}_${col.name} ON ${branch.tableName}(${q(col.name)});`)
       }
     }
   }
