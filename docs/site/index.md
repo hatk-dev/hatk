@@ -2,8 +2,8 @@
 layout: home
 
 hero:
-  name: hatk
-  tagline: Build AT Protocol apps with typed XRPC endpoints.
+  name: "hat://k"
+  tagline: Extends your Vite application with an AT Protocol server. Add feeds, labels, and XRPC endpoints to your app, all typed from your lexicons.
   actions:
     - theme: brand
       text: Get Started

@@ -74,7 +74,6 @@ function usage() {
     dev                                    Start PDS, seed, and run hatk
     seed                                   Seed local PDS with fixture data
     reset                                  Reset database and PDS for a clean slate
-    schema                                 Show database schema from lexicons
 
   Code Quality
     check                                  Type-check and lint the project
@@ -1549,28 +1548,6 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
 
   console.log(`\nResolved ${resolved.size} lexicon(s). Regenerating types...`)
   execSync('npx hatk generate types', { stdio: 'inherit', cwd: process.cwd() })
-} else if (command === 'schema') {
-  const config = await loadConfig(resolve('hatk.config.ts'))
-
-  const { initDatabase, getSchemaDump } = await import('./database/db.ts')
-  const { createAdapter } = await import('./database/adapter-factory.ts')
-  const { getDialect } = await import('./database/dialect.ts')
-  const configDir2 = resolve('.')
-  const lexicons2 = loadLexicons(resolve(configDir2, 'lexicons'))
-  const collections2 = config.collections.length > 0 ? config.collections : discoverCollections(lexicons2)
-  const { schemas: schemas2, ddlStatements: ddl2 } = buildSchemas(
-    lexicons2,
-    collections2,
-    getDialect(config.databaseEngine),
-  )
-
-  if (config.database !== ':memory:') {
-    mkdirSync(dirname(config.database), { recursive: true })
-  }
-  const { adapter: adapter2 } = await createAdapter(config.databaseEngine)
-  await initDatabase(adapter2, config.database, schemas2, ddl2)
-
-  console.log(await getSchemaDump())
 } else if (command === 'start') {
   const mainPath = resolve(import.meta.dirname!, 'main.js')
   await spawnForward('npx', ['tsx', mainPath, 'hatk.config.ts'])

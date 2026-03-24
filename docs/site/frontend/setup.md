@@ -100,28 +100,6 @@ app/
 
 This is a convention, not a requirement -- but all hatk templates use it and the CLI scaffolding expects it.
 
-## Experimental SvelteKit features
-
-hatk templates enable two experimental SvelteKit features:
-
-```javascript
-// svelte.config.js
-export default {
-  compilerOptions: {
-    experimental: {
-      async: true,       // Async Svelte 5 components
-    },
-  },
-  kit: {
-    experimental: {
-      remoteFunctions: true,  // Server functions callable from components
-    },
-  },
-};
-```
-
-The `remoteFunctions` feature powers the `.remote.ts` pattern described in the [mutations guide](./mutations).
-
 ## Regenerating types
 
 After adding or changing lexicons, regenerate the typed files:

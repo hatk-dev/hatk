@@ -67,4 +67,5 @@ The optional third parameter `customFetch` accepts a fetch function. Pass Svelte
 | [`getPreferences`](/api/preferences) | Query     | Yes  | Get user preferences            |
 | [`putPreference`](/api/preferences)  | Procedure | Yes  | Set a preference                |
 | [`describeLabels`](/api/labels)      | Query     | No   | List label definitions          |
+| [`createReport`](/api/labels)        | Procedure | Yes  | Report an account or record     |
 | `describeCollections`                | Query     | No   | List indexed collections        |

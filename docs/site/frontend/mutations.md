@@ -1,97 +1,35 @@
 ---
 title: Mutations
-description: Create, update, and delete records from your frontend using remote functions and callXrpc.
+description: Create, update, and delete records from your frontend using callXrpc.
 ---
 
 # Mutations
 
-hatk provides two patterns for mutations from the frontend: **remote functions** for server-side logic callable from components, and **`callXrpc`** for direct API calls. Remote functions are the recommended approach -- they run on the server but are imported and called like normal functions.
-
-## Remote functions
-
-Remote functions use SvelteKit's experimental remote functions feature. You define server-side functions in `.remote.ts` files, then import and call them from your components as if they were local.
-
-### Defining remote functions
-
-Create a `.remote.ts` file in your routes directory:
+Mutations use `callXrpc` to call hatk's built-in record management endpoints. `callXrpc` is isomorphic, it works in server load functions, Svelte components, and anywhere else you have access to it.
 
 ```typescript
-// app/routes/status.remote.ts
-import { command } from "$app/server";
-import { callXrpc, getViewer } from "$hatk/client";
-
-export const createStatus = command("unchecked", async (emoji: string) => {
-  const viewer = await getViewer();
-  if (!viewer) throw new Error("Not authenticated");
-  return callXrpc("dev.hatk.createRecord", {
-    collection: "xyz.statusphere.status" as const,
-    repo: viewer.did,
-    record: { status: emoji, createdAt: new Date().toISOString() },
-  });
-});
-
-export const deleteStatus = command("unchecked", async (rkey: string) => {
-  const viewer = await getViewer();
-  if (!viewer) throw new Error("Not authenticated");
-  return callXrpc("dev.hatk.deleteRecord", {
-    collection: "xyz.statusphere.status" as const,
-    rkey,
-  });
-});
-```
-
-Key points:
-- `command` comes from SvelteKit's `$app/server` -- it marks a function as a server-only remote function
-- `"unchecked"` is the validation mode (SvelteKit experimental API)
-- `getViewer()` reads the current user from the session
-- `callXrpc("dev.hatk.createRecord", ...)` and `callXrpc("dev.hatk.deleteRecord", ...)` are typed calls to hatk's built-in record management endpoints
-
-### Calling remote functions from components
-
-Import remote functions directly in your Svelte components:
-
-```svelte
-<script lang="ts">
-  import {
-    createStatus as serverCreateStatus,
-    deleteStatus as serverDeleteStatus,
-  } from './status.remote'
-
-  async function handleCreate(emoji: string) {
-    const res = await serverCreateStatus(emoji)
-    // res.uri contains the AT URI of the created record
+// Server-side: in a +layout.server.ts or +page.server.ts
+export const load = async () => {
+  return {
+    feed: callXrpc("dev.hatk.getFeed", { feed: "recent", limit: 50 }),
   }
+}
 
-  async function handleDelete(uri: string) {
-    const rkey = uri.split('/').pop()!
-    await serverDeleteStatus(rkey)
-  }
-</script>
+// Client-side: in a Svelte component or query helper
+const res = await callXrpc("dev.hatk.createRecord", {
+  collection: "xyz.statusphere.status" as const,
+  repo: viewer.did,
+  record: { status: "🚀", createdAt: new Date().toISOString() },
+})
 ```
 
-Even though these functions run on the server, you call them like any async function. SvelteKit handles the serialization and transport automatically.
+Pass SvelteKit's `fetch` as the optional third argument in load functions for request deduplication:
 
-### Enabling remote functions
-
-Remote functions require two settings in `svelte.config.js`:
-
-```javascript
-// svelte.config.js
-export default {
-  compilerOptions: {
-    experimental: {
-      async: true,
-    },
-  },
-  kit: {
-    experimental: {
-      remoteFunctions: true,
-    },
-  },
-};
+```typescript
+callXrpc("dev.hatk.getFeed", { feed: "recent" }, fetch)
 ```
 
-## Record mutations with `callXrpc`
+## Record mutations
 
 hatk generates three built-in procedures for managing records:
 
@@ -142,12 +80,11 @@ await callXrpc("dev.hatk.putRecord", {
 
 ## Optimistic UI
 
-For a responsive feel, update the UI before the server responds and roll back on failure. Here's the pattern from the statusphere template:
+For a responsive feel, update the UI before the server responds and roll back on failure:
 
 ```svelte
 <script lang="ts">
   import { callXrpc } from '$hatk/client'
-  import { createStatus as serverCreateStatus } from './status.remote'
   import type { StatusView } from '$hatk/client'
 
   let { data } = $props()
@@ -170,7 +107,11 @@ For a responsive feel, update the UI before the server responds and roll back on
 
     try {
       // 2. Call the server
-      const res = await serverCreateStatus(emoji)
+      const res = await callXrpc('dev.hatk.createRecord', {
+        collection: 'xyz.statusphere.status' as const,
+        repo: did,
+        record: { status: emoji, createdAt: new Date().toISOString() },
+      })
       // 3. Replace optimistic item with real URI
       items = items.map(i =>
         i.uri === optimisticItem.uri
@@ -198,7 +139,11 @@ The same pattern works for deletes -- remove the item from the list immediately,
     isMutating = true
 
     try {
-      await serverDeleteStatus(uri.split('/').pop()!)
+      const rkey = uri.split('/').pop()!
+      await callXrpc('dev.hatk.deleteRecord', {
+        collection: 'xyz.statusphere.status' as const,
+        rkey,
+      })
     } catch {
       if (removed) items = [removed, ...items]
     } finally {
@@ -207,12 +152,3 @@ The same pattern works for deletes -- remove the item from the list immediately,
   }
 </script>
 ```
-
-## When to use remote functions vs. `callXrpc`
-
-| Use case | Approach |
-|---|---|
-| Mutations that need auth checks | Remote functions -- call `getViewer()` server-side |
-| Multi-step server logic | Remote functions -- keep it in one server round-trip |
-| Simple reads from components | `callXrpc` directly -- no server function needed |
-| Client-side infinite scroll | `callXrpc` directly in the component |

@@ -3,18 +3,18 @@ title: Hooks
 description: Run custom logic at key points in the server lifecycle.
 ---
 
-Hooks let you run custom logic at key points in the Hatk lifecycle, like when a user logs in via OAuth. Define them with `defineHook()` in the `server/` directory.
+Hooks let you run custom logic at key points in the hatk lifecycle, like when a user logs in via OAuth. Define them with `defineHook()` in the `hooks/` directory.
 
 ## `on-login`
 
 The `on-login` hook runs after a successful OAuth login. The most common use is calling `ensureRepo` to backfill the user's data so it's available immediately:
 
 ```typescript
-// server/on-login.ts
+// hooks/on-login.ts
 import { defineHook } from '$hatk'
 
-export default defineHook('on-login', async ({ did, ensureRepo }) => {
-  await ensureRepo(did)
+export default defineHook('on-login', async (ctx) => {
+  await ctx.ensureRepo(ctx.did)
 })
 ```
 
@@ -25,21 +25,19 @@ This is three lines, but it's important: without it, a new user's existing recor
 Since the hook has full database and record access, you can check for records and create them if needed. For example, copying a user's Bluesky profile to a custom profile collection on first login:
 
 ```typescript
-// server/on-login.ts
+// hooks/on-login.ts
 import { defineHook, type BskyActorProfile, type MyAppProfile } from '$hatk'
 
 export default defineHook('on-login', async (ctx) => {
-  const { did, ensureRepo, lookup } = ctx
-
-  await ensureRepo(did)
+  await ctx.ensureRepo(ctx.did)
 
   // Check if user already has an app profile
-  const existing = await lookup<MyAppProfile>('my.app.profile', 'did', [did])
-  if (existing.has(did)) return
+  const existing = await ctx.lookup<MyAppProfile>('my.app.profile', 'did', [ctx.did])
+  if (existing.has(ctx.did)) return
 
   // Copy from Bluesky profile
-  const bsky = await lookup<BskyActorProfile>('app.bsky.actor.profile', 'did', [did])
-  const profile = bsky.get(did)
+  const bsky = await ctx.lookup<BskyActorProfile>('app.bsky.actor.profile', 'did', [ctx.did])
+  const profile = bsky.get(ctx.did)
   if (!profile) return
 
   await ctx.createRecord('my.app.profile', {

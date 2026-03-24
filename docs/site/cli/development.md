@@ -49,12 +49,3 @@ hatk reset
 
 This removes the SQLite database file and resets the local PDS container, giving you a fresh start.
 
-## `hatk schema`
-
-Print the SQLite table schema derived from your lexicon definitions.
-
-```bash
-hatk schema
-```
-
-Shows the SQL `CREATE TABLE` statements that would be generated from your record lexicons. Useful for understanding how lexicon fields map to database columns.
