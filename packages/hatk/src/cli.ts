@@ -1201,6 +1201,7 @@ After modifying lexicons, always run \`npx hatk generate types\` to update the g
       clientOut += `    const blob = arg as Blob | ArrayBuffer\n`
       clientOut += `    const ct = blob instanceof Blob ? blob.type : 'application/octet-stream'\n`
       clientOut += `    const res = await _fetch(path, { method: 'POST', headers: { 'Content-Type': ct }, body: blob })\n`
+      clientOut += `    if (typeof window !== 'undefined' && res.status === 401) { const _b = await res.json().catch(() => ({})); const _h = _b.handle ?? getViewer()?.handle; window.location.href = _h ? \`/oauth/login?handle=\${encodeURIComponent(_h)}\` : '/oauth/login'; return new Promise(() => {}) as any }\n`
       clientOut += `    if (!res.ok) throw new Error(\`XRPC \${nsid} failed: \${res.status}\`)\n`
       clientOut += `    return res.json() as Promise<OutputOf<K>>\n`
       clientOut += `  }\n`
