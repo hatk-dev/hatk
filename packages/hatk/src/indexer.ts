@@ -8,6 +8,7 @@ import {
   getRepoRetryInfo,
   listAllRepoStatuses,
   getDatabasePort,
+  updateRepoHandle,
 } from './database/db.ts'
 import { backfillRepo } from './backfill.ts'
 import { rebuildAllIndexes } from './database/fts.ts'
@@ -349,6 +350,16 @@ export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
 function processMessage(bytes: Uint8Array, collections: Set<string>): void {
   const header = cborDecode(bytes, 0)
   const body = cborDecode(bytes, header.offset)
+
+  // Handle identity events (handle changes)
+  if (header.value.t === '#identity') {
+    const did = body.value.did
+    const handle = body.value.handle
+    if (did && handle && repoStatusCache.has(did)) {
+      updateRepoHandle(did, handle).catch(() => {})
+    }
+    return
+  }
 
   if (header.value.op !== 1 || header.value.t !== '#commit') return
   if (!body.value.blocks || !body.value.ops) return

@@ -413,6 +413,11 @@ export async function setRepoStatus(
   }
 }
 
+/** Update the handle for a DID if it exists in _repos. */
+export async function updateRepoHandle(did: string, handle: string): Promise<void> {
+  await run(`UPDATE _repos SET handle = $1 WHERE did = $2`, [handle, did])
+}
+
 export async function getRepoRev(did: string): Promise<string | null> {
   const rows = await all<{ rev: string }>(`SELECT rev FROM _repos WHERE did = $1`, [did])
   return rows[0]?.rev ?? null
