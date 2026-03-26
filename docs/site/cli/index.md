@@ -3,13 +3,7 @@ title: CLI Overview
 description: All available Hatk CLI commands.
 ---
 
-The `hatk` CLI manages your entire development workflow — from scaffolding a new project to building for production.
-
-## Getting Started
-
-| Command           | Description               |
-| ----------------- | ------------------------- |
-| `hatk new <name>` | Create a new hatk project |
+The `hatk` CLI manages your development workflow — generators, dev server, and builds. To create a new project, use `vp create github:hatk-dev/hatk-template-starter` (see [Quickstart](/getting-started/quickstart)).
 
 ## Generators
 

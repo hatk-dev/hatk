@@ -3,7 +3,7 @@ title: Project Structure
 description: Understand the files and directories in a hatk project.
 ---
 
-After running `npx hatk new`, your project looks like this:
+After creating a project with `vp create github:hatk-dev/hatk-template-starter`, your project looks like this:
 
 ```
 my-app/
@@ -138,7 +138,7 @@ npx hatk generate types
 
 ## `db/schema.sql`
 
-Optional custom SQL that runs after hatk creates its auto-generated tables. Use this for custom indexes, views, or tables that go beyond what lexicons define.
+Auto-generated database reference schema. This file is written by hatk on startup and shows the current table structure.
 
 ## `docker-compose.yml` / `Dockerfile`
 

@@ -3,6 +3,7 @@ layout: home
 
 hero:
   name: "hat://k"
+  text: pronounced "hack"
   tagline: Extends your Vite application with an AT Protocol server. Add feeds, labels, and XRPC endpoints to your app, all typed from your lexicons.
   actions:
     - theme: brand

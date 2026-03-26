@@ -5,34 +5,42 @@ description: Create and run your first hatk project in under two minutes.
 
 ## Prerequisites
 
-- **Node.js 22+** — check with `node --version`
+- **Vite+** — install with `curl -fsSL https://vite.plus | bash` (or `irm https://vite.plus/ps1 | iex` on Windows)
 - **Docker** — needed to run the local PDS (Personal Data Server) during development
+
+Vite+ manages Node.js and your package manager automatically. Run `vp help` to verify it's installed.
 
 ## Create a new project
 
 ```bash
-npx hatk new my-app
+vp create github:hatk-dev/hatk-template-starter
 ```
 
-This scaffolds a full-stack project with a SvelteKit frontend, example feed, seed data, and everything wired together. The generated project includes:
+This scaffolds a full-stack project with a SvelteKit frontend, OAuth login, seed data, and everything wired together. The generated project includes:
 
 ```
-my-app/
-├── app/               # SvelteKit frontend (routes, components, styles)
-├── server/            # Backend logic (feeds, XRPC handlers, hooks)
-├── lexicons/          # AT Protocol schemas for your data types
-├── seeds/             # Test fixture data for local development
-├── hatk.config.ts     # Project configuration
-├── hatk.generated.ts  # Auto-generated types from your lexicons
-├── vite.config.ts     # Vite + SvelteKit config
-└── docker-compose.yml # Local PDS for development
+my-appview/
+├── app/                        # SvelteKit frontend (routes, components, styles)
+├── server/                     # Backend logic (hooks, feeds, XRPC handlers)
+├── lexicons/                   # AT Protocol schemas for your data types
+├── seeds/                      # Test fixture data for local development
+├── db/                         # Database reference schemas
+├── hatk.config.ts              # Project configuration
+├── hatk.generated.ts           # Auto-generated types (server)
+├── hatk.generated.client.ts    # Auto-generated types (client)
+├── vite.config.ts              # Vite+ / SvelteKit config
+├── svelte.config.js            # SvelteKit adapter config
+├── tsconfig.json               # TypeScript config (app)
+├── tsconfig.server.json        # TypeScript config (server)
+└── docker-compose.yml          # Local PLC directory and PDS for development
 ```
 
 ## Start the dev server
 
 ```bash
-cd my-app
-npm run dev
+cd my-appview
+npx svelte-kit sync
+vp dev
 ```
 
 This does three things automatically:

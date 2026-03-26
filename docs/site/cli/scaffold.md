@@ -1,22 +1,19 @@
 ---
 title: Scaffolding
-description: Create projects and generate code with the Hatk CLI.
+description: Generate code with the Hatk CLI.
 ---
 
-## `hatk new`
+## Creating a project
 
-Create a new Hatk project with the standard directory structure.
+Create a new hatk project using the Vite+ template:
 
 ```bash
-hatk new <name> [--svelte]
+vp create github:hatk-dev/hatk-template-starter
 ```
 
-| Option     | Description                                               |
-| ---------- | --------------------------------------------------------- |
-| `<name>`   | Project directory name (required)                         |
-| `--svelte` | Include a SvelteKit frontend with `app/routes` and `app/lib` |
+You'll be prompted for the target directory name.
 
-The command creates the project directory with `hatk.config.ts`, `lexicons/`, `server/`, `seeds/`, `test/`, and the core framework lexicons under `lexicons/dev/hatk/`. With `--svelte`, it also creates `app/`, `vite.config.ts`, and `svelte.config.js`.
+See the [Quickstart](/getting-started/quickstart) for prerequisites and setup.
 
 ## `hatk generate`
 
