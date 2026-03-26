@@ -11,6 +11,7 @@ export default defineConfig({
       { text: 'Frontend', link: '/frontend/setup' },
       { text: 'CLI', link: '/cli/' },
       { text: 'API', link: '/api/' },
+      { text: 'Showcase', link: '/showcase' },
     ],
 
     sidebar: [
