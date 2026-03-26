@@ -309,7 +309,7 @@ export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
     log(`[indexer] Warmed repo status cache with ${statuses.length} entries`)
   }
 
-  startMemoryDiagnostics()
+  // startMemoryDiagnostics()
 
   let wsUrl = `${relayUrl}/xrpc/com.atproto.sync.subscribeRepos`
   if (cursor) {

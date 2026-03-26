@@ -27,19 +27,13 @@ import { loadOnLoginHook } from './hooks.ts'
 import { initSetup } from './setup.ts'
 import { initServer } from './server-init.ts'
 
-function logMemory(phase: string): void {
-  const mem = process.memoryUsage()
-  log(
-    `[mem] ${phase}: heap=${Math.round(mem.heapUsed / 1024 / 1024)}MB rss=${Math.round(mem.rss / 1024 / 1024)}MB external=${Math.round(mem.external / 1024 / 1024)}MB arrayBuffers=${Math.round(mem.arrayBuffers / 1024 / 1024)}MB`,
-  )
-}
+
 
 const configPath = process.argv[2] || 'hatk.config.ts'
 const configDir = dirname(resolve(configPath))
 
 registerHatkResolveHook()
 
-logMemory('startup')
 
 // 1. Load config
 const config = await loadConfig(configPath)
@@ -87,7 +81,6 @@ if (config.database !== ':memory:') {
 const { adapter, searchPort } = await createAdapter(config.databaseEngine)
 setSearchPort(searchPort)
 await initDatabase(adapter, config.database, schemas, ddlStatements)
-logMemory('after-db-init')
 log(
   `[main] Database initialized (${config.databaseEngine}, ${config.database === ':memory:' ? 'in-memory' : config.database})`,
 )
@@ -158,7 +151,6 @@ if (config.oauth) {
   log(`[main] OAuth initialized (issuer: ${config.oauth.issuer})`)
 }
 
-logMemory('before-server')
 
 // 5. Start server immediately (don't wait for backfill)
 const collectionSet = new Set(collections)
@@ -180,7 +172,6 @@ function runBackfillAndRestart() {
     })
     .then((recordCount) => {
       if (recordCount > 0 && !process.env.DEV_MODE) {
-        logMemory('after-backfill')
         log('[main] Restarting to reclaim memory...')
         process.exit(1)
       }
@@ -225,7 +216,6 @@ log(
     .join(', ')}`,
 )
 
-logMemory('after-server')
 
 // 6. Start indexer with cursor
 const cursor = await getCursor('relay')
