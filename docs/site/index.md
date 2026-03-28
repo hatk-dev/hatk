@@ -24,6 +24,10 @@ features:
     details: Lexicons generate TypeScript types for records, queries, feeds, and the client.
 ---
 
+::: warning Alpha Software
+hatk is in early alpha. APIs may change without notice. Please give it a try and give feedback!
+:::
+
 ## Project Structure
 
 A hatk app looks like this:
