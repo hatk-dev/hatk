@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="0" fill="#000000"/>
+  <text
+    x="256"
+    y="268"
+    font-family="'Courier New', 'Consolas', monospace"
+    font-size="80"
+    font-weight="700"
+    letter-spacing="-2"
+    text-anchor="middle"
+    dominant-baseline="central"
+  ><tspan fill="#FFFFFF">h</tspan><tspan fill="#0085FF">at://</tspan><tspan fill="#FFFFFF">k</tspan></text>
+</svg>
