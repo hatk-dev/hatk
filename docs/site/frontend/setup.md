@@ -5,7 +5,7 @@ description: How hatk integrates with SvelteKit — the Vite plugin, generated f
 
 # Frontend Setup
 
-hatk uses SvelteKit for its frontend. The integration is handled by a Vite plugin that generates typed client code from your lexicons, so your components get autocomplete and type checking for every API call.
+hatk uses SvelteKit for its frontend, but any Vite SSR framework could be supported. The hatk CLI generates typed client code from your lexicons, so your components get autocomplete and type checking for every API call. The Vite plugin handles import resolution, the dev server, and the server-side bridge for `callXrpc()`.
 
 ## Vite plugin
 
@@ -22,7 +22,7 @@ export default defineConfig({
 });
 ```
 
-The `hatk()` plugin watches your lexicons and regenerates the typed client files when they change during development. It also sets up the server-side bridge that lets `callXrpc()` work in both server and client contexts.
+The `hatk()` plugin resolves `$hatk` and `$hatk/client` imports to the generated files, boots the dev server and PDS, and sets up the server-side bridge that lets `callXrpc()` work in both server and client contexts.
 
 ## Generated files
 
@@ -108,4 +108,4 @@ After adding or changing lexicons, regenerate the typed files:
 npx hatk generate types
 ```
 
-This updates both `hatk.generated.ts` and `hatk.generated.client.ts` with new types, XRPC schema entries, and helper functions matching your lexicons. During `hatk dev`, this happens automatically when lexicon files change.
+This updates both `hatk.generated.ts` and `hatk.generated.client.ts` with new types, XRPC schema entries, and helper functions matching your lexicons.
