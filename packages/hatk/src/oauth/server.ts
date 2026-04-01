@@ -16,7 +16,7 @@ import {
 import { parseDpopProof, createDpopProof } from './dpop.ts'
 import { initSession } from './session.ts'
 import { resolveClient, validateRedirectUri, isLoopbackClient } from './client.ts'
-import { discoverAuthServer, resolveHandle } from './discovery.ts'
+import { discoverAuthServer, resolveHandle, fetchProtectedResourceMetadata, fetchAuthServerMetadata } from './discovery.ts'
 import {
   getServerKey,
   storeServerKey,
@@ -165,6 +165,17 @@ export function getClientMetadata(issuer: string, config: OAuthConfig) {
 
 // --- PAR Endpoint ---
 
+/**
+ * Handle a Pushed Authorization Request (PAR).
+ *
+ * Supports account creation via `prompt=create`. When set, `login_hint`
+ * is treated as a PDS hostname (e.g. "selfhosted.social" or "localhost:2583")
+ * rather than a handle or DID. The auth server is discovered from the PDS's
+ * protected resource metadata, and `prompt=create` is forwarded to the PDS
+ * PAR so it shows the signup page.
+ *
+ * For normal login, `login_hint` is a handle or DID as usual.
+ */
 export async function handlePar(
   config: OAuthConfig,
   body: Record<string, string>,
@@ -191,9 +202,31 @@ export async function handlePar(
   if (!body.code_challenge) throw new Error('code_challenge is required')
   if (body.code_challenge_method && body.code_challenge_method !== 'S256') throw new Error('Only S256 supported')
 
-  // Resolve DID from login_hint
-  let did = body.login_hint
-  if (did && !did.startsWith('did:')) {
+  // Resolve DID and PDS from login_hint
+  const prompt = body.prompt
+  let did: string | undefined = body.login_hint
+  let pdsRequestUri: string | undefined
+  let pdsAuthServer: string | undefined
+  let pdsCodeVerifier: string | undefined
+  let pdsState: string | undefined
+  let pdsEndpoint: string | undefined
+
+  if (prompt === 'create' && body.login_hint) {
+    // Account creation: login_hint is a PDS URL, discover auth server from it directly
+    let pdsUrl: string
+    if (body.login_hint.startsWith('http')) {
+      pdsUrl = body.login_hint
+    } else if (body.login_hint.match(/^localhost[:/]/)) {
+      pdsUrl = `http://${body.login_hint}`
+    } else {
+      pdsUrl = `https://${body.login_hint}`
+    }
+    pdsEndpoint = pdsUrl
+    const protectedResource = await fetchProtectedResourceMetadata(pdsUrl)
+    pdsAuthServer = protectedResource.authorization_servers[0]
+    if (!pdsAuthServer) throw new Error(`No auth server for PDS ${pdsUrl}`)
+    did = undefined // no DID yet for account creation
+  } else if (did && !did.startsWith('did:')) {
     try {
       did = await resolveHandle(did, _relayUrl)
     } catch {
@@ -201,18 +234,15 @@ export async function handlePar(
     }
   }
 
-  // Discover user's PDS auth server
-  let pdsRequestUri: string | undefined
-  let pdsAuthServer: string | undefined
-  let pdsCodeVerifier: string | undefined
-  let pdsState: string | undefined
-
-  let pdsEndpoint: string | undefined
-
-  if (did) {
+  // Discover user's PDS auth server (for login flow with a resolved DID)
+  if (did && !pdsAuthServer) {
     const discovery = await discoverAuthServer(did, _plcUrl)
     pdsAuthServer = discovery.authServerEndpoint
     pdsEndpoint = discovery.pdsEndpoint
+  }
+
+  if (pdsAuthServer) {
+    const authServerMetadata = await fetchAuthServerMetadata(pdsAuthServer)
 
     // Create PKCE for our PAR to the PDS
     pdsCodeVerifier = randomToken()
@@ -221,19 +251,25 @@ export async function handlePar(
 
     // PAR to the PDS
     const parEndpoint =
-      discovery.authServerMetadata.pushed_authorization_request_endpoint || `${pdsAuthServer}/oauth/par`
+      authServerMetadata.pushed_authorization_request_endpoint || `${pdsAuthServer}/oauth/par`
     const serverDpopProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', parEndpoint)
 
-    const pdsParBody = new URLSearchParams({
+    const pdsParParams: Record<string, string> = {
       client_id: pdsClientId(config.issuer, config),
       redirect_uri: pdsRedirectUri(config.issuer),
       response_type: 'code',
       code_challenge: pdsCodeChallenge,
       code_challenge_method: 'S256',
       scope: body.scope || 'atproto transition:generic',
-      login_hint: body.login_hint || did,
       state: pdsState,
-    })
+    }
+    if (prompt === 'create') {
+      pdsParParams.prompt = 'create'
+    }
+    if (did) {
+      pdsParParams.login_hint = body.login_hint || did
+    }
+    const pdsParBody = new URLSearchParams(pdsParParams)
 
     const pdsParRes = await fetch(parEndpoint, {
       method: 'POST',

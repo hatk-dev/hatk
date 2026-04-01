@@ -142,6 +142,51 @@ A minimal Svelte login form using `login` and `logout`:
 {/if}
 ```
 
+## Native app clients
+
+hatk supports native app OAuth clients (iOS, Android, etc.) that use a custom URL scheme for redirects and communicate directly with the PAR and token endpoints.
+
+### Client configuration
+
+Register a native client in `hatk.config.ts` using a custom scheme `client_id` and `redirect_uri`:
+
+```typescript
+clients: [
+  // Native iOS app
+  {
+    client_id: "my-app://app",
+    client_name: "my-app-native",
+    scope: "atproto repo:xyz.statusphere.status?action=create",
+    redirect_uris: ["my-app://oauth/callback"],
+  },
+],
+```
+
+### Account creation
+
+Native clients can trigger account creation by sending `prompt=create` in the PAR request. When `prompt=create` is set, the `login_hint` parameter is treated as a **PDS hostname** (not a handle or DID), since the user doesn't have an account yet.
+
+```
+POST /oauth/par
+Content-Type: application/x-www-form-urlencoded
+
+client_id=my-app://app
+&redirect_uri=my-app://oauth/callback
+&response_type=code
+&code_challenge=<challenge>
+&code_challenge_method=S256
+&scope=atproto
+&prompt=create
+&login_hint=selfhosted.social
+```
+
+The `login_hint` should be the bare hostname of the PDS where the account will be created:
+
+- **Production:** `selfhosted.social` (or your PDS domain)
+- **Local development:** `localhost:2583`
+
+hatk will automatically prepend the correct scheme (`https://` for production, `http://` for localhost) and discover the PDS auth server via its protected resource metadata. The `prompt=create` parameter is forwarded to the PDS so it shows the signup page instead of the login page.
+
 ## Server-side auth
 
 ### `parseViewer` in layouts
