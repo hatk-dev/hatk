@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS _oauth_keys (
 CREATE TABLE IF NOT EXISTS _oauth_sessions (
   did TEXT PRIMARY KEY,
   pds_endpoint TEXT NOT NULL,
+  pds_auth_server TEXT,
   access_token TEXT NOT NULL,
   refresh_token TEXT,
   dpop_jkt TEXT NOT NULL,
@@ -162,6 +163,7 @@ export async function storeSession(
   did: string,
   data: {
     pdsEndpoint: string
+    pdsAuthServer?: string
     accessToken: string
     refreshToken?: string
     dpopJkt: string
@@ -169,9 +171,9 @@ export async function storeSession(
   },
 ): Promise<void> {
   await runSQL(
-    `INSERT OR REPLACE INTO _oauth_sessions (did, pds_endpoint, access_token, refresh_token, dpop_jkt, token_expires_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP)`,
-    [did, data.pdsEndpoint, data.accessToken, data.refreshToken || null, data.dpopJkt, data.tokenExpiresAt || null],
+    `INSERT OR REPLACE INTO _oauth_sessions (did, pds_endpoint, pds_auth_server, access_token, refresh_token, dpop_jkt, token_expires_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,CURRENT_TIMESTAMP)`,
+    [did, data.pdsEndpoint, data.pdsAuthServer || null, data.accessToken, data.refreshToken || null, data.dpopJkt, data.tokenExpiresAt || null],
   )
 }
 

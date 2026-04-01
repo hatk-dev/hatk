@@ -156,6 +156,11 @@ export async function initDatabase(
 
   // OAuth tables
   await port.executeMultiple(OAUTH_DDL)
+
+  // Migrations: add pds_auth_server to existing sessions tables
+  try {
+    await run(`ALTER TABLE _oauth_sessions ADD COLUMN pds_auth_server TEXT`)
+  } catch {}
 }
 
 interface MigrationChange {

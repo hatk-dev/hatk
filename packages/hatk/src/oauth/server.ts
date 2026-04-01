@@ -606,9 +606,10 @@ export async function handleCallback(
   if (!did) throw new Error('PDS token response missing sub (DID)')
 
   // Store PDS session server-side — pds_endpoint is the actual data PDS
-  // (e.g. leccinum.us-west.host.bsky.network), not the auth server (bsky.social)
+  // (e.g. leccinum.us-west.host.bsky.network), pds_auth_server is the OAuth server (bsky.social)
   await storeSession(did, {
     pdsEndpoint: request.pds_endpoint,
+    pdsAuthServer: request.pds_auth_server,
     accessToken: tokenData.access_token,
     refreshToken: tokenData.refresh_token,
     dpopJkt: serverJkt,
@@ -808,11 +809,12 @@ async function handleRefreshTokenGrant(
 
 export async function refreshPdsSession(
   config: OAuthConfig,
-  session: { did: string; pds_endpoint: string; refresh_token: string; dpop_jkt: string },
+  session: { did: string; pds_endpoint: string; pds_auth_server?: string; refresh_token: string; dpop_jkt: string },
 ): Promise<{ accessToken: string; refreshToken?: string; expiresAt?: number } | null> {
   if (!session.refresh_token) return null
 
-  const tokenEndpoint = `${session.pds_endpoint}/oauth/token`
+  // Use auth server for token endpoint (falls back to pds_endpoint for sessions created before this fix)
+  const tokenEndpoint = `${session.pds_auth_server || session.pds_endpoint}/oauth/token`
   const clientId = pdsClientId(config.issuer, config)
   const dpopProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', tokenEndpoint)
 
@@ -866,6 +868,7 @@ export async function refreshPdsSession(
   // Update stored session
   await storeSession(session.did, {
     pdsEndpoint: session.pds_endpoint,
+    pdsAuthServer: session.pds_auth_server,
     accessToken: tokenData.access_token,
     refreshToken: tokenData.refresh_token || session.refresh_token,
     dpopJkt: session.dpop_jkt,
