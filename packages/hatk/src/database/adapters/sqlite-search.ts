@@ -99,7 +99,7 @@ export class SQLiteSearchPort implements SearchPort {
     limit: number,
     offset: number,
   ): Promise<Array<{ uri: string; score: number }>> {
-    const escaped = query.replace(/['"*(){}[\]^~\\:]/g, ' ').trim()
+    const escaped = query.replace(/['"*(){}[\]^~\\:.]/g, ' ').trim()
     if (!escaped) return []
 
     const sql = `SELECT uri, -bm25(${shadowTable}_fts) AS score
