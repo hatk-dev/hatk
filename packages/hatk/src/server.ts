@@ -818,10 +818,12 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
       // OAuth Login (server-initiated, no DPoP required)
       if (url.pathname === '/oauth/login' && oauth) {
-        const handle = url.searchParams.get('handle')
-        if (!handle) return withCors(jsonError(400, 'handle required', acceptEncoding))
+        const handle = url.searchParams.get('handle') || ''
+        const prompt = url.searchParams.get('prompt') || undefined
+        const pds = url.searchParams.get('pds') || undefined
+        if (!handle && prompt !== 'create') return withCors(jsonError(400, 'handle required', acceptEncoding))
         try {
-          const redirectUrl = await serverLogin(oauth, handle)
+          const redirectUrl = await serverLogin(oauth, handle, { prompt, pds })
           return new Response(null, {
             status: 302,
             headers: { Location: redirectUrl, 'Set-Cookie': clearSessionCookieHeader() },

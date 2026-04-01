@@ -1,6 +1,6 @@
 {
   "name": "@hatk/hatk",
-  "version": "0.0.1-alpha.47",
+  "version": "0.0.1-alpha.48",
   "license": "MIT",
   "bin": {
     "hatk": "dist/cli.js"

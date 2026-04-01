@@ -366,17 +366,45 @@ export function buildAuthorizeRedirect(config: OAuthConfig, request: any): strin
 
 // --- Server-initiated login (no DPoP required from browser) ---
 
-export async function serverLogin(config: OAuthConfig, handle: string): Promise<string> {
-  // Resolve handle to DID
-  let did = handle
-  if (!did.startsWith('did:')) {
-    did = await resolveHandle(handle, _relayUrl)
+/**
+ * Initiate a server-side OAuth login or account creation flow.
+ *
+ * For account creation, pass `{ prompt: 'create', pds: 'selfhosted.social' }`.
+ * The `pds` is a bare hostname; the auth server is discovered from its
+ * protected resource metadata.
+ */
+export async function serverLogin(
+  config: OAuthConfig,
+  handle: string,
+  options?: { prompt?: string; pds?: string },
+): Promise<string> {
+  let did: string | undefined
+  let pdsAuthServer: string
+  let pdsEndpoint: string
+
+  if (options?.prompt === 'create' && options?.pds) {
+    // Account creation: discover auth server from PDS hostname
+    const pdsUrl = options.pds.startsWith('http')
+      ? options.pds
+      : options.pds.match(/^localhost[:/]/)
+        ? `http://${options.pds}`
+        : `https://${options.pds}`
+    pdsEndpoint = pdsUrl
+    const protectedResource = await fetchProtectedResourceMetadata(pdsUrl)
+    pdsAuthServer = protectedResource.authorization_servers[0]
+    if (!pdsAuthServer) throw new Error(`No auth server for PDS ${pdsUrl}`)
+  } else {
+    // Normal login: resolve handle to DID
+    did = handle
+    if (!did.startsWith('did:')) {
+      did = await resolveHandle(handle, _relayUrl)
+    }
+    const discovery = await discoverAuthServer(did, _plcUrl)
+    pdsAuthServer = discovery.authServerEndpoint
+    pdsEndpoint = discovery.pdsEndpoint
   }
 
-  // Discover PDS auth server
-  const discovery = await discoverAuthServer(did, _plcUrl)
-  const pdsAuthServer = discovery.authServerEndpoint
-  const pdsEndpoint = discovery.pdsEndpoint
+  const authServerMetadata = await fetchAuthServerMetadata(pdsAuthServer)
 
   // Create PKCE for PAR to PDS
   const pdsCodeVerifier = randomToken()
@@ -384,20 +412,26 @@ export async function serverLogin(config: OAuthConfig, handle: string): Promise<
   const pdsState = randomToken()
 
   // PAR to the PDS
-  const parEndpoint = discovery.authServerMetadata.pushed_authorization_request_endpoint || `${pdsAuthServer}/oauth/par`
+  const parEndpoint = authServerMetadata.pushed_authorization_request_endpoint || `${pdsAuthServer}/oauth/par`
   const serverDpopProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', parEndpoint)
 
   const scope = config.scopes?.join(' ') || 'atproto transition:generic'
-  const pdsParBody = new URLSearchParams({
+  const pdsParParams: Record<string, string> = {
     client_id: pdsClientId(config.issuer, config),
     redirect_uri: pdsRedirectUri(config.issuer),
     response_type: 'code',
     code_challenge: pdsCodeChallenge,
     code_challenge_method: 'S256',
     scope,
-    login_hint: handle,
     state: pdsState,
-  })
+  }
+  if (options?.prompt === 'create') {
+    pdsParParams.prompt = 'create'
+  }
+  if (did) {
+    pdsParParams.login_hint = handle
+  }
+  const pdsParBody = new URLSearchParams(pdsParParams)
 
   let pdsRequestUri: string | undefined
 
