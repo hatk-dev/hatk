@@ -24,6 +24,7 @@ import { runBackfill } from './backfill.ts'
 import { initOAuth } from './oauth/server.ts'
 import { parseSessionCookie, getSessionCookieName } from './oauth/session.ts'
 import { loadOnLoginHook } from './hooks.ts'
+import { initPush, isPushEnabled } from './push.ts'
 import { initSetup } from './setup.ts'
 import { initServer } from './server-init.ts'
 
@@ -149,6 +150,15 @@ try {
 if (config.oauth) {
   await initOAuth(config.oauth, config.plc, config.relay)
   log(`[main] OAuth initialized (issuer: ${config.oauth.issuer})`)
+}
+
+if (config.push) {
+  initPush(config.push, configDir)
+  if (isPushEnabled()) {
+    log(`[main] Push initialized (APNs bundle: ${config.push.apns.bundleId})`)
+  } else {
+    log(`[main] Push configured but key file missing — push disabled`)
+  }
 }
 
 

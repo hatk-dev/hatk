@@ -14,6 +14,7 @@ import { backfillRepo } from './backfill.ts'
 import { rebuildAllIndexes } from './database/fts.ts'
 import { log, emit, timer } from './logger.ts'
 import { runLabelRules } from './labels.ts'
+import { fireOnCommitHooks } from './hooks.ts'
 import { getLexiconArray } from './database/schema.ts'
 import { validateRecord } from '@bigmoves/lexicon'
 
@@ -95,6 +96,15 @@ async function flushBuffer(): Promise<void> {
       value: item.record,
     }).catch(() => {})
   }
+
+  // Fire on-commit hooks for inserted records (async, non-blocking)
+  fireOnCommitHooks(inserted.map((item) => ({
+    action: 'create' as const,
+    collection: item.collection,
+    uri: item.uri,
+    authorDid: item.authorDid,
+    record: item.record,
+  })))
 
   // Aggregate collection counts and unique DIDs for wide event
   const collections: Record<string, number> = {}
@@ -413,6 +423,13 @@ function processMessage(bytes: Uint8Array, collections: Set<string>): void {
 
     if (op.action === 'delete') {
       deleteRecord(collection, uri)
+      fireOnCommitHooks([{
+        action: 'delete',
+        collection,
+        uri,
+        authorDid: did,
+        record: null,
+      }])
       continue
     }
 

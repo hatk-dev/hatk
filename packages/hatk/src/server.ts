@@ -205,6 +205,26 @@ export function registerCoreHandlers(collections: string[], oauth: OAuthConfig |
       return pdsUploadBlob(oauth, viewer, input as any, 'application/octet-stream')
     })
 
+    registerCoreXrpcHandler('dev.hatk.push.registerToken', async (_params, _cursor, _limit, viewer, input) => {
+      if (!viewer) throw new InvalidRequestError('Authentication required')
+      const body = input as { token?: string; platform?: string }
+      if (!body.token || typeof body.token !== 'string') throw new InvalidRequestError('Missing or invalid token')
+      const platform = body.platform || 'apns'
+      if (!['apns', 'fcm', 'web'].includes(platform)) throw new InvalidRequestError('Invalid platform')
+      const { registerToken } = await import('./push.ts')
+      await registerToken(viewer.did, body.token, platform)
+      return { success: true }
+    })
+
+    registerCoreXrpcHandler('dev.hatk.push.unregisterToken', async (_params, _cursor, _limit, viewer, input) => {
+      if (!viewer) throw new InvalidRequestError('Authentication required')
+      const body = input as { token?: string }
+      if (!body.token || typeof body.token !== 'string') throw new InvalidRequestError('Missing or invalid token')
+      const { unregisterToken } = await import('./push.ts')
+      await unregisterToken(viewer.did, body.token)
+      return { success: true }
+    })
+
     registerCoreXrpcHandler('dev.hatk.createReport', async (_params, _cursor, _limit, viewer, input) => {
       if (!viewer) throw new InvalidRequestError('Authentication required')
       const body = input as { subject?: any; label?: string; reason?: string }

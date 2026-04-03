@@ -38,6 +38,18 @@ export interface BackfillConfig {
   maxRetries: number // max retry attempts for failed repos (default 5)
 }
 
+export interface ApnsPushConfig {
+  keyFile: string
+  keyId: string
+  teamId: string
+  bundleId: string
+  production?: boolean // defaults to true; set false for sandbox
+}
+
+export interface PushConfig {
+  apns: ApnsPushConfig
+}
+
 export interface HatkConfig {
   relay: string
   plc: string // PLC directory URL for DID resolution
@@ -49,13 +61,15 @@ export interface HatkConfig {
   backfill: BackfillConfig
   ftsRebuildInterval: number // rebuild FTS index every N writes (lower = fresher search)
   oauth: OAuthConfig | null
+  push: PushConfig | null // push notification delivery (null to disable)
   admins: string[] // DIDs allowed to access /admin/* endpoints
 }
 
 /** Input type for defineConfig — fields that have defaults are optional. */
-export type HatkConfigInput = Partial<Omit<HatkConfig, 'oauth' | 'backfill'>> & {
+export type HatkConfigInput = Partial<Omit<HatkConfig, 'oauth' | 'backfill' | 'push'>> & {
   oauth?: (Partial<OAuthConfig> & { clients: OAuthClientConfig[] }) | null
   backfill?: Partial<BackfillConfig>
+  push?: PushConfig | null
 }
 
 /** Identity function that provides type inference for hatk config files. */
@@ -111,6 +125,7 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
     },
     ftsRebuildInterval: parseInt(env.FTS_REBUILD_INTERVAL || '') || parsed.ftsRebuildInterval || 5000,
     oauth: null,
+    push: parsed.push || null,
     admins: env.ADMINS ? env.ADMINS.split(',').map((s) => s.trim()) : parsed.admins || [],
   }
 

@@ -44,7 +44,7 @@ export async function initServer(serverDir: string, opts?: { skipSetup?: boolean
 
   // 4. Register hooks
   for (const entry of scanned.hooks) {
-    registerHook(entry.mod.event, entry.mod.handler)
+    registerHook(entry.mod.event, entry.mod.handler, entry.mod)
   }
 
   // 5. Register labels (clear first for hot-reload)

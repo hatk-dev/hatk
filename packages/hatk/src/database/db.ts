@@ -154,6 +154,15 @@ export async function initDatabase(
   await run(`CREATE INDEX IF NOT EXISTS idx_reports_status ON _reports(status)`)
   await run(`CREATE INDEX IF NOT EXISTS idx_reports_subject_uri ON _reports(subject_uri)`)
 
+  // Push notification tokens
+  await run(`CREATE TABLE IF NOT EXISTS _push_tokens (
+    did TEXT NOT NULL,
+    token TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (did, token)
+  )`)
+
   // OAuth tables
   await port.executeMultiple(OAUTH_DDL)
 
