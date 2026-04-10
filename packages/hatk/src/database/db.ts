@@ -247,13 +247,17 @@ function buildChildExpectedCols(columns: { name: string; sqlType: string }[]): M
 
 export async function migrateSchema(tableSchemas: TableSchema[]): Promise<MigrationChange[]> {
   const changes: MigrationChange[] = []
+  const newCollections = new Set<string>()
 
   for (const schema of tableSchemas) {
     if (schema.columns.length === 0) continue // generic JSON storage, skip
 
     const tableName = schema.collection
     const existingCols = await getExistingColumns(tableName)
-    if (existingCols.size === 0) continue // table just created, nothing to migrate
+    if (existingCols.size === 0) {
+      newCollections.add(schema.collection)
+      continue // table just created, nothing to migrate
+    }
 
     // Expected columns: base columns (uri, cid, did, indexed_at) + schema columns
     const expectedCols = new Map<string, string>()
@@ -320,20 +324,16 @@ export async function migrateSchema(tableSchemas: TableSchema[]): Promise<Migrat
     await applyMigrationChanges(changes)
   }
 
-  // Check for empty collection tables — these are newly added and need backfill
-  // Skip on fresh DB (no repos yet) since backfill runs naturally
-  const [hasRepos] = await all(`SELECT 1 FROM _repos LIMIT 1`)
-  if (hasRepos) {
-    for (const schema of tableSchemas) {
-      if (schema.columns.length === 0) continue
-      try {
-        const [row] = await all(`SELECT 1 FROM ${schema.tableName} LIMIT 1`)
-        if (!row) {
-          await run(`UPDATE _repos SET status = 'pending' WHERE status = 'active'`)
-          emit('migration', 'new_collection', { collection: schema.collection })
-          break // only need to mark once
-        }
-      } catch {}
+  // Trigger backfill only for genuinely new collections (tables created this startup)
+  // Previously this checked ALL empty tables, which caused infinite resync loops
+  // for collections that are legitimately empty (e.g. blocks when nobody has blocked)
+  if (newCollections.size > 0) {
+    const [hasRepos] = await all(`SELECT 1 FROM _repos LIMIT 1`)
+    if (hasRepos) {
+      await run(`UPDATE _repos SET status = 'pending' WHERE status = 'active'`)
+      for (const collection of newCollections) {
+        emit('migration', 'new_collection', { collection })
+      }
     }
   }
 
