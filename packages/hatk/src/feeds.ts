@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { readdirSync } from 'node:fs'
 import { log } from './logger.ts'
-import { querySQL, packCursor, unpackCursor, isTakendownDid, filterTakendownDids } from './database/db.ts'
+import { querySQL, packCursor, unpackCursor, isTakendownDid, filterTakendownDids, resolveHandleToDid } from './database/db.ts'
 import { resolveRecords, buildBaseContext } from './hydrate.ts'
 import type { BaseContext, Row } from './hydrate.ts'
 import type { Checked } from './lex-types.ts'
@@ -255,6 +255,12 @@ export async function executeFeed(
 ): Promise<{ items?: unknown[]; uris?: string[]; cursor?: string } | null> {
   const handler = feeds.get(name)
   if (!handler) return null
+
+  // Resolve handle-based actor param to DID
+  if (params.actor && !params.actor.startsWith('did:')) {
+    const resolved = await resolveHandleToDid(params.actor)
+    if (resolved) params.actor = resolved
+  }
 
   const result = await handler.generate(params, cursor, limit, viewer || null)
 

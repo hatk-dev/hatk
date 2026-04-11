@@ -97,8 +97,15 @@ function getHttp2Session(): ClientHttp2Session {
   const host = pushConfig?.apns.production !== false
     ? 'https://api.push.apple.com'
     : 'https://api.sandbox.push.apple.com'
-  http2Session = connect(host)
-  http2Session.on('error', () => {
+  emit('push', 'connecting', { host })
+  http2Session = connect(host, {
+    peerMaxConcurrentStreams: 100,
+  })
+  http2Session.on('connect', () => {
+    emit('push', 'connected', { host })
+  })
+  http2Session.on('error', (err: Error) => {
+    emit('push', 'connection_error', { host, error: err.message })
     http2Session = null
   })
   http2Session.on('close', () => {
@@ -154,10 +161,13 @@ async function sendToApns(
 
   return new Promise<void>((resolve) => {
     const req = session.request(headers)
+    let settled = false
+    const done = () => { if (settled) return; settled = true; resolve() }
+
     req.setTimeout(15_000, () => {
       req.close()
       emit('push', 'send_error', { did: original.did, error: 'APNs request timed out' })
-      resolve()
+      done()
     })
     let status = 0
     let body = ''
@@ -169,6 +179,7 @@ async function sendToApns(
       body += chunk.toString()
     })
     req.on('end', async () => {
+      if (settled) return
       if (status === 200) {
         emit('push', 'sent', { did: original.did, token: token.slice(0, 8) + '...' })
       } else if (status === 410) {
@@ -182,11 +193,12 @@ async function sendToApns(
           body: body.slice(0, 200),
         })
       }
-      resolve()
+      done()
     })
     req.on('error', (err: Error) => {
+      if (settled) return
       emit('push', 'send_error', { did: original.did, error: err.message })
-      resolve()
+      done()
     })
 
     req.write(payload)

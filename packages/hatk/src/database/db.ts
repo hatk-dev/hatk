@@ -1726,6 +1726,12 @@ export async function putPreference(did: string, key: string, value: any): Promi
   ])
 }
 
+export async function resolveHandleToDid(handle: string): Promise<string | null> {
+  if (handle.startsWith('did:')) return handle
+  const rows = await all<{ did: string }>(`SELECT did FROM _repos WHERE handle = $1 LIMIT 1`, [handle])
+  return rows[0]?.did ?? null
+}
+
 export async function filterTakendownDids(dids: string[]): Promise<Set<string>> {
   if (dids.length === 0) return new Set()
   const placeholders = dids.map((_, i) => `$${i + 1}`).join(',')
