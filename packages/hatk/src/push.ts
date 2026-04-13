@@ -31,6 +31,7 @@ export interface PushPayload {
   body: string
   data?: Record<string, string>
   collapseId?: string
+  badge?: number
 }
 
 export interface PushInterface {
@@ -126,11 +127,15 @@ async function send(payload: PushPayload): Promise<void> {
   if (tokens.length === 0) return
 
   const jwt = getApnsJwt()
+  const aps: Record<string, unknown> = {
+    alert: { title: payload.title, body: payload.body },
+    sound: 'default',
+  }
+  if (payload.badge !== undefined) {
+    aps.badge = payload.badge
+  }
   const apnsPayload = JSON.stringify({
-    aps: {
-      alert: { title: payload.title, body: payload.body },
-      sound: 'default',
-    },
+    aps,
     ...(payload.data || {}),
   })
 
