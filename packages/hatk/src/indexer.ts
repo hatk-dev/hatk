@@ -433,31 +433,33 @@ function processMessage(bytes: Uint8Array, collections: Set<string>): void {
       continue
     }
 
-    for (const [cid, data] of blocks) {
-      try {
-        const { value: record } = cborDecode(data)
-        if (record?.$type === collection) {
-          const validationError = validateRecord(getLexiconArray(), collection, record)
-          if (validationError) {
-            emit('indexer', 'validation_skip', {
-              uri,
-              collection,
-              path: validationError.path,
-              error: validationError.message,
-            })
-            break
-          }
-          const item = { collection, uri, cid, authorDid: did, record }
+    const opCid = typeof op.cid === 'string' ? op.cid : op.cid?.$link
+    if (!opCid) continue
+    const data = blocks.get(opCid)
+    if (!data) continue
 
-          // If DID is mid-backfill, buffer instead of writing directly
-          if (pendingBuffers.has(did)) {
-            pendingBuffers.get(did)!.push(item)
-          } else {
-            bufferWrite(item)
-          }
-          break
+    try {
+      const { value: record } = cborDecode(data)
+      if (record?.$type === collection) {
+        const validationError = validateRecord(getLexiconArray(), collection, record)
+        if (validationError) {
+          emit('indexer', 'validation_skip', {
+            uri,
+            collection,
+            path: validationError.path,
+            error: validationError.message,
+          })
+          continue
         }
-      } catch {}
-    }
+        const item = { collection, uri, cid: opCid, authorDid: did, record }
+
+        // If DID is mid-backfill, buffer instead of writing directly
+        if (pendingBuffers.has(did)) {
+          pendingBuffers.get(did)!.push(item)
+        } else {
+          bufferWrite(item)
+        }
+      }
+    } catch {}
   }
 }
