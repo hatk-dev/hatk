@@ -60,6 +60,7 @@ import {
   pdsCreateRecord,
   pdsDeleteRecord,
   pdsPutRecord,
+  pdsApplyWrites,
   pdsUploadBlob,
   ProxyError,
   ScopeMissingProxyError,
@@ -203,6 +204,11 @@ export function registerCoreHandlers(collections: string[], oauth: OAuthConfig |
     registerCoreXrpcHandler('dev.hatk.uploadBlob', async (_params, _cursor, _limit, viewer, input) => {
       if (!viewer) throw new InvalidRequestError('Authentication required')
       return pdsUploadBlob(oauth, viewer, input as any, 'application/octet-stream')
+    })
+
+    registerCoreXrpcHandler('dev.hatk.applyWrites', async (_params, _cursor, _limit, viewer, input) => {
+      if (!viewer) throw new InvalidRequestError('Authentication required')
+      return pdsApplyWrites(oauth, viewer, input as any)
     })
 
     registerCoreXrpcHandler('dev.hatk.push.registerToken', async (_params, _cursor, _limit, viewer, input) => {

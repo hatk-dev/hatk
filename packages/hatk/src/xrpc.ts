@@ -40,7 +40,7 @@ import type { BaseContext } from './hydrate.ts'
 import { getLexicon } from './database/schema.ts'
 import type { Row, FlatRow } from './lex-types.ts'
 import type { OAuthConfig } from './config.ts'
-import { pdsCreateRecord, pdsPutRecord, pdsDeleteRecord } from './pds-proxy.ts'
+import { pdsCreateRecord, pdsPutRecord, pdsDeleteRecord, pdsApplyWrites } from './pds-proxy.ts'
 
 export type { Row, FlatRow }
 
@@ -115,6 +115,14 @@ export interface XrpcContext<
     collection: string,
     rkey: string,
   ) => Promise<void>
+  applyWrites: (
+    writes: Array<{
+      $type: string
+      collection: string
+      rkey?: string
+      value?: Record<string, unknown>
+    }>,
+  ) => Promise<{ results?: Array<{ $type: string; uri?: string; cid?: string }> }>
 }
 
 /** Internal representation of a loaded XRPC handler module. */
@@ -195,6 +203,11 @@ export function buildXrpcContext(
       if (!_oauthConfig) throw new Error('No OAuth config — cannot write to PDS')
       if (!viewer) throw new Error('Authentication required to write records')
       await pdsDeleteRecord(_oauthConfig, viewer, { collection, rkey })
+    },
+    applyWrites: async (writes) => {
+      if (!_oauthConfig) throw new Error('No OAuth config — cannot write to PDS')
+      if (!viewer) throw new Error('Authentication required to write records')
+      return pdsApplyWrites(_oauthConfig, viewer, { writes })
     },
   }
 }

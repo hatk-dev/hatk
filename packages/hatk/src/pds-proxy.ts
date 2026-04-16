@@ -262,6 +262,99 @@ export async function pdsPutRecord(
   return pdsRes.body as { uri?: string; cid?: string }
 }
 
+export interface ApplyWritesOp {
+  $type: string
+  collection: string
+  rkey?: string
+  value?: Record<string, unknown>
+}
+
+export interface ApplyWritesResult {
+  $type: string
+  uri?: string
+  cid?: string
+}
+
+/** Map dev.hatk.applyWrites#* types to com.atproto.repo.applyWrites#* for PDS. */
+function toPdsWriteType($type: string): string {
+  return $type.replace('dev.hatk.applyWrites#', 'com.atproto.repo.applyWrites#')
+}
+
+function isCreateOrUpdate($type: string): boolean {
+  const mapped = toPdsWriteType($type)
+  return mapped === 'com.atproto.repo.applyWrites#create' || mapped === 'com.atproto.repo.applyWrites#update'
+}
+
+export async function pdsApplyWrites(
+  oauthConfig: OAuthConfig,
+  viewer: { did: string },
+  input: { writes: ApplyWritesOp[] },
+): Promise<{ results?: ApplyWritesResult[] }> {
+  // Validate all create/update records before sending
+  for (const write of input.writes) {
+    if (isCreateOrUpdate(write.$type) && write.value) {
+      const validationError = validateRecord(getLexiconArray(), write.collection, write.value)
+      if (validationError) {
+        throw new ProxyError(
+          400,
+          `InvalidRecord: ${validationError.path ? validationError.path + ': ' : ''}${validationError.message}`,
+        )
+      }
+    }
+  }
+
+  const session = await getSession(viewer.did)
+  if (!session) throw new ProxyError(401, 'No PDS session for user')
+
+  const pdsUrl = `${session.pds_endpoint}/xrpc/com.atproto.repo.applyWrites`
+  const pdsBody = {
+    repo: viewer.did,
+    writes: input.writes.map((w) => ({ ...w, $type: toPdsWriteType(w.$type) })),
+  }
+
+  const pdsRes = await proxyToPds(oauthConfig, session, 'POST', pdsUrl, pdsBody)
+  if (!pdsRes.ok) throw new ProxyError(pdsRes.status, String(pdsRes.body.error || 'PDS applyWrites failed'))
+
+  // Index results locally
+  const results = (pdsRes.body.results as ApplyWritesResult[]) ?? []
+  for (let i = 0; i < input.writes.length; i++) {
+    const write = input.writes[i]
+    const result = results[i]
+    try {
+      const mapped = toPdsWriteType(write.$type)
+      if (mapped === 'com.atproto.repo.applyWrites#create' && result?.uri && result?.cid && write.value) {
+        await insertRecord(write.collection, result.uri, result.cid, viewer.did, write.value)
+        await runLabelRules({
+          uri: result.uri,
+          cid: result.cid,
+          did: viewer.did,
+          collection: write.collection,
+          value: write.value,
+        })
+      } else if (mapped === 'com.atproto.repo.applyWrites#update' && result?.uri && result?.cid && write.value) {
+        await insertRecord(write.collection, result.uri, result.cid, viewer.did, write.value)
+        await runLabelRules({
+          uri: result.uri,
+          cid: result.cid,
+          did: viewer.did,
+          collection: write.collection,
+          value: write.value,
+        })
+      } else if (mapped === 'com.atproto.repo.applyWrites#delete' && write.rkey) {
+        const uri = `at://${viewer.did}/${write.collection}/${write.rkey}`
+        await dbDeleteRecord(write.collection, uri)
+      }
+    } catch (err: unknown) {
+      emit('pds-proxy', 'local_index_error', {
+        op: 'applyWrites',
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  return pdsRes.body as { results?: ApplyWritesResult[] }
+}
+
 export async function pdsUploadBlob(
   oauthConfig: OAuthConfig,
   viewer: { did: string },
