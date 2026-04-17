@@ -11,7 +11,7 @@ import { createAdapter } from './database/adapter-factory.ts'
 import { getDialect } from './database/dialect.ts'
 import { setSearchPort } from './database/fts.ts'
 import { initFeeds, listFeeds } from './feeds.ts'
-import { initXrpc, listXrpc, configureRelay, configureOAuth, callXrpc } from './xrpc.ts'
+import { initXrpc, listXrpc, configureRelay, configureCdn, configureOAuth, callXrpc } from './xrpc.ts'
 import { initOpengraph } from './opengraph.ts'
 import { initLabels, getLabelDefinitions } from './labels.ts'
 import { startIndexer } from './indexer.ts'
@@ -39,6 +39,7 @@ registerHatkResolveHook()
 // 1. Load config
 const config = await loadConfig(configPath)
 configureRelay(config.relay)
+configureCdn(config.cdn)
 
 // 2. Load lexicons, validate schemas, and discover collections
 const lexicons = loadLexicons(resolve(configDir, 'lexicons'))

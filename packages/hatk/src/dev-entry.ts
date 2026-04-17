@@ -9,7 +9,7 @@ import { initDatabase, migrateSchema, getSchemaDump } from './database/db.ts'
 import { createAdapter } from './database/adapter-factory.ts'
 import { getDialect } from './database/dialect.ts'
 import { setSearchPort } from './database/fts.ts'
-import { configureRelay, configureOAuth } from './xrpc.ts'
+import { configureRelay, configureCdn, configureOAuth } from './xrpc.ts'
 import { initOAuth } from './oauth/server.ts'
 import { initServer } from './server-init.ts'
 import { createHandler, registerCoreHandlers } from './server.ts'
@@ -31,6 +31,7 @@ const configDir = dirname(resolve(configPath))
 
 const config = await loadConfig(configPath)
 configureRelay(config.relay)
+configureCdn(config.cdn)
 
 const lexicons = loadLexicons(resolve(configDir, 'lexicons'))
 const lexiconErrors = validateLexicons([...lexicons.values()])

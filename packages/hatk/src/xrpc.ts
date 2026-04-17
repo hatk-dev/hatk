@@ -39,7 +39,8 @@ import { resolveRecords, buildBaseContext } from './hydrate.ts'
 import type { BaseContext } from './hydrate.ts'
 import { getLexicon } from './database/schema.ts'
 import type { Row, FlatRow } from './lex-types.ts'
-import type { OAuthConfig } from './config.ts'
+import { createHmac } from 'node:crypto'
+import type { OAuthConfig, CdnConfig } from './config.ts'
 import { pdsCreateRecord, pdsPutRecord, pdsDeleteRecord, pdsApplyWrites } from './pds-proxy.ts'
 
 export type { Row, FlatRow }
@@ -138,26 +139,53 @@ interface XrpcHandler {
 }
 
 let _relayUrl = ''
+let _cdn: { url: string; key: Buffer; salt: Buffer } | null = null
 
 /** Set the relay URL used for blob URL generation. Called once during boot. */
 export function configureRelay(relay: string) {
   _relayUrl = relay
 }
 
+/** Set the CDN config for imgproxy URL signing. Called once during boot. */
+export function configureCdn(cdn: CdnConfig | null) {
+  if (cdn) {
+    _cdn = {
+      url: cdn.url.replace(/\/$/, ''),
+      key: Buffer.from(cdn.key, 'hex'),
+      salt: Buffer.from(cdn.salt, 'hex'),
+    }
+  } else {
+    _cdn = null
+  }
+}
+
+/** Sign an imgproxy path with HMAC-SHA256 (URL-safe base64). */
+function signPath(path: string): string {
+  const hmac = createHmac('sha256', _cdn!.key)
+  hmac.update(_cdn!.salt)
+  hmac.update(path)
+  const sig = hmac.digest('base64url')
+  return `/${sig}${path}`
+}
+
 /**
  * Generate a CDN URL for a blob ref. Uses the PDS directly in local dev,
- * or the Bluesky CDN (`cdn.bsky.app`) in production.
+ * a configured imgproxy CDN if available, or the Bluesky CDN as fallback.
  */
 export function blobUrl(
   did: string,
   ref: unknown,
-  preset: 'avatar' | 'banner' | 'feed_thumbnail' | 'feed_fullsize' = 'avatar',
+  preset: string = 'avatar',
 ): string | undefined {
   if (!ref) return undefined
   const p = typeof ref === 'string' ? JSON.parse(ref) : ref
   if (!p?.ref?.$link) return undefined
   if (_relayUrl.includes('localhost:2583')) {
     return `http://localhost:2583/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${p.ref.$link}`
+  }
+  if (_cdn) {
+    const path = `/${preset}/plain/${did}/${p.ref.$link}`
+    return `${_cdn.url}${signPath(path)}`
   }
   return `https://cdn.bsky.app/img/${preset}/plain/${did}/${p.ref.$link}@jpeg`
 }

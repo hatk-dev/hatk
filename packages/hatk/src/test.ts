@@ -15,7 +15,7 @@ import { createAdapter } from './database/adapter-factory.ts'
 import { SQLITE_DIALECT } from './database/dialect.ts'
 import { setSearchPort } from './database/fts.ts'
 import { executeFeed, listFeeds, createPaginate } from './feeds.ts'
-import { executeXrpc, listXrpc, configureRelay } from './xrpc.ts'
+import { executeXrpc, listXrpc, configureRelay, configureCdn } from './xrpc.ts'
 import { initServer } from './server-init.ts'
 import { discoverViews } from './views.ts'
 import { validateLexicons } from '@bigmoves/lexicon'
@@ -78,6 +78,7 @@ export async function createTestContext(): Promise<TestContext> {
   const configDir = dirname(resolve(configPath))
 
   configureRelay(config.relay)
+  configureCdn(config.cdn)
 
   // Load and validate lexicons
   const lexicons = loadLexicons(resolve(configDir, 'lexicons'))

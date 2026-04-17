@@ -25,7 +25,7 @@ export interface BaseContext {
   blobUrl: (
     did: string,
     ref: unknown,
-    preset?: 'avatar' | 'banner' | 'feed_thumbnail' | 'feed_fullsize',
+    preset?: string,
   ) => string | undefined
 }
 

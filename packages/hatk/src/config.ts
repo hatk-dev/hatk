@@ -50,10 +50,17 @@ export interface PushConfig {
   apns: ApnsPushConfig
 }
 
+export interface CdnConfig {
+  url: string // CDN base URL (e.g. https://cdn.grain.social)
+  key: string // hex-encoded HMAC key for imgproxy URL signing
+  salt: string // hex-encoded HMAC salt for imgproxy URL signing
+}
+
 export interface HatkConfig {
   relay: string
   plc: string // PLC directory URL for DID resolution
   port: number
+  cdn: CdnConfig | null // CDN with imgproxy URL signing (null to use cdn.bsky.app)
   databaseEngine: 'duckdb' | 'sqlite' // which database adapter to use
   database: string // database file path (replaces :memory:)
   publicDir: string | null // static file directory (null to disable)
@@ -66,7 +73,8 @@ export interface HatkConfig {
 }
 
 /** Input type for defineConfig — fields that have defaults are optional. */
-export type HatkConfigInput = Partial<Omit<HatkConfig, 'oauth' | 'backfill' | 'push'>> & {
+export type HatkConfigInput = Partial<Omit<HatkConfig, 'oauth' | 'backfill' | 'push' | 'cdn'>> & {
+  cdn?: CdnConfig | null
   oauth?: (Partial<OAuthConfig> & { clients: OAuthClientConfig[] }) | null
   backfill?: Partial<BackfillConfig>
   push?: PushConfig | null
@@ -124,6 +132,9 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
       maxRetries: parseInt(env.BACKFILL_MAX_RETRIES || '') || backfillRaw.maxRetries || 5,
     },
     ftsRebuildInterval: parseInt(env.FTS_REBUILD_INTERVAL || '') || parsed.ftsRebuildInterval || 5000,
+    cdn: env.CDN_URL && env.CDN_KEY && env.CDN_SALT
+      ? { url: env.CDN_URL, key: env.CDN_KEY, salt: env.CDN_SALT }
+      : parsed.cdn || null,
     oauth: null,
     push: parsed.push || null,
     admins: env.ADMINS ? env.ADMINS.split(',').map((s) => s.trim()) : parsed.admins || [],
