@@ -118,15 +118,16 @@ export async function initOpengraph(ogDir: string): Promise<void> {
       paramNames,
       execute: async (params) => {
         const ctx = buildXrpcContext(params, undefined, 1, null)
+        // Override blobUrl to use _og presets (jpeg) — satori doesn't support webp
+        const origBlobUrl = ctx.blobUrl
+        ctx.blobUrl = (did, ref, preset = 'avatar') => origBlobUrl(did, ref, `${preset}_og`)
         ;(ctx as any).fetchImage = async (url: string): Promise<string | null> => {
           try {
             const resp = await fetch(url, { redirect: 'follow' })
             if (!resp.ok) return null
             const buf = Buffer.from(await resp.arrayBuffer())
-            // Force image/png for satori compatibility (satori doesn't support webp)
-            const contentType = resp.headers.get('content-type') || 'image/png'
-            const safeType = contentType.includes('webp') ? 'image/png' : contentType
-            return `data:${safeType};base64,${buf.toString('base64')}`
+            const contentType = resp.headers.get('content-type') || 'image/jpeg'
+            return `data:${contentType};base64,${buf.toString('base64')}`
           } catch {
             return null
           }
@@ -177,15 +178,16 @@ export function registerOgHandler(ogMod: {
     paramNames,
     execute: async (params) => {
       const ctx = buildXrpcContext(params, undefined, 1, null)
+      // Override blobUrl to use _og presets (jpeg) — satori doesn't support webp
+      const origBlobUrl = ctx.blobUrl
+      ctx.blobUrl = (did, ref, preset = 'avatar') => origBlobUrl(did, ref, `${preset}_og`)
       ;(ctx as any).fetchImage = async (url: string): Promise<string | null> => {
         try {
           const resp = await fetch(url, { redirect: 'follow' })
           if (!resp.ok) return null
           const buf = Buffer.from(await resp.arrayBuffer())
-          // Force image/png for satori compatibility (satori doesn't support webp)
-          const contentType = resp.headers.get('content-type') || 'image/png'
-          const safeType = contentType.includes('webp') ? 'image/png' : contentType
-          return `data:${safeType};base64,${buf.toString('base64')}`
+          const contentType = resp.headers.get('content-type') || 'image/jpeg'
+          return `data:${contentType};base64,${buf.toString('base64')}`
         } catch {
           return null
         }
