@@ -123,8 +123,10 @@ export async function initOpengraph(ogDir: string): Promise<void> {
             const resp = await fetch(url, { redirect: 'follow' })
             if (!resp.ok) return null
             const buf = Buffer.from(await resp.arrayBuffer())
-            const contentType = resp.headers.get('content-type') || 'image/jpeg'
-            return `data:${contentType};base64,${buf.toString('base64')}`
+            // Force image/png for satori compatibility (satori doesn't support webp)
+            const contentType = resp.headers.get('content-type') || 'image/png'
+            const safeType = contentType.includes('webp') ? 'image/png' : contentType
+            return `data:${safeType};base64,${buf.toString('base64')}`
           } catch {
             return null
           }
@@ -180,8 +182,10 @@ export function registerOgHandler(ogMod: {
           const resp = await fetch(url, { redirect: 'follow' })
           if (!resp.ok) return null
           const buf = Buffer.from(await resp.arrayBuffer())
-          const contentType = resp.headers.get('content-type') || 'image/jpeg'
-          return `data:${contentType};base64,${buf.toString('base64')}`
+          // Force image/png for satori compatibility (satori doesn't support webp)
+          const contentType = resp.headers.get('content-type') || 'image/png'
+          const safeType = contentType.includes('webp') ? 'image/png' : contentType
+          return `data:${safeType};base64,${buf.toString('base64')}`
         } catch {
           return null
         }
@@ -234,7 +238,7 @@ export async function handleOpengraphRequest(pathname: string): Promise<Buffer |
 
       return png
     } catch (err: any) {
-      console.error(`[opengraph] error in ${handler.name}:`, err.message)
+      console.error(`[opengraph] error in ${handler.name}:`, err.message, err.stack)
       return null
     }
   }
