@@ -232,6 +232,7 @@ log(
 const cursor = await getCursor('relay')
 startIndexer({
   relayUrl: config.relay,
+  plcUrl: config.plc,
   collections: collectionSet,
   signalCollections: config.backfill.signalCollections ? new Set(config.backfill.signalCollections) : undefined,
   pinnedRepos: config.backfill.repos ? new Set(config.backfill.repos) : undefined,

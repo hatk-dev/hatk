@@ -38,15 +38,15 @@ interface PdsResolution {
   handle: string | null
 }
 
-/** In-memory cache of DID → PDS resolution results to avoid redundant lookups. */
-const pdsCache = new Map<string, PdsResolution>()
 let plcUrl: string
 
 /**
  * Resolves a DID to its PDS endpoint and handle by fetching the DID document.
  *
  * Supports both `did:web` (fetches `/.well-known/did.json`) and `did:plc`
- * (fetches from the PLC directory). Results are cached for the lifetime of the process.
+ * (fetches from the PLC directory). Always fetches fresh — DID docs change
+ * (handle renames, PDS migrations) and a stale cache silently rewrites stale
+ * handles back into `_repos` on every backfill.
  *
  * @example
  * ```ts
@@ -56,9 +56,6 @@ let plcUrl: string
  * ```
  */
 async function resolvePds(did: string): Promise<PdsResolution> {
-  const cached = pdsCache.get(did)
-  if (cached) return cached
-
   let didDoc: any
   if (did.startsWith('did:web:')) {
     const domain = did.slice('did:web:'.length)
@@ -74,13 +71,11 @@ async function resolvePds(did: string): Promise<PdsResolution> {
   const pds = didDoc.service?.find((s: any) => s.id === '#atproto_pds')?.serviceEndpoint
   if (!pds) throw new Error(`No PDS endpoint in DID document for ${did}`)
 
-  // Extract handle from alsoKnownAs (format: "at://handle")
+  // First at:// entry in alsoKnownAs is the canonical handle (per @atproto/identity convention)
   const aka = didDoc.alsoKnownAs?.find((u: string) => u.startsWith('at://'))
   const handle = aka ? aka.slice('at://'.length) : null
 
-  const result = { pds, handle }
-  pdsCache.set(did, result)
-  return result
+  return { pds, handle }
 }
 
 /**

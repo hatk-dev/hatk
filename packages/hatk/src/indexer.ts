@@ -53,6 +53,7 @@ let indexerSignalCollections: Set<string>
 let indexerPinnedRepos: Set<string> | null = null
 let indexerFetchTimeout: number
 let indexerMaxRetries: number
+let indexerPlcUrl: string
 let maxConcurrentBackfills = 3
 
 /**
@@ -256,6 +257,7 @@ export async function triggerAutoBackfill(did: string, attempt = 0): Promise<voi
 /** Configuration for the firehose indexer. */
 interface IndexerOpts {
   relayUrl: string
+  plcUrl: string
   collections: Set<string>
   signalCollections?: Set<string>
   pinnedRepos?: Set<string>
@@ -307,6 +309,7 @@ export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
   indexerPinnedRepos = opts.pinnedRepos || null
   indexerFetchTimeout = fetchTimeout
   indexerMaxRetries = opts.maxRetries
+  indexerPlcUrl = opts.plcUrl
   maxConcurrentBackfills = opts.parallelism ?? 3
 
   // Pre-populate repo status cache from DB so non-signal updates
@@ -338,8 +341,8 @@ export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
       if (!(event.data instanceof ArrayBuffer)) return
       const bytes = new Uint8Array(event.data)
       processMessage(bytes, collections)
-    } catch {
-      // Skip unparseable firehose messages silently
+    } catch (err: unknown) {
+      emit('indexer', 'decode_error', { error: err instanceof Error ? err.message : String(err) })
     }
   })
 
@@ -353,6 +356,61 @@ export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
 }
 
 /**
+ * Handle a `#identity` firehose event for a DID. The `handle` field on the
+ * event is optional per the lexicon, and some emitters omit it (signalling
+ * "re-resolve"). When absent, we re-resolve from the PLC directory so handle
+ * renames propagate even when the relay payload is sparse.
+ *
+ * Only updates DIDs we already track (present in repoStatusCache) to avoid
+ * writing rows for the entire network.
+ */
+async function handleIdentityEvent(did: string, payloadHandle: string | undefined): Promise<void> {
+  if (!repoStatusCache.has(did)) return
+
+  let handle = payloadHandle
+  const payloadHadHandle = handle !== undefined
+
+  if (!handle) {
+    try {
+      // Bound the PLC fetch so a slow plc.directory can't pile up unbounded
+      // promises during an identity-event burst (fire-and-forget caller).
+      const res = await fetch(`${indexerPlcUrl}/${did}`, {
+        signal: AbortSignal.timeout(indexerFetchTimeout * 1000),
+      })
+      if (res.ok) {
+        const doc = (await res.json()) as { alsoKnownAs?: string[] }
+        // First at:// entry is the canonical handle (per @atproto/identity convention)
+        const aka = doc.alsoKnownAs?.find((u) => u.startsWith('at://'))
+        handle = aka ? aka.slice('at://'.length) : undefined
+      } else {
+        emit('indexer', 'identity_resolve_error', { did, status: res.status })
+      }
+    } catch (err: unknown) {
+      emit('indexer', 'identity_resolve_error', {
+        did,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  if (!handle) {
+    emit('indexer', 'identity_no_handle', { did, payload_had_handle: payloadHadHandle })
+    return
+  }
+
+  try {
+    await updateRepoHandle(did, handle)
+    emit('indexer', 'identity_handle_update', { did, handle, payload_had_handle: payloadHadHandle })
+  } catch (err: unknown) {
+    emit('indexer', 'identity_update_error', {
+      did,
+      handle,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
+/**
  * Process a single firehose message. Decodes the CBOR header/body, filters
  * for relevant collections, validates records against lexicons, and routes
  * writes to the buffer (or pending buffer if the DID is mid-backfill).
@@ -361,13 +419,12 @@ function processMessage(bytes: Uint8Array, collections: Set<string>): void {
   const header = cborDecode(bytes, 0)
   const body = cborDecode(bytes, header.offset)
 
-  // Handle identity events (handle changes)
+  // Handle identity events (handle changes). Fire-and-forget — keeps
+  // processMessage synchronous so the WS event loop drains without backpressure.
   if (header.value.t === '#identity') {
-    const did = body.value.did
-    const handle = body.value.handle
-    if (did && handle && repoStatusCache.has(did)) {
-      updateRepoHandle(did, handle).catch(() => {})
-    }
+    const did = typeof body.value.did === 'string' ? body.value.did : undefined
+    const handle = typeof body.value.handle === 'string' ? body.value.handle : undefined
+    if (did) handleIdentityEvent(did, handle)
     return
   }
 
