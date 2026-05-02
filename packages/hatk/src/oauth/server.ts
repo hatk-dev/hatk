@@ -39,6 +39,31 @@ import { fireOnLoginHook } from '../hooks.ts'
 
 const SERVER_KEY_KID = 'appview-oauth-key'
 
+/**
+ * RFC 6749 §5.2 OAuth token-endpoint error.
+ *
+ * Surfaces as HTTP `status` (default 400) with body
+ * `{ error: code, error_description: description }` so OAuth clients can
+ * distinguish a permanently-rejected refresh token (`invalid_grant`) from
+ * a transient server failure and decide whether to log the user out.
+ */
+export class OAuthError extends Error {
+  constructor(
+    public readonly code:
+      | 'invalid_request'
+      | 'invalid_client'
+      | 'invalid_grant'
+      | 'unauthorized_client'
+      | 'unsupported_grant_type'
+      | 'invalid_scope',
+    public readonly description: string,
+    public readonly status: number = 400,
+  ) {
+    super(description)
+    this.name = 'OAuthError'
+  }
+}
+
 async function resolveHandleForDid(did: string): Promise<string | undefined> {
   const rows = (await querySQL('SELECT handle FROM _repos WHERE did = $1', [did])) as { handle: string }[]
   return rows[0]?.handle || undefined
@@ -645,14 +670,14 @@ export async function handleToken(
   requestUrl: string,
 ): Promise<any> {
   const grantType = body.grant_type
-  if (!grantType) throw new Error('grant_type is required')
+  if (!grantType) throw new OAuthError('invalid_request', 'grant_type is required')
 
   if (grantType === 'authorization_code') {
     return handleAuthorizationCodeGrant(config, body, dpopHeader, requestUrl)
   } else if (grantType === 'refresh_token') {
     return handleRefreshTokenGrant(config, body, dpopHeader, requestUrl)
   }
-  throw new Error(`Unsupported grant_type: ${grantType}`)
+  throw new OAuthError('unsupported_grant_type', `Unsupported grant_type: ${grantType}`)
 }
 
 async function handleAuthorizationCodeGrant(
@@ -745,17 +770,18 @@ async function handleRefreshTokenGrant(
 ) {
   const dpop = await parseDpopProof(dpopHeader, 'POST', requestUrl)
   const fresh = await checkAndStoreDpopJti(dpop.jti, dpop.iat + 300)
-  if (!fresh) throw new Error('DPoP jti replay detected')
+  if (!fresh) throw new OAuthError('invalid_request', 'DPoP jti replay detected')
 
   const { refresh_token, client_id } = body
-  if (!refresh_token || !client_id) throw new Error('Missing required parameters')
+  if (!refresh_token || !client_id) throw new OAuthError('invalid_request', 'Missing required parameters')
 
-  // Look up and validate refresh token
+  // Look up and validate refresh token. Per RFC 6749 §5.2, all of these are
+  // `invalid_grant` — the client must treat them as terminal and re-authenticate.
   const stored = await getRefreshToken(refresh_token)
-  if (!stored) throw new Error('Invalid refresh token')
-  if (stored.revoked) throw new Error('Refresh token revoked')
-  if (stored.expires_at && stored.expires_at < Math.floor(Date.now() / 1000)) throw new Error('Refresh token expired')
-  if (stored.client_id !== client_id) throw new Error('client_id mismatch')
+  if (!stored) throw new OAuthError('invalid_grant', 'Invalid refresh token')
+  if (stored.revoked) throw new OAuthError('invalid_grant', 'Refresh token revoked')
+  if (stored.expires_at && stored.expires_at < Math.floor(Date.now() / 1000)) throw new OAuthError('invalid_grant', 'Refresh token expired')
+  if (stored.client_id !== client_id) throw new OAuthError('invalid_grant', 'client_id mismatch')
 
   // Revoke old refresh token (rotation)
   await revokeRefreshToken(refresh_token)

@@ -47,6 +47,7 @@ import {
   serverLogin,
   handleToken,
   authenticate,
+  OAuthError,
 } from './oauth/server.ts'
 import {
   createSessionCookie,
@@ -933,9 +934,20 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           body = JSON.parse(rawBody)
         }
         const dpopHeader = request.headers.get('dpop')
-        if (!dpopHeader) return withCors(jsonError(400, 'DPoP header required', acceptEncoding))
-        const result = await handleToken(oauth, body, dpopHeader, `${requestOrigin}/oauth/token`)
-        return withCors(json(result, 200, acceptEncoding))
+        if (!dpopHeader) {
+          return withCors(json({ error: 'invalid_request', error_description: 'DPoP header required' }, 400, acceptEncoding))
+        }
+        try {
+          const result = await handleToken(oauth, body, dpopHeader, `${requestOrigin}/oauth/token`)
+          return withCors(json(result, 200, acceptEncoding))
+        } catch (err: any) {
+          if (err instanceof OAuthError) {
+            return withCors(
+              json({ error: err.code, error_description: err.description }, err.status, acceptEncoding),
+            )
+          }
+          throw err
+        }
       }
 
       // POST /xrpc/dev.hatk.createRecord — proxy write to user's PDS
