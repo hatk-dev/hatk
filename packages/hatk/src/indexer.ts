@@ -47,6 +47,13 @@ const pendingReschedule = new Set<string>()
 // In-memory cache of repo status to avoid flooding the DB read queue
 const repoStatusCache = new Map<string, string>()
 
+// Cursor save guard — ensures the periodic cursor saver is started exactly
+// once across all `startIndexer` invocations (the function is re-entered on
+// every reconnect).
+let cursorSaverStarted = false
+/** How often to persist `lastSeq` to `_cursor.relay` independent of buffer flushes. */
+const CURSOR_SAVE_INTERVAL_MS = 10_000
+
 // Set by startIndexer
 let indexerCollections: Set<string>
 let indexerSignalCollections: Set<string>
@@ -292,6 +299,31 @@ function startMemoryDiagnostics(): void {
 }
 
 /**
+ * Periodically persist `lastSeq` to `_cursor.relay` so the indexer can resume
+ * near live on restart even when no records have been flushed recently.
+ *
+ * `flushBuffer` saves the cursor as a side effect of inserting records — fine
+ * for high-volume collections, but for deployments that index rare/low-volume
+ * collections (custom lexicons, niche feeds) the buffer may not flush for
+ * hours or days. Without a heartbeat, each restart resumes from the last
+ * flush, which can be arbitrarily stale; on reconnect the relay then replays
+ * a huge backlog of irrelevant events before the indexer reaches live and
+ * starts processing fresh commits.
+ *
+ * Idempotent: guarded by {@link cursorSaverStarted} so reconnect loops don't
+ * stack multiple timers.
+ */
+function startCursorSaver(): void {
+  if (cursorSaverStarted) return
+  cursorSaverStarted = true
+  setInterval(() => {
+    if (lastSeq !== null) {
+      setCursor('relay', String(lastSeq)).catch(() => {})
+    }
+  }, CURSOR_SAVE_INTERVAL_MS)
+}
+
+/**
  * Connect to the AT Protocol relay firehose and begin indexing.
  *
  * Opens a WebSocket to `subscribeRepos`, processes commit messages synchronously
@@ -311,6 +343,8 @@ export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
   indexerMaxRetries = opts.maxRetries
   indexerPlcUrl = opts.plcUrl
   maxConcurrentBackfills = opts.parallelism ?? 3
+
+  startCursorSaver()
 
   // Pre-populate repo status cache from DB so non-signal updates
   // (e.g. profile changes) are processed for already-tracked DIDs
