@@ -16,7 +16,12 @@ import {
 import { parseDpopProof, createDpopProof } from './dpop.ts'
 import { initSession } from './session.ts'
 import { resolveClient, validateRedirectUri, isLoopbackClient } from './client.ts'
-import { discoverAuthServer, resolveHandle, fetchProtectedResourceMetadata, fetchAuthServerMetadata } from './discovery.ts'
+import {
+  discoverAuthServer,
+  resolveHandle,
+  fetchProtectedResourceMetadata,
+  fetchAuthServerMetadata,
+} from './discovery.ts'
 import {
   getServerKey,
   storeServerKey,
@@ -275,8 +280,7 @@ export async function handlePar(
     pdsState = randomToken() // unique state to correlate callback
 
     // PAR to the PDS
-    const parEndpoint =
-      authServerMetadata.pushed_authorization_request_endpoint || `${pdsAuthServer}/oauth/par`
+    const parEndpoint = authServerMetadata.pushed_authorization_request_endpoint || `${pdsAuthServer}/oauth/par`
     const serverDpopProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', parEndpoint)
 
     const pdsParParams: Record<string, string> = {
@@ -780,7 +784,8 @@ async function handleRefreshTokenGrant(
   const stored = await getRefreshToken(refresh_token)
   if (!stored) throw new OAuthError('invalid_grant', 'Invalid refresh token')
   if (stored.revoked) throw new OAuthError('invalid_grant', 'Refresh token revoked')
-  if (stored.expires_at && stored.expires_at < Math.floor(Date.now() / 1000)) throw new OAuthError('invalid_grant', 'Refresh token expired')
+  if (stored.expires_at && stored.expires_at < Math.floor(Date.now() / 1000))
+    throw new OAuthError('invalid_grant', 'Refresh token expired')
   if (stored.client_id !== client_id) throw new OAuthError('invalid_grant', 'client_id mismatch')
 
   // Revoke old refresh token (rotation)

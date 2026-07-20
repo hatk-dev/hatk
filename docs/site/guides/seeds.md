@@ -14,10 +14,15 @@ const { createAccount, createRecord } = seed()
 
 const alice = await createAccount('alice.test')
 
-await createRecord(alice, 'app.bsky.actor.profile', {
-  displayName: 'Alice',
-  description: 'Test user',
-}, { rkey: 'self' })
+await createRecord(
+  alice,
+  'app.bsky.actor.profile',
+  {
+    displayName: 'Alice',
+    description: 'Test user',
+  },
+  { rkey: 'self' },
+)
 
 await createRecord(alice, 'xyz.statusphere.status', {
   status: '🚀',
@@ -106,11 +111,11 @@ console.log('\n[seed] Done!')
 
 ## `seed()` helpers
 
-| Function | Description |
-| --- | --- |
-| `createAccount(handle)` | Create a test account on the local PDS. Returns `{ did, handle }` |
+| Function                                           | Description                                                        |
+| -------------------------------------------------- | ------------------------------------------------------------------ |
+| `createAccount(handle)`                            | Create a test account on the local PDS. Returns `{ did, handle }`  |
 | `createRecord(account, collection, record, opts?)` | Create a record. Pass `{ rkey }` in opts for a specific record key |
-| `uploadBlob(account, filePath)` | Upload a file and return a blob reference for use in records |
+| `uploadBlob(account, filePath)`                    | Upload a file and return a blob reference for use in records       |
 
 Records are validated against your project's lexicons before being written, so you get errors at seed time if the data doesn't match your schema.
 

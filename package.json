@@ -19,10 +19,10 @@
     "docs:build": "npm run build -w @hatk/docs"
   },
   "devDependencies": {
-    "@types/node": "^25.3.0",
-    "oxfmt": "^0.35.0",
+    "@types/node": "^26.1.1",
+    "oxfmt": "^0.59.0",
     "oxlint": "^1.50.0",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "engines": {
     "node": ">=25.0.0"

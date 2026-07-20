@@ -11,44 +11,44 @@ Mutations use `callXrpc` to call hatk's built-in record management endpoints. `c
 // Server-side: in a +layout.server.ts or +page.server.ts
 export const load = async () => {
   return {
-    feed: callXrpc("dev.hatk.getFeed", { feed: "recent", limit: 50 }),
+    feed: callXrpc('dev.hatk.getFeed', { feed: 'recent', limit: 50 }),
   }
 }
 
 // Client-side: in a Svelte component or query helper
-const res = await callXrpc("dev.hatk.createRecord", {
-  collection: "xyz.statusphere.status" as const,
+const res = await callXrpc('dev.hatk.createRecord', {
+  collection: 'xyz.statusphere.status' as const,
   repo: viewer.did,
-  record: { status: "🚀", createdAt: new Date().toISOString() },
+  record: { status: '🚀', createdAt: new Date().toISOString() },
 })
 ```
 
 Pass SvelteKit's `fetch` as the optional third argument in load functions for request deduplication:
 
 ```typescript
-callXrpc("dev.hatk.getFeed", { feed: "recent" }, fetch)
+callXrpc('dev.hatk.getFeed', { feed: 'recent' }, fetch)
 ```
 
 ## Record mutations
 
 hatk generates three built-in procedures for managing records:
 
-| Method | Purpose |
-|---|---|
-| `dev.hatk.createRecord` | Create a new record in a collection |
-| `dev.hatk.deleteRecord` | Delete a record by collection and rkey |
-| `dev.hatk.putRecord` | Create or update a record at a specific rkey |
+| Method                  | Purpose                                      |
+| ----------------------- | -------------------------------------------- |
+| `dev.hatk.createRecord` | Create a new record in a collection          |
+| `dev.hatk.deleteRecord` | Delete a record by collection and rkey       |
+| `dev.hatk.putRecord`    | Create or update a record at a specific rkey |
 
 ### Creating a record
 
 ```typescript
-import { callXrpc } from "$hatk/client";
+import { callXrpc } from '$hatk/client'
 
-const result = await callXrpc("dev.hatk.createRecord", {
-  collection: "xyz.statusphere.status" as const,
+const result = await callXrpc('dev.hatk.createRecord', {
+  collection: 'xyz.statusphere.status' as const,
   repo: viewer.did,
-  record: { status: "🚀", createdAt: new Date().toISOString() },
-});
+  record: { status: '🚀', createdAt: new Date().toISOString() },
+})
 // result.uri — the AT URI of the new record
 // result.cid — the content hash
 ```
@@ -58,10 +58,10 @@ The `collection` field uses `as const` so TypeScript narrows the `record` type t
 ### Deleting a record
 
 ```typescript
-await callXrpc("dev.hatk.deleteRecord", {
-  collection: "xyz.statusphere.status" as const,
-  rkey: "3abc123",
-});
+await callXrpc('dev.hatk.deleteRecord', {
+  collection: 'xyz.statusphere.status' as const,
+  rkey: '3abc123',
+})
 ```
 
 The `rkey` is the last segment of the record's AT URI. For example, if the URI is `at://did:plc:abc/xyz.statusphere.status/3abc123`, the rkey is `3abc123`.
@@ -69,11 +69,11 @@ The `rkey` is the last segment of the record's AT URI. For example, if the URI i
 ### Updating a record
 
 ```typescript
-await callXrpc("dev.hatk.putRecord", {
-  collection: "xyz.statusphere.status" as const,
-  rkey: "3abc123",
-  record: { status: "☕", createdAt: new Date().toISOString() },
-});
+await callXrpc('dev.hatk.putRecord', {
+  collection: 'xyz.statusphere.status' as const,
+  rkey: '3abc123',
+  record: { status: '☕', createdAt: new Date().toISOString() },
+})
 ```
 
 `putRecord` writes a record at a specific rkey, creating it if it doesn't exist or replacing it if it does.

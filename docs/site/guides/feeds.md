@@ -13,21 +13,21 @@ Create a feed file in your `server/` directory using `defineFeed()`:
 
 ```typescript
 // server/recent.ts
-import { defineFeed } from "$hatk";
+import { defineFeed } from '$hatk'
 
 export default defineFeed({
-  collection: "xyz.statusphere.status",
-  label: "Recent",
+  collection: 'xyz.statusphere.status',
+  label: 'Recent',
 
   async generate(ctx) {
     const { rows, cursor } = await ctx.paginate<{ uri: string }>(
       `SELECT uri, cid, indexed_at, created_at FROM "xyz.statusphere.status"`,
-      { orderBy: "created_at", order: "DESC" },
-    );
+      { orderBy: 'created_at', order: 'DESC' },
+    )
 
-    return ctx.ok({ uris: rows.map((r) => r.uri), cursor });
+    return ctx.ok({ uris: rows.map((r) => r.uri), cursor })
   },
-});
+})
 ```
 
 This feed queries every status record, sorted newest-first, with automatic cursor-based pagination. The framework resolves the returned URIs into full records before sending them to the client.
@@ -47,19 +47,19 @@ This feed queries every status record, sorted newest-first, with automatic curso
 
 ### Context reference
 
-| Field                 | Type                      | Description                                                         |
-| --------------------- | ------------------------- | ------------------------------------------------------------------- |
-| `db.query`            | function                  | Run SQL queries against your SQLite database                        |
-| `params`              | `Record<string, string>`  | Query string parameters from the request                            |
-| `limit`               | number                    | Requested page size                                                 |
-| `cursor`              | string \| undefined       | Pagination cursor from the client                                   |
-| `viewer`              | `{ did: string; handle?: string }` \| null | The authenticated user, or null                                     |
-| `ok`                  | function                  | Wraps your return value with type checking                          |
-| `paginate`            | function                  | Run a paginated query (handles cursor, ORDER BY, LIMIT)             |
-| `packCursor`          | function                  | Encode a `(primary, cid)` pair into an opaque cursor string         |
-| `unpackCursor`        | function                  | Decode a cursor back into `{ primary, cid }` or null                |
-| `isTakendown`         | function                  | Check if a DID has been taken down                                  |
-| `filterTakendownDids` | function                  | Filter a list of DIDs, returning those that are taken down          |
+| Field                 | Type                                       | Description                                                 |
+| --------------------- | ------------------------------------------ | ----------------------------------------------------------- |
+| `db.query`            | function                                   | Run SQL queries against your SQLite database                |
+| `params`              | `Record<string, string>`                   | Query string parameters from the request                    |
+| `limit`               | number                                     | Requested page size                                         |
+| `cursor`              | string \| undefined                        | Pagination cursor from the client                           |
+| `viewer`              | `{ did: string; handle?: string }` \| null | The authenticated user, or null                             |
+| `ok`                  | function                                   | Wraps your return value with type checking                  |
+| `paginate`            | function                                   | Run a paginated query (handles cursor, ORDER BY, LIMIT)     |
+| `packCursor`          | function                                   | Encode a `(primary, cid)` pair into an opaque cursor string |
+| `unpackCursor`        | function                                   | Decode a cursor back into `{ primary, cid }` or null        |
+| `isTakendown`         | function                                   | Check if a DID has been taken down                          |
+| `filterTakendownDids` | function                                   | Filter a list of DIDs, returning those that are taken down  |
 
 ## Pagination with `ctx.paginate()`
 
@@ -70,7 +70,7 @@ This feed queries every status record, sorted newest-first, with automatic curso
 ```typescript
 const { rows, cursor } = await ctx.paginate<{ uri: string }>(
   `SELECT uri, cid, indexed_at FROM "xyz.statusphere.status"`,
-);
+)
 ```
 
 ### With parameters and custom sort
@@ -83,8 +83,8 @@ const { rows, cursor } = await ctx.paginate<{ uri: string }>(
    FROM "fm.teal.alpha.feed.play__artists" a
    JOIN "fm.teal.alpha.feed.play" p ON p.uri = a.parent_uri
    WHERE a.artist_name = $1`,
-  { params: [artist], orderBy: "p.played_time" },
-);
+  { params: [artist], orderBy: 'p.played_time' },
+)
 ```
 
 `paginate` appends cursor conditions, `ORDER BY`, and `LIMIT` to your query. You provide the base `SELECT` and any `WHERE` clauses for filtering; `paginate` adds the rest.
@@ -94,16 +94,16 @@ const { rows, cursor } = await ctx.paginate<{ uri: string }>(
 Feeds can use `ctx.viewer` to personalize results. For example, a "following" feed that shows records from accounts the viewer follows:
 
 ```typescript
-import { defineFeed } from "$hatk";
+import { defineFeed } from '$hatk'
 
 export default defineFeed({
-  collection: "fm.teal.alpha.feed.play",
-  label: "Following",
+  collection: 'fm.teal.alpha.feed.play',
+  label: 'Following',
 
   async generate(ctx) {
-    const actorDid = ctx.params.actor || ctx.viewer?.did;
+    const actorDid = ctx.params.actor || ctx.viewer?.did
     if (!actorDid) {
-      return ctx.ok({ uris: [], cursor: undefined });
+      return ctx.ok({ uris: [], cursor: undefined })
     }
 
     const { rows, cursor } = await ctx.paginate<{ uri: string }>(
@@ -111,12 +111,12 @@ export default defineFeed({
        FROM "fm.teal.alpha.feed.play" p
        INNER JOIN "app.bsky.graph.follow" f ON f.subject = p.did
        WHERE f.did = $1`,
-      { params: [actorDid], orderBy: "p.played_time" },
-    );
+      { params: [actorDid], orderBy: 'p.played_time' },
+    )
 
-    return ctx.ok({ uris: rows.map((r) => r.uri), cursor });
+    return ctx.ok({ uris: rows.map((r) => r.uri), cursor })
   },
-});
+})
 ```
 
 ### Manual cursors
@@ -125,10 +125,10 @@ If you need more control than `paginate` provides, use `packCursor` and `unpackC
 
 ```typescript
 // Encode: packCursor(indexed_at, cid) → "MjAyNS0wMS..."
-const cursor = packCursor(last.indexed_at, last.cid);
+const cursor = packCursor(last.indexed_at, last.cid)
 
 // Decode: unpackCursor("MjAyNS0wMS...") → { primary: "2025-01-01T...", cid: "bafyrei..." }
-const parsed = unpackCursor(cursor);
+const parsed = unpackCursor(cursor)
 ```
 
 ## Hydration
@@ -141,45 +141,45 @@ The optional `hydrate` function enriches feed results with additional data. Afte
 
 ### BaseContext reference
 
-| Field        | Type                      | Description                                                     |
-| ------------ | ------------------------- | --------------------------------------------------------------- |
-| `viewer`     | `{ did: string; handle?: string }` \| null | The authenticated user, or null                |
-| `db.query`   | function                  | Run SQL queries against your SQLite database                    |
-| `getRecords` | function                  | Fetch records by URI from another collection                    |
-| `lookup`     | function                  | Look up records by a field value (e.g. profiles by DID)         |
-| `count`      | function                  | Count records by field value                                    |
-| `labels`     | function                  | Query labels for a list of URIs                                 |
-| `blobUrl`    | function                  | Resolve a blob reference to a CDN URL                           |
+| Field        | Type                                       | Description                                             |
+| ------------ | ------------------------------------------ | ------------------------------------------------------- |
+| `viewer`     | `{ did: string; handle?: string }` \| null | The authenticated user, or null                         |
+| `db.query`   | function                                   | Run SQL queries against your SQLite database            |
+| `getRecords` | function                                   | Fetch records by URI from another collection            |
+| `lookup`     | function                                   | Look up records by a field value (e.g. profiles by DID) |
+| `count`      | function                                   | Count records by field value                            |
+| `labels`     | function                                   | Query labels for a list of URIs                         |
+| `blobUrl`    | function                                   | Resolve a blob reference to a CDN URL                   |
 
 ### Example with hydration
 
 This feed queries status records and hydrates each one with the author's profile:
 
 ```typescript
-import { defineFeed, views, type Status, type Profile, type BaseContext, type Row } from "$hatk";
+import { defineFeed, views, type Status, type Profile, type BaseContext, type Row } from '$hatk'
 
 export default defineFeed({
-  collection: "xyz.statusphere.status",
-  label: "Recent",
+  collection: 'xyz.statusphere.status',
+  label: 'Recent',
 
   hydrate: (ctx, items) => hydrateStatuses(ctx, items as Row<Status>[]),
 
   async generate(ctx) {
     const { rows, cursor } = await ctx.paginate<{ uri: string }>(
       `SELECT uri, cid, indexed_at, created_at FROM "xyz.statusphere.status"`,
-      { orderBy: "created_at", order: "DESC" },
-    );
+      { orderBy: 'created_at', order: 'DESC' },
+    )
 
-    return ctx.ok({ uris: rows.map((r) => r.uri), cursor });
+    return ctx.ok({ uris: rows.map((r) => r.uri), cursor })
   },
-});
+})
 
 async function hydrateStatuses(ctx: BaseContext, items: Row<Status>[]) {
-  const dids = [...new Set(items.map((item) => item.did).filter(Boolean))];
-  const profiles = await ctx.lookup<Profile>("app.bsky.actor.profile", "did", dids);
+  const dids = [...new Set(items.map((item) => item.did).filter(Boolean))]
+  const profiles = await ctx.lookup<Profile>('app.bsky.actor.profile', 'did', dids)
 
   return items.map((item) => {
-    const author = profiles.get(item.did);
+    const author = profiles.get(item.did)
     return views.statusView({
       uri: item.uri,
       status: item.value.status,
@@ -189,10 +189,10 @@ async function hydrateStatuses(ctx: BaseContext, items: Row<Status>[]) {
         did: item.did,
         handle: item.handle || item.did,
         displayName: author?.value.displayName,
-        avatar: author ? ctx.blobUrl(author.did, author.value.avatar, "avatar") : undefined,
+        avatar: author ? ctx.blobUrl(author.did, author.value.avatar, 'avatar') : undefined,
       }),
-    });
-  });
+    })
+  })
 }
 ```
 
@@ -208,23 +208,22 @@ Hydration can also use `ctx.viewer` to add viewer-specific data like bookmarks:
 
 ```typescript
 async function hydratePlays(ctx: BaseContext, items: Row<Play>[]) {
-  const dids = [...new Set(items.map((item) => item.did).filter(Boolean))];
-  const profiles = await ctx.lookup<Profile>("app.bsky.actor.profile", "did", dids);
+  const dids = [...new Set(items.map((item) => item.did).filter(Boolean))]
+  const profiles = await ctx.lookup<Profile>('app.bsky.actor.profile', 'did', dids)
 
   // Load viewer's bookmarks
-  const bookmarks = new Map<string, string>();
+  const bookmarks = new Map<string, string>()
   if (ctx.viewer?.did && items.length > 0) {
-    const rows = await ctx.db.query(
-      `SELECT subject, uri FROM "community.lexicon.bookmarks.bookmark" WHERE did = $1`,
-      [ctx.viewer.did],
-    );
+    const rows = await ctx.db.query(`SELECT subject, uri FROM "community.lexicon.bookmarks.bookmark" WHERE did = $1`, [
+      ctx.viewer.did,
+    ])
     for (const row of rows as { subject: string; uri: string }[]) {
-      bookmarks.set(row.subject, row.uri);
+      bookmarks.set(row.subject, row.uri)
     }
   }
 
   return items.map((item) => {
-    const author = profiles.get(item.did);
+    const author = profiles.get(item.did)
     return views.playView({
       record: { uri: item.uri, did: item.did, handle: item.handle, ...item.value },
       author: author
@@ -236,8 +235,8 @@ async function hydratePlays(ctx: BaseContext, items: Row<Play>[]) {
           }
         : undefined,
       viewerBookmark: bookmarks.get(item.uri),
-    });
-  });
+    })
+  })
 }
 ```
 

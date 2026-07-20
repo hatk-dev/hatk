@@ -25,12 +25,12 @@ curl "http://127.0.0.1:3000/xrpc/dev.hatk.getFeed?feed=recent&limit=20"
 ```
 
 ```typescript
-import { callXrpc } from "$hatk/client";
+import { callXrpc } from '$hatk/client'
 
-const { items, cursor } = await callXrpc("dev.hatk.getFeed", {
-  feed: "recent",
+const { items, cursor } = await callXrpc('dev.hatk.getFeed', {
+  feed: 'recent',
   limit: 20,
-});
+})
 ```
 
 ### Response

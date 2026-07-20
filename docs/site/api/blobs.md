@@ -25,9 +25,9 @@ curl -X POST "http://127.0.0.1:3000/xrpc/dev.hatk.uploadBlob" \
 ### Client usage
 
 ```typescript
-import { callXrpc } from "$hatk/client";
+import { callXrpc } from '$hatk/client'
 
-const result = await callXrpc("dev.hatk.uploadBlob", file);
+const result = await callXrpc('dev.hatk.uploadBlob', file)
 // result.blob contains the blob reference
 ```
 
@@ -49,16 +49,16 @@ const result = await callXrpc("dev.hatk.uploadBlob", file);
 After uploading, reference the blob in a record field:
 
 ```typescript
-import { callXrpc } from "$hatk/client";
+import { callXrpc } from '$hatk/client'
 
-const uploadResult = await callXrpc("dev.hatk.uploadBlob", imageFile);
+const uploadResult = await callXrpc('dev.hatk.uploadBlob', imageFile)
 
-await callXrpc("dev.hatk.createRecord", {
-  collection: "fm.teal.alpha.feed.play",
+await callXrpc('dev.hatk.createRecord', {
+  collection: 'fm.teal.alpha.feed.play',
   repo: userDid,
   record: {
     createdAt: new Date().toISOString(),
     image: uploadResult.blob,
   },
-});
+})
 ```

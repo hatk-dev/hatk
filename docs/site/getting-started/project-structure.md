@@ -86,6 +86,7 @@ lexicons/
 ```
 
 Lexicons drive two things automatically:
+
 1. **Database tables** -- hatk creates SQLite tables for each record type
 2. **TypeScript types** -- `hatk generate types` produces typed helpers in `hatk.generated.ts`
 
@@ -103,12 +104,12 @@ See the [Seeds guide](/guides/seeds).
 
 Tests are organized by type:
 
-| Directory        | Purpose                        | Runner     |
-| ---------------- | ------------------------------ | ---------- |
-| `test/feeds/`    | Feed generator unit tests      | Vitest     |
-| `test/xrpc/`    | XRPC handler tests             | Vitest     |
-| `test/browser/`  | End-to-end browser tests       | Playwright |
-| `test/fixtures/` | Shared YAML test data          | --         |
+| Directory        | Purpose                   | Runner     |
+| ---------------- | ------------------------- | ---------- |
+| `test/feeds/`    | Feed generator unit tests | Vitest     |
+| `test/xrpc/`     | XRPC handler tests        | Vitest     |
+| `test/browser/`  | End-to-end browser tests  | Playwright |
+| `test/fixtures/` | Shared YAML test data     | --         |
 
 Run tests with `npm run test` (unit/integration) or `npm run test:browser` (Playwright).
 

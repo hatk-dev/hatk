@@ -1260,7 +1260,6 @@
           <div id="repos-results"><div class="loading">Loading</div></div>
         </div>
 
-
         <!-- Content -->
         <div class="tab-panel" id="panel-content">
           <div class="search-bar">
@@ -2134,8 +2133,9 @@
       function populateReportsLabelFilter() {
         const select = document.getElementById('reports-label-filter')
         const current = select.value
-        select.innerHTML = '<option value="">All labels</option>' +
-          labelDefinitions.map(d => `<option value="${d.identifier}">${d.identifier}</option>`).join('')
+        select.innerHTML =
+          '<option value="">All labels</option>' +
+          labelDefinitions.map((d) => `<option value="${d.identifier}">${d.identifier}</option>`).join('')
         select.value = current
       }
 
@@ -2172,7 +2172,8 @@
         }
 
         const showPagination = total != null && total > reportsPage.limit
-        const paginationHtml = showPagination ? `
+        const paginationHtml = showPagination
+          ? `
           <div class="pagination">
             <span>${reportsPage.offset + 1}\u2013${Math.min(reportsPage.offset + reportsPage.limit, total)} of ${total.toLocaleString()}</span>
             <div class="pagination-buttons">
@@ -2180,21 +2181,26 @@
               <button class="btn btn-sm" data-reports-page="next" ${reportsPage.offset + reportsPage.limit >= total ? 'disabled' : ''}>Next</button>
             </div>
           </div>
-        ` : ''
+        `
+          : ''
 
-        const countLabel = total != null
-          ? `${total.toLocaleString()} report${total !== 1 ? 's' : ''}`
-          : `${reports.length} result${reports.length !== 1 ? 's' : ''}`
+        const countLabel =
+          total != null
+            ? `${total.toLocaleString()} report${total !== 1 ? 's' : ''}`
+            : `${reports.length} result${reports.length !== 1 ? 's' : ''}`
 
         const isOpen = document.getElementById('reports-status').value === 'open'
 
         container.innerHTML = `
           <div class="card">
             <div class="result-count">${countLabel}</div>
-            ${reports.map(r => {
-              const reporterDisplay = r.reported_by_handle ? `@${escapeHtml(r.reported_by_handle)}` : escapeHtml(r.reported_by)
-              const date = new Date(r.created_at).toLocaleString()
-              return `<div class="record-card">
+            ${reports
+              .map((r) => {
+                const reporterDisplay = r.reported_by_handle
+                  ? `@${escapeHtml(r.reported_by_handle)}`
+                  : escapeHtml(r.reported_by)
+                const date = new Date(r.created_at).toLocaleString()
+                return `<div class="record-card">
                 <div class="record-header">
                   <div class="record-meta">
                     <div class="record-uri" title="${escapeHtml(r.subject_uri)}">${escapeHtml(r.subject_uri)}</div>
@@ -2205,25 +2211,36 @@
                     ${r.reason ? `<div class="record-summary" style="margin-top:0.25rem">${escapeHtml(r.reason)}</div>` : ''}
                     ${!isOpen ? `<div class="record-summary" style="margin-top:0.25rem;opacity:0.6">${escapeHtml(r.status)}${r.resolved_by ? ` by ${escapeHtml(r.resolved_by)}` : ''}</div>` : ''}
                   </div>
-                  ${isOpen ? `<div class="record-actions">
+                  ${
+                    isOpen
+                      ? `<div class="record-actions">
                     <button class="btn btn-sm" data-action="resolve-report" data-id="${r.id}" data-resolve="resolve" style="background:var(--accent);color:white">Apply Label</button>
                     <button class="btn btn-sm" data-action="resolve-report" data-id="${r.id}" data-resolve="dismiss">Dismiss</button>
-                  </div>` : ''}
+                  </div>`
+                      : ''
+                  }
                 </div>
               </div>`
-            }).join('')}
+              })
+              .join('')}
             ${paginationHtml}
           </div>
         `
 
-        container.querySelectorAll('[data-reports-page="prev"]').forEach(b => {
-          b.addEventListener('click', () => { reportsPage.offset = Math.max(0, reportsPage.offset - reportsPage.limit); loadReports() })
+        container.querySelectorAll('[data-reports-page="prev"]').forEach((b) => {
+          b.addEventListener('click', () => {
+            reportsPage.offset = Math.max(0, reportsPage.offset - reportsPage.limit)
+            loadReports()
+          })
         })
-        container.querySelectorAll('[data-reports-page="next"]').forEach(b => {
-          b.addEventListener('click', () => { reportsPage.offset += reportsPage.limit; loadReports() })
+        container.querySelectorAll('[data-reports-page="next"]').forEach((b) => {
+          b.addEventListener('click', () => {
+            reportsPage.offset += reportsPage.limit
+            loadReports()
+          })
         })
 
-        container.querySelectorAll('[data-action="resolve-report"]').forEach(btn => {
+        container.querySelectorAll('[data-action="resolve-report"]').forEach((btn) => {
           btn.addEventListener('click', async () => {
             const action = btn.dataset.resolve
             try {

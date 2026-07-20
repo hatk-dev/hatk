@@ -132,9 +132,10 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
       maxRetries: parseInt(env.BACKFILL_MAX_RETRIES || '') || backfillRaw.maxRetries || 5,
     },
     ftsRebuildInterval: parseInt(env.FTS_REBUILD_INTERVAL || '') || parsed.ftsRebuildInterval || 5000,
-    cdn: env.CDN_URL && env.CDN_KEY && env.CDN_SALT
-      ? { url: env.CDN_URL, key: env.CDN_KEY, salt: env.CDN_SALT }
-      : parsed.cdn || null,
+    cdn:
+      env.CDN_URL && env.CDN_KEY && env.CDN_SALT
+        ? { url: env.CDN_URL, key: env.CDN_KEY, salt: env.CDN_SALT }
+        : parsed.cdn || null,
     oauth: null,
     push: parsed.push || null,
     admins: env.ADMINS ? env.ADMINS.split(',').map((s) => s.trim()) : parsed.admins || [],

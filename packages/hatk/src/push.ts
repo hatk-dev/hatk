@@ -70,16 +70,20 @@ function getApnsJwt(): string {
   if (cachedJwt && Date.now() < cachedJwt.expires) return cachedJwt.token
   if (!pushConfig || !apnsKey) throw new Error('Push not initialized')
 
-  const header = Buffer.from(JSON.stringify({
-    alg: 'ES256',
-    kid: pushConfig.apns.keyId,
-  })).toString('base64url')
+  const header = Buffer.from(
+    JSON.stringify({
+      alg: 'ES256',
+      kid: pushConfig.apns.keyId,
+    }),
+  ).toString('base64url')
 
   const now = Math.floor(Date.now() / 1000)
-  const claims = Buffer.from(JSON.stringify({
-    iss: pushConfig.apns.teamId,
-    iat: now,
-  })).toString('base64url')
+  const claims = Buffer.from(
+    JSON.stringify({
+      iss: pushConfig.apns.teamId,
+      iat: now,
+    }),
+  ).toString('base64url')
 
   const signer = createSign('SHA256')
   signer.update(`${header}.${claims}`)
@@ -95,9 +99,8 @@ function getHttp2Session(): ClientHttp2Session {
   if (http2Session && !http2Session.closed && !http2Session.destroyed) {
     return http2Session
   }
-  const host = pushConfig?.apns.production !== false
-    ? 'https://api.push.apple.com'
-    : 'https://api.sandbox.push.apple.com'
+  const host =
+    pushConfig?.apns.production !== false ? 'https://api.push.apple.com' : 'https://api.sandbox.push.apple.com'
   emit('push', 'connecting', { host })
   http2Session = connect(host, {
     peerMaxConcurrentStreams: 100,
@@ -119,10 +122,10 @@ function getHttp2Session(): ClientHttp2Session {
 async function send(payload: PushPayload): Promise<void> {
   if (!pushConfig || !apnsKey) return
 
-  const tokens = await querySQL(
-    `SELECT token, platform FROM _push_tokens WHERE did = $1`,
-    [payload.did],
-  ) as { token: string; platform: string }[]
+  const tokens = (await querySQL(`SELECT token, platform FROM _push_tokens WHERE did = $1`, [payload.did])) as {
+    token: string
+    platform: string
+  }[]
 
   if (tokens.length === 0) return
 
@@ -146,17 +149,12 @@ async function send(payload: PushPayload): Promise<void> {
 }
 
 /** Send a single APNs push and handle the response. */
-async function sendToApns(
-  token: string,
-  payload: string,
-  jwt: string,
-  original: PushPayload,
-): Promise<void> {
+async function sendToApns(token: string, payload: string, jwt: string, original: PushPayload): Promise<void> {
   const session = getHttp2Session()
   const headers: Record<string, string> = {
     ':method': 'POST',
     ':path': `/3/device/${token}`,
-    'authorization': `bearer ${jwt}`,
+    authorization: `bearer ${jwt}`,
     'apns-topic': pushConfig!.apns.bundleId,
     'apns-push-type': 'alert',
   }
@@ -167,7 +165,11 @@ async function sendToApns(
   return new Promise<void>((resolve) => {
     const req = session.request(headers)
     let settled = false
-    const done = () => { if (settled) return; settled = true; resolve() }
+    const done = () => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
 
     req.setTimeout(15_000, () => {
       req.close()

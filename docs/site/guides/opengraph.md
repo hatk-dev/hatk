@@ -40,7 +40,13 @@ export default defineOG('/og/artist/:artist', async (ctx) => {
         },
         children: [
           { type: 'div', props: { children: params.artist, style: { fontSize: 58, fontWeight: 700 } } },
-          { type: 'div', props: { children: `${stats.play_count} plays`, style: { fontSize: 28, color: '#94a3b8', marginTop: '16px' } } },
+          {
+            type: 'div',
+            props: {
+              children: `${stats.play_count} plays`,
+              style: { fontSize: 28, color: '#94a3b8', marginTop: '16px' },
+            },
+          },
         ],
       },
     },
@@ -62,25 +68,25 @@ This keeps page routes and OG routes in sync. You don't need to add meta tags ma
 
 The `generate` function receives an `OpengraphContext` with:
 
-| Field | Description |
-| --- | --- |
-| `db.query(sql, params?)` | Run SQL queries against SQLite |
-| `params` | URL path parameters (e.g. `{ artist: 'Radiohead' }`) |
-| `fetchImage(url)` | Fetch a remote image and return it as a base64 data URL for use in `img` elements |
-| `lookup(collection, field, values)` | Look up records by field value |
-| `count(collection, field, values)` | Count records by field value |
-| `labels(uris)` | Query labels for record URIs |
-| `blobUrl(did, cid)` | Resolve a blob reference to a URL |
+| Field                               | Description                                                                       |
+| ----------------------------------- | --------------------------------------------------------------------------------- |
+| `db.query(sql, params?)`            | Run SQL queries against SQLite                                                    |
+| `params`                            | URL path parameters (e.g. `{ artist: 'Radiohead' }`)                              |
+| `fetchImage(url)`                   | Fetch a remote image and return it as a base64 data URL for use in `img` elements |
+| `lookup(collection, field, values)` | Look up records by field value                                                    |
+| `count(collection, field, values)`  | Count records by field value                                                      |
+| `labels(uris)`                      | Query labels for record URIs                                                      |
+| `blobUrl(did, cid)`                 | Resolve a blob reference to a URL                                                 |
 
 ## Return value
 
 Return an `OpengraphResult`:
 
-| Field | Required | Description |
-| --- | --- | --- |
-| `element` | Yes | A Satori virtual DOM tree |
-| `options` | No | Override `width` (default 1200), `height` (default 630), or provide custom `fonts` |
-| `meta` | No | `title` and `description` for the injected meta tags |
+| Field     | Required | Description                                                                        |
+| --------- | -------- | ---------------------------------------------------------------------------------- |
+| `element` | Yes      | A Satori virtual DOM tree                                                          |
+| `options` | No       | Override `width` (default 1200), `height` (default 630), or provide custom `fonts` |
+| `meta`    | No       | `title` and `description` for the injected meta tags                               |
 
 ## Virtual DOM
 

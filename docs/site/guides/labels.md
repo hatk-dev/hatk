@@ -21,9 +21,7 @@ export default defineLabel({
     severity: 'inform',
     blurs: 'none',
     defaultSetting: 'warn',
-    locales: [
-      { lang: 'en', name: 'Explicit', description: 'Track contains explicit content' },
-    ],
+    locales: [{ lang: 'en', name: 'Explicit', description: 'Track contains explicit content' }],
   },
 
   async evaluate(ctx) {
@@ -43,15 +41,15 @@ The `evaluate` function runs for every indexed record. Return an array of label 
 
 The `evaluate` function receives a context with:
 
-| Field | Description |
-| --- | --- |
-| `ctx.db.query(sql, params?)` | Run a SQL query against SQLite |
-| `ctx.db.run(sql, params?)` | Execute a SQL statement |
-| `ctx.record.uri` | AT URI of the record |
-| `ctx.record.cid` | Content hash of the record |
-| `ctx.record.did` | DID (decentralized identifier) of the author |
-| `ctx.record.collection` | Collection NSID (e.g. `fm.teal.alpha.feed.play`) |
-| `ctx.record.value` | The record's fields as an object |
+| Field                        | Description                                      |
+| ---------------------------- | ------------------------------------------------ |
+| `ctx.db.query(sql, params?)` | Run a SQL query against SQLite                   |
+| `ctx.db.run(sql, params?)`   | Execute a SQL statement                          |
+| `ctx.record.uri`             | AT URI of the record                             |
+| `ctx.record.cid`             | Content hash of the record                       |
+| `ctx.record.did`             | DID (decentralized identifier) of the author     |
+| `ctx.record.collection`      | Collection NSID (e.g. `fm.teal.alpha.feed.play`) |
+| `ctx.record.value`           | The record's fields as an object                 |
 
 You can query the database in `evaluate` for more complex rules:
 
@@ -70,13 +68,13 @@ async evaluate(ctx) {
 
 ## Label definition fields
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `identifier` | string | Unique label ID |
-| `severity` | `'alert'` \| `'inform'` \| `'none'` | How urgently to surface the label |
-| `blurs` | `'media'` \| `'content'` \| `'none'` | What to blur when label is applied |
-| `defaultSetting` | `'warn'` \| `'hide'` \| `'ignore'` | Default user-facing behavior |
-| `locales` | array | Localized name and description |
+| Field            | Type                                 | Description                        |
+| ---------------- | ------------------------------------ | ---------------------------------- |
+| `identifier`     | string                               | Unique label ID                    |
+| `severity`       | `'alert'` \| `'inform'` \| `'none'`  | How urgently to surface the label  |
+| `blurs`          | `'media'` \| `'content'` \| `'none'` | What to blur when label is applied |
+| `defaultSetting` | `'warn'` \| `'hide'` \| `'ignore'`   | Default user-facing behavior       |
+| `locales`        | array                                | Localized name and description     |
 
 ## Hydrating labels in responses
 

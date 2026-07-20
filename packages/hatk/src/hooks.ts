@@ -65,10 +65,7 @@ export type OnLoginCtx = Omit<BaseContext, 'db'> & {
     record: Record<string, unknown>,
   ) => Promise<{ uri?: string; cid?: string }>
   /** Delete a record from the user's PDS and local index. */
-  deleteRecord: (
-    collection: string,
-    rkey: string,
-  ) => Promise<void>
+  deleteRecord: (collection: string, rkey: string) => Promise<void>
 }
 
 /** Context passed to on-commit hooks after a record is indexed. */
@@ -184,7 +181,7 @@ export async function fireOnLoginHook(did: string, oauthConfig: OAuthConfig | nu
       },
     })
     const timeout = new Promise<void>((_, reject) =>
-      setTimeout(() => reject(new Error('on-login hook timed out after 30s')), 30_000)
+      setTimeout(() => reject(new Error('on-login hook timed out after 30s')), 30_000),
     )
     await Promise.race([hookPromise, timeout])
   } catch (err: any) {
@@ -196,13 +193,15 @@ export async function fireOnLoginHook(did: string, oauthConfig: OAuthConfig | nu
  * Fire on-commit hooks for a batch of indexed records.
  * Runs async and non-blocking — errors are logged but never throw.
  */
-export function fireOnCommitHooks(items: Array<{
-  action: 'create' | 'delete'
-  collection: string
-  uri: string
-  authorDid: string
-  record: Record<string, any> | null
-}>): void {
+export function fireOnCommitHooks(
+  items: Array<{
+    action: 'create' | 'delete'
+    collection: string
+    uri: string
+    authorDid: string
+    record: Record<string, any> | null
+  }>,
+): void {
   if (onCommitHooks.length === 0) return
 
   const base = buildBaseContext(null)
@@ -211,22 +210,24 @@ export function fireOnCommitHooks(items: Array<{
   for (const item of items) {
     for (const hook of onCommitHooks) {
       if (hook.collections.size > 0 && !hook.collections.has(item.collection)) continue
-      hook.handler({
-        action: item.action,
-        collection: item.collection,
-        record: item.record,
-        repo: item.authorDid,
-        uri: item.uri,
-        db: { query: base.db.query, run: runSQL },
-        lookup: base.lookup,
-        push,
-      }).catch((err: any) => {
-        emit('hooks', 'on_commit_error', {
+      hook
+        .handler({
+          action: item.action,
           collection: item.collection,
+          record: item.record,
+          repo: item.authorDid,
           uri: item.uri,
-          error: err.message,
+          db: { query: base.db.query, run: runSQL },
+          lookup: base.lookup,
+          push,
         })
-      })
+        .catch((err: any) => {
+          emit('hooks', 'on_commit_error', {
+            collection: item.collection,
+            uri: item.uri,
+            error: err.message,
+          })
+        })
     }
   }
 }

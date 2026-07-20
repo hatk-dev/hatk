@@ -28,13 +28,10 @@ import { initPush, isPushEnabled } from './push.ts'
 import { initSetup } from './setup.ts'
 import { initServer } from './server-init.ts'
 
-
-
 const configPath = process.argv[2] || 'hatk.config.ts'
 const configDir = dirname(resolve(configPath))
 
 registerHatkResolveHook()
-
 
 // 1. Load config
 const config = await loadConfig(configPath)
@@ -162,7 +159,6 @@ if (config.push) {
   }
 }
 
-
 // 5. Start server immediately (don't wait for backfill)
 const collectionSet = new Set(collections)
 
@@ -226,7 +222,6 @@ log(
     .map((f) => f.name)
     .join(', ')}`,
 )
-
 
 // 6. Start indexer with cursor
 const cursor = await getCursor('relay')

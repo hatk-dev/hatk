@@ -23,11 +23,11 @@ curl "http://127.0.0.1:3000/xrpc/dev.hatk.getRecord?uri=at://did:plc:abc/fm.teal
 ```
 
 ```typescript
-import { callXrpc } from "$hatk/client";
+import { callXrpc } from '$hatk/client'
 
-const { record } = await callXrpc("dev.hatk.getRecord", {
-  uri: "at://did:plc:abc/fm.teal.alpha.feed.play/123",
-});
+const { record } = await callXrpc('dev.hatk.getRecord', {
+  uri: 'at://did:plc:abc/fm.teal.alpha.feed.play/123',
+})
 ```
 
 ### Response
@@ -66,12 +66,12 @@ curl "http://127.0.0.1:3000/xrpc/dev.hatk.getRecords?collection=fm.teal.alpha.fe
 ```
 
 ```typescript
-import { callXrpc } from "$hatk/client";
+import { callXrpc } from '$hatk/client'
 
-const { items, cursor } = await callXrpc("dev.hatk.getRecords", {
-  collection: "fm.teal.alpha.feed.play",
+const { items, cursor } = await callXrpc('dev.hatk.getRecords', {
+  collection: 'fm.teal.alpha.feed.play',
   limit: 10,
-});
+})
 ```
 
 ### Response
@@ -110,10 +110,10 @@ curl -X POST "http://127.0.0.1:3000/xrpc/dev.hatk.createRecord" \
 ```
 
 ```typescript
-import { callXrpc } from "$hatk/client";
+import { callXrpc } from '$hatk/client'
 
-const { uri, cid } = await callXrpc("dev.hatk.createRecord", {
-  collection: "fm.teal.alpha.feed.play",
+const { uri, cid } = await callXrpc('dev.hatk.createRecord', {
+  collection: 'fm.teal.alpha.feed.play',
   repo: userDid,
   record: { createdAt: new Date().toISOString() },
 })
@@ -156,13 +156,13 @@ curl -X POST "http://127.0.0.1:3000/xrpc/dev.hatk.putRecord" \
 ```
 
 ```typescript
-import { callXrpc } from "$hatk/client";
+import { callXrpc } from '$hatk/client'
 
-const { uri, cid } = await callXrpc("dev.hatk.putRecord", {
-  collection: "fm.teal.alpha.feed.play",
-  rkey: "self",
+const { uri, cid } = await callXrpc('dev.hatk.putRecord', {
+  collection: 'fm.teal.alpha.feed.play',
+  rkey: 'self',
   record: { createdAt: new Date().toISOString() },
-});
+})
 ```
 
 ### Response
@@ -200,12 +200,12 @@ curl -X POST "http://127.0.0.1:3000/xrpc/dev.hatk.deleteRecord" \
 ```
 
 ```typescript
-import { callXrpc } from "$hatk/client";
+import { callXrpc } from '$hatk/client'
 
-await callXrpc("dev.hatk.deleteRecord", {
-  collection: "fm.teal.alpha.feed.play",
-  rkey: "123",
-});
+await callXrpc('dev.hatk.deleteRecord', {
+  collection: 'fm.teal.alpha.feed.play',
+  rkey: '123',
+})
 ```
 
 ### Response

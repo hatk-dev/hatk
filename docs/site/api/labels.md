@@ -41,11 +41,11 @@ Report an account or record for moderation review. Reports appear in the admin i
 
 ### Input
 
-| Field     | Type   | Required | Description                                |
-| --------- | ------ | -------- | ------------------------------------------ |
+| Field     | Type   | Required | Description                                        |
+| --------- | ------ | -------- | -------------------------------------------------- |
 | `subject` | union  | Yes      | `{ did }` for accounts, `{ uri, cid }` for records |
-| `label`   | string | Yes      | Label identifier (must match a defined label) |
-| `reason`  | string | No       | Free-text explanation (max 2000 chars)     |
+| `label`   | string | Yes      | Label identifier (must match a defined label)      |
+| `reason`  | string | No       | Free-text explanation (max 2000 chars)             |
 
 ### Example
 
