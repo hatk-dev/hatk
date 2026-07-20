@@ -22,12 +22,12 @@ The `hatk` CLI manages your development workflow — generators, dev server, and
 
 ## Development
 
-| Command       | Description                                     |
-| ------------- | ----------------------------------------------- |
-| `hatk dev`    | Start PDS, seed data, and run server with watch |
-| `hatk start`  | Start the server (production mode)              |
-| `hatk seed`   | Run seed data against local PDS                 |
-| `hatk reset`  | Wipe database and PDS                           |
+| Command      | Description                                     |
+| ------------ | ----------------------------------------------- |
+| `hatk dev`   | Start PDS, seed data, and run server with watch |
+| `hatk start` | Start the server (production mode)              |
+| `hatk seed`  | Run seed data against local PDS                 |
+| `hatk reset` | Wipe database and PDS                           |
 
 ## Code Quality
 

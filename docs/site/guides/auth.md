@@ -21,30 +21,30 @@ Enable OAuth in `hatk.config.ts` by adding an `oauth` section:
 
 ```typescript
 // hatk.config.ts
-import { defineConfig } from "@hatk/hatk/config";
+import { defineConfig } from '@hatk/hatk/config'
 
 export default defineConfig({
   // ... other config
   oauth: {
-    issuer: "https://my-app.example.com",
-    scopes: ["atproto"],
+    issuer: 'https://my-app.example.com',
+    scopes: ['atproto'],
     clients: [
       {
-        client_id: "https://my-app.example.com/oauth-client-metadata.json",
-        client_name: "my-hatk-app",
-        scope: "atproto",
-        redirect_uris: ["https://my-app.example.com/oauth/callback"],
+        client_id: 'https://my-app.example.com/oauth-client-metadata.json',
+        client_name: 'my-hatk-app',
+        scope: 'atproto',
+        redirect_uris: ['https://my-app.example.com/oauth/callback'],
       },
       // Local development client
       {
-        client_id: "http://127.0.0.1:3000/oauth-client-metadata.json",
-        client_name: "my-hatk-app",
-        scope: "atproto",
-        redirect_uris: ["http://127.0.0.1:3000/oauth/callback"],
+        client_id: 'http://127.0.0.1:3000/oauth-client-metadata.json',
+        client_name: 'my-hatk-app',
+        scope: 'atproto',
+        redirect_uris: ['http://127.0.0.1:3000/oauth/callback'],
       },
     ],
   },
-});
+})
 ```
 
 ### OAuth config options
@@ -77,9 +77,9 @@ scopes: ["atproto repo:xyz.statusphere.status?action=create&action=delete"],
 `login(handle)` redirects the browser to the user's PDS for authorization. After the user approves, they're redirected back to your app with an active session:
 
 ```typescript
-import { login } from "$hatk/client";
+import { login } from '$hatk/client'
 
-await login("alice.bsky.social");
+await login('alice.bsky.social')
 // Browser redirects to PDS → user approves → redirects back with session cookie
 ```
 
@@ -88,9 +88,9 @@ await login("alice.bsky.social");
 `logout()` clears the session cookie:
 
 ```typescript
-import { logout } from "$hatk/client";
+import { logout } from '$hatk/client'
 
-await logout();
+await logout()
 ```
 
 ### Login form example
@@ -195,13 +195,13 @@ Use `parseViewer(cookies)` in your `+layout.server.ts` to read the session cooki
 
 ```typescript
 // app/routes/+layout.server.ts
-import { parseViewer } from "$hatk/client";
-import type { LayoutServerLoad } from "./$types";
+import { parseViewer } from '$hatk/client'
+import type { LayoutServerLoad } from './$types'
 
 export const load: LayoutServerLoad = async ({ cookies }) => {
-  const viewer = await parseViewer(cookies);
-  return { viewer };
-};
+  const viewer = await parseViewer(cookies)
+  return { viewer }
+}
 ```
 
 `parseViewer` returns `{ did: string; handle?: string }` if a valid session exists, or `null` if the user is not signed in. The `viewer` is then available in `data.viewer` on every page through SvelteKit's layout data flow.
@@ -211,19 +211,16 @@ export const load: LayoutServerLoad = async ({ cookies }) => {
 In XRPC handlers and feed generators, the authenticated user is available as `ctx.viewer`:
 
 ```typescript
-import { defineQuery } from "$hatk";
+import { defineQuery } from '$hatk'
 
-export default defineQuery("my.app.getPrivateData", async (ctx) => {
-  if (!ctx.viewer) throw new Error("Authentication required");
+export default defineQuery('my.app.getPrivateData', async (ctx) => {
+  if (!ctx.viewer) throw new Error('Authentication required')
 
-  const { did } = ctx.viewer;
-  const rows = await ctx.db.query(
-    `SELECT * FROM my_table WHERE did = $1`,
-    [did],
-  );
+  const { did } = ctx.viewer
+  const rows = await ctx.db.query(`SELECT * FROM my_table WHERE did = $1`, [did])
 
-  return ctx.ok({ items: rows });
-});
+  return ctx.ok({ items: rows })
+})
 ```
 
 `ctx.viewer` is the same `{ did: string; handle?: string }` shape in both XRPC handlers and feed `generate`/`hydrate` functions.
@@ -236,35 +233,35 @@ Here's the full auth flow from config to login form to protected data.
 
 ```typescript
 // hatk.config.ts
-import { defineConfig } from "@hatk/hatk/config";
+import { defineConfig } from '@hatk/hatk/config'
 
 export default defineConfig({
   // ...
   oauth: {
-    scopes: ["atproto repo:xyz.statusphere.status?action=create&action=delete"],
+    scopes: ['atproto repo:xyz.statusphere.status?action=create&action=delete'],
     clients: [
       {
-        client_id: "http://127.0.0.1:3000/oauth-client-metadata.json",
-        client_name: "statusphere",
-        scope: "atproto repo:xyz.statusphere.status?action=create&action=delete",
-        redirect_uris: ["http://127.0.0.1:3000/oauth/callback"],
+        client_id: 'http://127.0.0.1:3000/oauth-client-metadata.json',
+        client_name: 'statusphere',
+        scope: 'atproto repo:xyz.statusphere.status?action=create&action=delete',
+        redirect_uris: ['http://127.0.0.1:3000/oauth/callback'],
       },
     ],
   },
-});
+})
 ```
 
 ### 2. Parse the viewer in your layout
 
 ```typescript
 // app/routes/+layout.server.ts
-import { parseViewer } from "$hatk/client";
-import type { LayoutServerLoad } from "./$types";
+import { parseViewer } from '$hatk/client'
+import type { LayoutServerLoad } from './$types'
 
 export const load: LayoutServerLoad = async ({ cookies }) => {
-  const viewer = await parseViewer(cookies);
-  return { viewer };
-};
+  const viewer = await parseViewer(cookies)
+  return { viewer }
+}
 ```
 
 ### 3. Build the login form
@@ -310,16 +307,13 @@ export const load: LayoutServerLoad = async ({ cookies }) => {
 
 ```typescript
 // server/xrpc/getMyData.ts
-import { defineQuery } from "$hatk";
+import { defineQuery } from '$hatk'
 
-export default defineQuery("my.app.getMyData", async (ctx) => {
-  if (!ctx.viewer) throw new Error("Authentication required");
+export default defineQuery('my.app.getMyData', async (ctx) => {
+  if (!ctx.viewer) throw new Error('Authentication required')
 
-  const rows = await ctx.db.query(
-    `SELECT * FROM "xyz.statusphere.status" WHERE did = $1`,
-    [ctx.viewer.did],
-  );
+  const rows = await ctx.db.query(`SELECT * FROM "xyz.statusphere.status" WHERE did = $1`, [ctx.viewer.did])
 
-  return ctx.ok({ items: rows });
-});
+  return ctx.ok({ items: rows })
+})
 ```

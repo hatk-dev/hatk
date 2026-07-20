@@ -15,22 +15,13 @@
 ### New fields
 
 ```typescript
-createRecord: (
-  collection: string,
-  record: Record<string, unknown>,
-  opts?: { rkey?: string },
-) => Promise<{ uri?: string; cid?: string }>
+createRecord: (collection: string, record: Record<string, unknown>, opts?: { rkey?: string }) =>
+  Promise<{ uri?: string; cid?: string }>
 
-putRecord: (
-  collection: string,
-  rkey: string,
-  record: Record<string, unknown>,
-) => Promise<{ uri?: string; cid?: string }>
+putRecord: (collection: string, rkey: string, record: Record<string, unknown>) =>
+  Promise<{ uri?: string; cid?: string }>
 
-deleteRecord: (
-  collection: string,
-  rkey: string,
-) => Promise<void>
+deleteRecord: (collection: string, rkey: string) => Promise<void>
 ```
 
 ### What they do
@@ -69,12 +60,16 @@ export default defineHook('on-login', async (ctx) => {
   const profile = bsky.get(ctx.did)
   if (!profile) return
 
-  await ctx.createRecord('social.grain.actor.profile', {
-    displayName: profile.value.displayName,
-    description: profile.value.description,
-    avatar: profile.value.avatar,
-    createdAt: new Date().toISOString(),
-  }, { rkey: 'self' })
+  await ctx.createRecord(
+    'social.grain.actor.profile',
+    {
+      displayName: profile.value.displayName,
+      description: profile.value.description,
+      avatar: profile.value.avatar,
+      createdAt: new Date().toISOString(),
+    },
+    { rkey: 'self' },
+  )
 })
 ```
 
@@ -93,11 +88,13 @@ export default defineQuery('my.app.doThing', async (ctx) => {
 ## Files to change
 
 **hatk framework:**
+
 - `hooks.ts` — Add helpers to `OnLoginCtx`, update `fireOnLoginHook(did, oauthConfig)`
 - `xrpc.ts` — Add helpers to `XrpcContext`, wire in `buildXrpcContext`
 - `oauth/server.ts` — Pass `config` to `fireOnLoginHook`
 
 **Templates:**
+
 - `server/on-login.ts` — Replace raw SQL with `ctx.createRecord`
 
 ## Future: typed records

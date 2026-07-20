@@ -22,11 +22,7 @@ export interface BaseContext {
   lookup: <R = unknown>(collection: string, field: string, values: string[]) => Promise<Map<string, Row<R>>>
   count: (collection: string, field: string, values: string[]) => Promise<Map<string, number>>
   labels: (uris: string[]) => Promise<Map<string, unknown[]>>
-  blobUrl: (
-    did: string,
-    ref: unknown,
-    preset?: string,
-  ) => string | undefined
+  blobUrl: (did: string, ref: unknown, preset?: string) => string | undefined
 }
 
 // --- Record Resolution ---

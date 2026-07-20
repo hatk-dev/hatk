@@ -444,7 +444,9 @@ export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect 
 
       for (const col of branch.columns) {
         if (col.isJson || col.sqlType === 'BLOB') continue
-        childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${branchPrefix}_${col.name} ON ${branch.tableName}(${q(col.name)});`)
+        childDDL.push(
+          `CREATE INDEX IF NOT EXISTS idx_${branchPrefix}_${col.name} ON ${branch.tableName}(${q(col.name)});`,
+        )
       }
     }
   }

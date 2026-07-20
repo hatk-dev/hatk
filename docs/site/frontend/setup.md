@@ -13,13 +13,13 @@ Add the `hatk()` plugin to your `vite.config.ts` alongside `sveltekit()`:
 
 ```typescript
 // vite.config.ts
-import { sveltekit } from "@sveltejs/kit/vite";
-import { hatk } from "@hatk/hatk/vite-plugin";
-import { defineConfig } from "vite-plus";
+import { sveltekit } from '@sveltejs/kit/vite'
+import { hatk } from '@hatk/hatk/vite-plugin'
+import { defineConfig } from 'vite-plus'
 
 export default defineConfig({
   plugins: [hatk(), sveltekit()],
-});
+})
 ```
 
 The `hatk()` plugin resolves `$hatk` and `$hatk/client` imports to the generated files, boots the dev server and PDS, and sets up the server-side bridge that lets `callXrpc()` work in both server and client contexts.
@@ -28,9 +28,9 @@ The `hatk()` plugin resolves `$hatk` and `$hatk/client` imports to the generated
 
 When you run `hatk dev` or `hatk generate types`, hatk produces two files in your project root:
 
-| File | Purpose |
-|---|---|
-| `hatk.generated.ts` | Server-side types, helpers, and lexicon definitions. Exports `defineQuery`, `defineProcedure`, `defineFeed`, `callXrpc` (server variant), and all your record/view types. |
+| File                       | Purpose                                                                                                                                                                                         |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hatk.generated.ts`        | Server-side types, helpers, and lexicon definitions. Exports `defineQuery`, `defineProcedure`, `defineFeed`, `callXrpc` (server variant), and all your record/view types.                       |
 | `hatk.generated.client.ts` | Client-safe subset. Exports `callXrpc` (browser variant), `getViewer`, `login`, `logout`, `parseViewer`, and re-exports types from the server file without pulling in server-only dependencies. |
 
 These files are auto-generated -- don't edit them. Add them to your lint/format ignore patterns:
@@ -40,12 +40,12 @@ These files are auto-generated -- don't edit them. Add them to your lint/format 
 export default defineConfig({
   // ...
   lint: {
-    ignorePatterns: ["hatk.generated.ts", "hatk.generated.client.ts"],
+    ignorePatterns: ['hatk.generated.ts', 'hatk.generated.client.ts'],
   },
   fmt: {
-    ignorePatterns: ["hatk.generated.ts", "hatk.generated.client.ts"],
+    ignorePatterns: ['hatk.generated.ts', 'hatk.generated.client.ts'],
   },
-});
+})
 ```
 
 ## Import aliases
@@ -57,11 +57,11 @@ SvelteKit aliases map `$hatk` and `$hatk/client` to the generated files. These a
 export default {
   kit: {
     alias: {
-      $hatk: "./hatk.generated.ts",
-      "$hatk/client": "./hatk.generated.client.ts",
+      $hatk: './hatk.generated.ts',
+      '$hatk/client': './hatk.generated.client.ts',
     },
   },
-};
+}
 ```
 
 **When to use which:**
@@ -80,10 +80,10 @@ hatk projects use `app/` instead of `src/` for the SvelteKit source directory:
 export default {
   kit: {
     files: {
-      src: "app",
+      src: 'app',
     },
   },
-};
+}
 ```
 
 Your routes, components, and lib code live under `app/`:

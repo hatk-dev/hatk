@@ -107,7 +107,9 @@ function loadCoreSchemas(): Record<string, Lexicon> {
     }
   }
 
-  try { walk(lexDir) } catch {}
+  try {
+    walk(lexDir)
+  } catch {}
   return schemas
 }
 

@@ -13,6 +13,7 @@
 ### Task 1: Add `oauthConfig` to `fireOnLoginHook` and wire record helpers into `OnLoginCtx`
 
 **Files:**
+
 - Modify: `packages/hatk/src/hooks.ts`
 - Modify: `packages/hatk/src/oauth/server.ts:540`
 
@@ -41,10 +42,7 @@ export type OnLoginCtx = Omit<BaseContext, 'db'> & {
     rkey: string,
     record: Record<string, unknown>,
   ) => Promise<{ uri?: string; cid?: string }>
-  deleteRecord: (
-    collection: string,
-    rkey: string,
-  ) => Promise<void>
+  deleteRecord: (collection: string, rkey: string) => Promise<void>
 }
 ```
 
@@ -78,7 +76,7 @@ export async function fireOnLoginHook(did: string, oauthConfig?: OAuthConfig | n
       },
     })
     const timeout = new Promise<void>((_, reject) =>
-      setTimeout(() => reject(new Error('on-login hook timed out after 30s')), 30_000)
+      setTimeout(() => reject(new Error('on-login hook timed out after 30s')), 30_000),
     )
     await Promise.race([hookPromise, timeout])
   } catch (err: any) {
@@ -116,6 +114,7 @@ git commit -m "feat: add createRecord/putRecord/deleteRecord helpers to OnLoginC
 ### Task 2: Add record helpers to `XrpcContext`
 
 **Files:**
+
 - Modify: `packages/hatk/src/xrpc.ts`
 
 **Step 1: Add module-level `oauthConfig` setter and record helper types to `XrpcContext`**
@@ -152,10 +151,7 @@ export interface XrpcContext<
     rkey: string,
     record: Record<string, unknown>,
   ) => Promise<{ uri?: string; cid?: string }>
-  deleteRecord: (
-    collection: string,
-    rkey: string,
-  ) => Promise<void>
+  deleteRecord: (collection: string, rkey: string) => Promise<void>
 }
 ```
 
@@ -226,6 +222,7 @@ git commit -m "feat: add createRecord/putRecord/deleteRecord helpers to XrpcCont
 ### Task 3: Call `configureOAuth` during boot
 
 **Files:**
+
 - Modify: `packages/hatk/src/main.ts`
 - Modify: `packages/hatk/src/dev-entry.ts`
 
@@ -266,37 +263,38 @@ git commit -m "feat: wire configureOAuth at boot for XRPC record helpers"
 ### Task 4: Update grain template `on-login.ts` to use `ctx.createRecord`
 
 **Files:**
+
 - Modify: `/Users/chadmiller/code/hatk-template-grain/server/on-login.ts`
 
 **Step 1: Replace raw SQL with `ctx.createRecord`**
 
 ```typescript
-import { defineHook, type GrainActorProfile, type BskyActorProfile } from "$hatk";
+import { defineHook, type GrainActorProfile, type BskyActorProfile } from '$hatk'
 
-export default defineHook("on-login", async (ctx) => {
-  const { did, ensureRepo, lookup } = ctx;
+export default defineHook('on-login', async (ctx) => {
+  const { did, ensureRepo, lookup } = ctx
 
   // Backfill the user's repo and wait for completion
-  await ensureRepo(did);
+  await ensureRepo(did)
 
   // Check if user already has a grain profile
-  const grainProfiles = await lookup<GrainActorProfile>("social.grain.actor.profile", "did", [did]);
-  if (grainProfiles.has(did)) return;
+  const grainProfiles = await lookup<GrainActorProfile>('social.grain.actor.profile', 'did', [did])
+  if (grainProfiles.has(did)) return
 
   // No grain profile — copy from bsky profile if available
-  const bskyProfiles = await lookup<BskyActorProfile>("app.bsky.actor.profile", "did", [did]);
-  const bsky = bskyProfiles.get(did);
-  if (!bsky) return;
+  const bskyProfiles = await lookup<BskyActorProfile>('app.bsky.actor.profile', 'did', [did])
+  const bsky = bskyProfiles.get(did)
+  if (!bsky) return
 
   const record: Record<string, unknown> = {
     createdAt: new Date().toISOString(),
-  };
-  if (bsky.value.displayName) record.displayName = bsky.value.displayName;
-  if (bsky.value.description) record.description = bsky.value.description;
-  if (bsky.value.avatar) record.avatar = bsky.value.avatar;
+  }
+  if (bsky.value.displayName) record.displayName = bsky.value.displayName
+  if (bsky.value.description) record.description = bsky.value.description
+  if (bsky.value.avatar) record.avatar = bsky.value.avatar
 
-  await ctx.createRecord("social.grain.actor.profile", record, { rkey: "self" });
-});
+  await ctx.createRecord('social.grain.actor.profile', record, { rkey: 'self' })
+})
 ```
 
 **Step 2: Verify the template builds**
@@ -316,6 +314,7 @@ git commit -m "refactor: replace raw SQL with ctx.createRecord in on-login hook"
 ### Task 5: Update documentation
 
 **Files:**
+
 - Modify: `packages/hatk/docs/site/guides/hooks.md`
 
 **Step 1: Add record helpers to the hook context table**
@@ -350,12 +349,16 @@ export default defineHook('on-login', async (ctx) => {
   const profile = bsky.get(did)
   if (!profile) return
 
-  await ctx.createRecord('my.app.profile', {
-    displayName: profile.value.displayName,
-    description: profile.value.description,
-    avatar: profile.value.avatar,
-    createdAt: new Date().toISOString(),
-  }, { rkey: 'self' })
+  await ctx.createRecord(
+    'my.app.profile',
+    {
+      displayName: profile.value.displayName,
+      description: profile.value.description,
+      avatar: profile.value.avatar,
+      createdAt: new Date().toISOString(),
+    },
+    { rkey: 'self' },
+  )
 })
 ```
 

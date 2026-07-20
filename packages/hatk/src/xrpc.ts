@@ -112,10 +112,7 @@ export interface XrpcContext<
     rkey: string,
     record: Record<string, unknown>,
   ) => Promise<{ uri?: string; cid?: string }>
-  deleteRecord: (
-    collection: string,
-    rkey: string,
-  ) => Promise<void>
+  deleteRecord: (collection: string, rkey: string) => Promise<void>
   applyWrites: (
     writes: Array<{
       $type: string
@@ -172,11 +169,7 @@ function signPath(path: string): string {
  * Generate a CDN URL for a blob ref. Uses the PDS directly in local dev,
  * a configured imgproxy CDN if available, or the Bluesky CDN as fallback.
  */
-export function blobUrl(
-  did: string,
-  ref: unknown,
-  preset: string = 'avatar',
-): string | undefined {
+export function blobUrl(did: string, ref: unknown, preset: string = 'avatar'): string | undefined {
   if (!ref) return undefined
   const p = typeof ref === 'string' ? JSON.parse(ref) : ref
   if (!p?.ref?.$link) return undefined

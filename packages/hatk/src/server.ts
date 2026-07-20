@@ -710,7 +710,11 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         }
         const openReports = await getOpenReportCount()
         return withCors(
-          json({ repos: counts, duckdb: dbInfo, node, collections: collectionCounts, openReports }, 200, acceptEncoding),
+          json(
+            { repos: counts, duckdb: dbInfo, node, collections: collectionCounts, openReports },
+            200,
+            acceptEncoding,
+          ),
         )
       }
 
@@ -831,7 +835,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       if (url.pathname === '/__dev/login' && devMode && oauth) {
         const did = url.searchParams.get('did')
         if (!did) return withCors(jsonError(400, 'did required', acceptEncoding))
-        const handle = await getRepoHandle(did) ?? did
+        const handle = (await getRepoHandle(did)) ?? did
         const cookieValue = await createSessionCookie({ did, handle })
         const secure = url.protocol === 'https:'
         return new Response(JSON.stringify({ ok: true }), {
@@ -901,7 +905,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           if (!code) return withCors(jsonError(400, 'Missing code', acceptEncoding))
           const result = await handleCallback(oauth, code, state, iss)
           const isSecure = requestOrigin.startsWith('https')
-          const handle = await getRepoHandle(result.did) ?? result.did
+          const handle = (await getRepoHandle(result.did)) ?? result.did
           const cookie = await createSessionCookie({ did: result.did, handle })
           // Server-initiated login stores redirectUri as '/' — redirect cleanly without code/iss params
           const redirectTo = result.clientRedirectUri.startsWith('/?code=') ? '/' : result.clientRedirectUri
@@ -935,16 +939,16 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         }
         const dpopHeader = request.headers.get('dpop')
         if (!dpopHeader) {
-          return withCors(json({ error: 'invalid_request', error_description: 'DPoP header required' }, 400, acceptEncoding))
+          return withCors(
+            json({ error: 'invalid_request', error_description: 'DPoP header required' }, 400, acceptEncoding),
+          )
         }
         try {
           const result = await handleToken(oauth, body, dpopHeader, `${requestOrigin}/oauth/token`)
           return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
           if (err instanceof OAuthError) {
-            return withCors(
-              json({ error: err.code, error_description: err.description }, err.status, acceptEncoding),
-            )
+            return withCors(json({ error: err.code, error_description: err.description }, err.status, acceptEncoding))
           }
           throw err
         }
@@ -959,7 +963,14 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
           if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding, viewer?.handle)
-          if (err instanceof ProxyError) return withCors(json({ error: err.message, ...(viewer?.handle ? { handle: viewer.handle } : {}) }, err.status, acceptEncoding))
+          if (err instanceof ProxyError)
+            return withCors(
+              json(
+                { error: err.message, ...(viewer?.handle ? { handle: viewer.handle } : {}) },
+                err.status,
+                acceptEncoding,
+              ),
+            )
           throw err
         }
       }
@@ -973,7 +984,14 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
           if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding, viewer?.handle)
-          if (err instanceof ProxyError) return withCors(json({ error: err.message, ...(viewer?.handle ? { handle: viewer.handle } : {}) }, err.status, acceptEncoding))
+          if (err instanceof ProxyError)
+            return withCors(
+              json(
+                { error: err.message, ...(viewer?.handle ? { handle: viewer.handle } : {}) },
+                err.status,
+                acceptEncoding,
+              ),
+            )
           throw err
         }
       }
@@ -987,7 +1005,14 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
           if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding, viewer?.handle)
-          if (err instanceof ProxyError) return withCors(json({ error: err.message, ...(viewer?.handle ? { handle: viewer.handle } : {}) }, err.status, acceptEncoding))
+          if (err instanceof ProxyError)
+            return withCors(
+              json(
+                { error: err.message, ...(viewer?.handle ? { handle: viewer.handle } : {}) },
+                err.status,
+                acceptEncoding,
+              ),
+            )
           throw err
         }
       }
@@ -1002,7 +1027,14 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
           if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding, viewer?.handle)
-          if (err instanceof ProxyError) return withCors(json({ error: err.message, ...(viewer?.handle ? { handle: viewer.handle } : {}) }, err.status, acceptEncoding))
+          if (err instanceof ProxyError)
+            return withCors(
+              json(
+                { error: err.message, ...(viewer?.handle ? { handle: viewer.handle } : {}) },
+                err.status,
+                acceptEncoding,
+              ),
+            )
           throw err
         }
       }

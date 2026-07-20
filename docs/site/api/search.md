@@ -27,12 +27,12 @@ curl "http://127.0.0.1:3000/xrpc/dev.hatk.searchRecords?collection=fm.teal.alpha
 ```
 
 ```typescript
-import { callXrpc } from "$hatk/client";
+import { callXrpc } from '$hatk/client'
 
-const { items, cursor } = await callXrpc("dev.hatk.searchRecords", {
-  collection: "fm.teal.alpha.feed.play",
-  q: "radiohead",
-});
+const { items, cursor } = await callXrpc('dev.hatk.searchRecords', {
+  collection: 'fm.teal.alpha.feed.play',
+  q: 'radiohead',
+})
 ```
 
 ### Response

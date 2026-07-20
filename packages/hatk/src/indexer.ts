@@ -99,13 +99,15 @@ async function flushBuffer(): Promise<void> {
   }
 
   // Fire on-commit hooks for inserted records (async, non-blocking)
-  fireOnCommitHooks(inserted.map((item) => ({
-    action: 'create' as const,
-    collection: item.collection,
-    uri: item.uri,
-    authorDid: item.authorDid,
-    record: item.record,
-  })))
+  fireOnCommitHooks(
+    inserted.map((item) => ({
+      action: 'create' as const,
+      collection: item.collection,
+      uri: item.uri,
+      authorDid: item.authorDid,
+      record: item.record,
+    })),
+  )
 
   // Aggregate collection counts and unique DIDs for wide event
   const collections: Record<string, number> = {}
@@ -192,7 +194,9 @@ export async function triggerAutoBackfill(did: string, attempt = 0): Promise<voi
   pendingBuffers.set(did, [])
   if (!backfillPromises.has(did)) {
     let resolveBackfill!: () => void
-    const promise = new Promise<void>((r) => { resolveBackfill = r })
+    const promise = new Promise<void>((r) => {
+      resolveBackfill = r
+    })
     backfillPromises.set(did, { promise, resolve: resolveBackfill })
   }
   if (attempt === 0) await setRepoStatus(did, 'pending')
@@ -480,13 +484,15 @@ function processMessage(bytes: Uint8Array, collections: Set<string>): void {
 
     if (op.action === 'delete') {
       deleteRecord(collection, uri)
-      fireOnCommitHooks([{
-        action: 'delete',
-        collection,
-        uri,
-        authorDid: did,
-        record: null,
-      }])
+      fireOnCommitHooks([
+        {
+          action: 'delete',
+          collection,
+          uri,
+          authorDid: did,
+          record: null,
+        },
+      ])
       continue
     }
 

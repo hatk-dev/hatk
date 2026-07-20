@@ -13,18 +13,18 @@ Use `defineQuery()` for read-only GET endpoints. The handler receives a typed co
 
 ```typescript
 // server/xrpc/getPlay.ts
-import { defineQuery, NotFoundError, views, type Play, type Profile } from "$hatk";
+import { defineQuery, NotFoundError, views, type Play, type Profile } from '$hatk'
 
-export default defineQuery("xyz.appview.unspecced.getPlay", async (ctx) => {
-  const { ok, params, resolve, lookup, blobUrl } = ctx;
-  const { uri } = params;
+export default defineQuery('xyz.appview.unspecced.getPlay', async (ctx) => {
+  const { ok, params, resolve, lookup, blobUrl } = ctx
+  const { uri } = params
 
-  const records = await resolve<Play>([uri]);
-  if (records.length === 0) throw new NotFoundError("Play not found");
+  const records = await resolve<Play>([uri])
+  if (records.length === 0) throw new NotFoundError('Play not found')
 
-  const record = records[0];
-  const profiles = await lookup<Profile>("app.bsky.actor.profile", "did", [record.did]);
-  const profile = profiles.get(record.did);
+  const record = records[0]
+  const profiles = await lookup<Profile>('app.bsky.actor.profile', 'did', [record.did])
+  const profile = profiles.get(record.did)
 
   return ok({
     play: views.playView({
@@ -39,12 +39,12 @@ export default defineQuery("xyz.appview.unspecced.getPlay", async (ctx) => {
             did: profile.did,
             handle: profile.handle,
             displayName: profile.value.displayName,
-            avatar: blobUrl(profile.did, profile.value.avatar, "avatar"),
+            avatar: blobUrl(profile.did, profile.value.avatar, 'avatar'),
           }
         : undefined,
     }),
-  });
-});
+  })
+})
 ```
 
 The `params` object is typed from your lexicon's parameter definitions. In this case, `params.uri` is a string because the lexicon declares it. The `ok()` function enforces the output schema at the type level -- if your return value doesn't match, TypeScript will error.
@@ -55,14 +55,14 @@ Use `defineProcedure()` for POST endpoints that modify data. The request body is
 
 ```typescript
 // server/xrpc/doSomething.ts
-import { defineProcedure } from "$hatk";
+import { defineProcedure } from '$hatk'
 
-export default defineProcedure("dev.hatk.unspecced.doSomething", async (ctx) => {
-  const { ok, db, viewer, input } = ctx;
+export default defineProcedure('dev.hatk.unspecced.doSomething', async (ctx) => {
+  const { ok, db, viewer, input } = ctx
 
-  if (!viewer) throw new Error("Authentication required");
+  if (!viewer) throw new Error('Authentication required')
 
-  const { name, value } = input;
+  const { name, value } = input
 
   await db.run(
     `INSERT INTO my_table (did, name, value, created_at) VALUES ($1, $2, $3, $4)`,
@@ -70,41 +70,41 @@ export default defineProcedure("dev.hatk.unspecced.doSomething", async (ctx) => 
     name,
     value,
     new Date().toISOString(),
-  );
+  )
 
-  return ok({});
-});
+  return ok({})
+})
 ```
 
 ## Context reference
 
 Both `defineQuery` and `defineProcedure` handlers receive the same context object:
 
-| Field                 | Type                      | Description                                                           |
-| --------------------- | ------------------------- | --------------------------------------------------------------------- |
-| `ok`                  | function                  | Wraps your return value with type checking                            |
-| `params`              | object                    | Typed parameters from the lexicon schema                              |
-| `input`               | object                    | Request body (procedures only), typed from the lexicon's input schema |
-| `db.query`            | function                  | Run SQL queries against your SQLite database                          |
-| `db.run`              | function                  | Execute SQL statements (INSERT, UPDATE, DELETE)                       |
-| `viewer`              | `{ did: string; handle?: string }` \| null | The authenticated user, or null                              |
-| `limit`               | number                    | Requested page size                                                   |
-| `cursor`              | string \| undefined       | Pagination cursor                                                     |
-| `resolve`             | function                  | Resolve AT URIs into full records                                     |
-| `getRecords`          | function                  | Fetch records by URI from another collection                          |
-| `lookup`              | function                  | Look up records by a field value                                      |
-| `count`               | function                  | Count records by field value                                          |
-| `exists`              | function                  | Check if a record exists matching field filters                       |
-| `search`              | function                  | Full-text search a collection                                         |
-| `labels`              | function                  | Query labels for a list of URIs                                       |
-| `blobUrl`             | function                  | Resolve a blob reference to a CDN URL                                 |
-| `packCursor`          | function                  | Encode a `(primary, cid)` pair into a cursor string                   |
-| `unpackCursor`        | function                  | Decode a cursor back into `{ primary, cid }`                          |
-| `isTakendown`         | function                  | Check if a DID has been taken down                                    |
-| `filterTakendownDids` | function                  | Filter a list of DIDs, returning those taken down                     |
-| `createRecord`        | function                  | Write a record to the viewer's PDS and index locally                  |
-| `putRecord`           | function                  | Create or update a record on the viewer's PDS                         |
-| `deleteRecord`        | function                  | Delete a record from the viewer's PDS and local index                 |
+| Field                 | Type                                       | Description                                                           |
+| --------------------- | ------------------------------------------ | --------------------------------------------------------------------- |
+| `ok`                  | function                                   | Wraps your return value with type checking                            |
+| `params`              | object                                     | Typed parameters from the lexicon schema                              |
+| `input`               | object                                     | Request body (procedures only), typed from the lexicon's input schema |
+| `db.query`            | function                                   | Run SQL queries against your SQLite database                          |
+| `db.run`              | function                                   | Execute SQL statements (INSERT, UPDATE, DELETE)                       |
+| `viewer`              | `{ did: string; handle?: string }` \| null | The authenticated user, or null                                       |
+| `limit`               | number                                     | Requested page size                                                   |
+| `cursor`              | string \| undefined                        | Pagination cursor                                                     |
+| `resolve`             | function                                   | Resolve AT URIs into full records                                     |
+| `getRecords`          | function                                   | Fetch records by URI from another collection                          |
+| `lookup`              | function                                   | Look up records by a field value                                      |
+| `count`               | function                                   | Count records by field value                                          |
+| `exists`              | function                                   | Check if a record exists matching field filters                       |
+| `search`              | function                                   | Full-text search a collection                                         |
+| `labels`              | function                                   | Query labels for a list of URIs                                       |
+| `blobUrl`             | function                                   | Resolve a blob reference to a CDN URL                                 |
+| `packCursor`          | function                                   | Encode a `(primary, cid)` pair into a cursor string                   |
+| `unpackCursor`        | function                                   | Decode a cursor back into `{ primary, cid }`                          |
+| `isTakendown`         | function                                   | Check if a DID has been taken down                                    |
+| `filterTakendownDids` | function                                   | Filter a list of DIDs, returning those taken down                     |
+| `createRecord`        | function                                   | Write a record to the viewer's PDS and index locally                  |
+| `putRecord`           | function                                   | Create or update a record on the viewer's PDS                         |
+| `deleteRecord`        | function                                   | Delete a record from the viewer's PDS and local index                 |
 
 ### `ctx.ok()`
 
@@ -121,14 +121,10 @@ const rows = await db.query(
    FROM "fm.teal.alpha.feed.play"
    WHERE did = $1`,
   [params.actor],
-);
+)
 
 // Run — executes a statement
-await db.run(
-  `INSERT INTO my_table (did, value) VALUES ($1, $2)`,
-  viewer.did,
-  input.value,
-);
+await db.run(`INSERT INTO my_table (did, value) VALUES ($1, $2)`, viewer.did, input.value)
 ```
 
 ### `ctx.resolve()` and `ctx.lookup()`
@@ -137,11 +133,11 @@ These helpers fetch records without writing raw SQL:
 
 ```typescript
 // Resolve AT URIs into full records
-const records = await resolve<Play>([uri]);
+const records = await resolve<Play>([uri])
 
 // Look up records by a field value — returns a Map keyed by the field
-const profiles = await lookup<Profile>("app.bsky.actor.profile", "did", [did1, did2]);
-const profile = profiles.get(did1);
+const profiles = await lookup<Profile>('app.bsky.actor.profile', 'did', [did1, did2])
+const profile = profiles.get(did1)
 ```
 
 ### `ctx.viewer`
@@ -149,7 +145,7 @@ const profile = profiles.get(did1);
 `viewer` is `{ did: string; handle?: string }` when the request comes from an authenticated user, or `null` for unauthenticated requests. Check it to protect endpoints that require authentication:
 
 ```typescript
-if (!viewer) throw new Error("Authentication required");
+if (!viewer) throw new Error('Authentication required')
 ```
 
 ## Error handling
@@ -157,13 +153,13 @@ if (!viewer) throw new Error("Authentication required");
 Import error classes from your generated types to throw standard XRPC errors:
 
 ```typescript
-import { NotFoundError, InvalidRequestError } from "$hatk";
+import { NotFoundError, InvalidRequestError } from '$hatk'
 
 // 404 — record not found
-throw new NotFoundError("Play not found");
+throw new NotFoundError('Play not found')
 
 // 400 — bad request
-throw new InvalidRequestError("Missing required field");
+throw new InvalidRequestError('Missing required field')
 ```
 
 These map to standard XRPC error responses that clients can handle predictably.

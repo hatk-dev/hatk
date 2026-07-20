@@ -12,7 +12,7 @@ hatk generates a typed `callXrpc()` function that calls your XRPC endpoints. It 
 Import `callXrpc` from `$hatk/client`:
 
 ```typescript
-import { callXrpc } from "$hatk/client";
+import { callXrpc } from '$hatk/client'
 ```
 
 The function signature is:
@@ -39,19 +39,19 @@ The most common pattern is loading data in `+page.server.ts`. This runs only on 
 
 ```typescript
 // app/routes/+page.server.ts
-import { callXrpc } from "$hatk/client";
-import type { PageServerLoad } from "./$types";
+import { callXrpc } from '$hatk/client'
+import type { PageServerLoad } from './$types'
 
 export const load: PageServerLoad = async () => {
-  const feed = await callXrpc("dev.hatk.getFeed", {
-    feed: "recent",
+  const feed = await callXrpc('dev.hatk.getFeed', {
+    feed: 'recent',
     limit: 30,
-  });
+  })
   return {
     items: feed.items ?? [],
     cursor: feed.cursor,
-  };
-};
+  }
+}
 ```
 
 The returned data is available in your Svelte component via `$props()`:
@@ -73,20 +73,20 @@ Universal load functions (`+page.ts`) run on both server and client. Pass Svelte
 
 ```typescript
 // app/routes/+page.ts
-import { callXrpc } from "$hatk/client";
-import type { PageLoad } from "./$types";
+import { callXrpc } from '$hatk/client'
+import type { PageLoad } from './$types'
 
 export const load: PageLoad = async ({ fetch }) => {
   const feed = await callXrpc(
-    "dev.hatk.getFeed",
-    { feed: "recent", limit: 30 },
-    fetch,  // SvelteKit's fetch for deduplication
-  );
+    'dev.hatk.getFeed',
+    { feed: 'recent', limit: 30 },
+    fetch, // SvelteKit's fetch for deduplication
+  )
   return {
     items: feed.items ?? [],
     cursor: feed.cursor,
-  };
-};
+  }
+}
 ```
 
 ### When to use `customFetch`
@@ -135,13 +135,13 @@ Use `parseViewer()` in your root layout to read the session cookie and make the 
 
 ```typescript
 // app/routes/+layout.server.ts
-import { parseViewer } from "$hatk/client";
-import type { LayoutServerLoad } from "./$types";
+import { parseViewer } from '$hatk/client'
+import type { LayoutServerLoad } from './$types'
 
 export const load: LayoutServerLoad = async ({ cookies }) => {
-  const viewer = await parseViewer(cookies);
-  return { viewer };
-};
+  const viewer = await parseViewer(cookies)
+  return { viewer }
+}
 ```
 
 `parseViewer` decrypts the session cookie and returns `{ did, handle? }` for authenticated users, or `null` for anonymous visitors. The result flows into every page's `data.viewer`.
@@ -151,10 +151,10 @@ export const load: LayoutServerLoad = async ({ cookies }) => {
 Use `getViewer()` to access the current user in remote functions and other server-side code that runs within a request:
 
 ```typescript
-import { getViewer } from "$hatk/client";
+import { getViewer } from '$hatk/client'
 
-const viewer = await getViewer();
-if (!viewer) throw new Error("Not authenticated");
+const viewer = await getViewer()
+if (!viewer) throw new Error('Not authenticated')
 // viewer.did is the user's DID
 ```
 
@@ -165,7 +165,7 @@ if (!viewer) throw new Error("Not authenticated");
 The generated client re-exports all view and record types from your lexicons:
 
 ```typescript
-import type { StatusView, ProfileView } from "$hatk/client";
+import type { StatusView, ProfileView } from '$hatk/client'
 ```
 
 These types are derived from your lexicon definitions, so they stay in sync when you change a lexicon and run `hatk generate types`.

@@ -69,7 +69,10 @@ CREATE TABLE IF NOT EXISTS _oauth_dpop_jtis (
 // --- Key Management ---
 
 export async function getServerKey(kid: string): Promise<{ privateKey: string; publicKey: string } | null> {
-  const rows = (await querySQL('SELECT private_key, public_key FROM _oauth_keys WHERE kid = $1', [kid])) as { private_key: string; public_key: string }[]
+  const rows = (await querySQL('SELECT private_key, public_key FROM _oauth_keys WHERE kid = $1', [kid])) as {
+    private_key: string
+    public_key: string
+  }[]
   if (rows.length === 0) return null
   return { privateKey: rows[0].private_key, publicKey: rows[0].public_key }
 }
@@ -151,7 +154,9 @@ export async function storeAuthCode(code: string, requestUri: string): Promise<v
 }
 
 export async function consumeAuthCode(code: string): Promise<string | null> {
-  const rows = (await querySQL('SELECT request_uri FROM _oauth_codes WHERE code = $1', [code])) as { request_uri: string }[]
+  const rows = (await querySQL('SELECT request_uri FROM _oauth_codes WHERE code = $1', [code])) as {
+    request_uri: string
+  }[]
   if (rows.length === 0) return null
   await runSQL('DELETE FROM _oauth_codes WHERE code = $1', [code])
   return rows[0].request_uri
@@ -173,7 +178,15 @@ export async function storeSession(
   await runSQL(
     `INSERT OR REPLACE INTO _oauth_sessions (did, pds_endpoint, pds_auth_server, access_token, refresh_token, dpop_jkt, token_expires_at, updated_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,CURRENT_TIMESTAMP)`,
-    [did, data.pdsEndpoint, data.pdsAuthServer || null, data.accessToken, data.refreshToken || null, data.dpopJkt, data.tokenExpiresAt || null],
+    [
+      did,
+      data.pdsEndpoint,
+      data.pdsAuthServer || null,
+      data.accessToken,
+      data.refreshToken || null,
+      data.dpopJkt,
+      data.tokenExpiresAt || null,
+    ],
   )
 }
 

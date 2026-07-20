@@ -438,17 +438,20 @@ export async function getRepoRev(did: string): Promise<string | null> {
 }
 
 export async function getRepoRetryInfo(did: string): Promise<{ retryCount: number; retryAfter: number } | null> {
-  const rows = await all<{ retry_count: number; retry_after: number }>(`SELECT retry_count, retry_after FROM _repos WHERE did = $1`, [did])
+  const rows = await all<{ retry_count: number; retry_after: number }>(
+    `SELECT retry_count, retry_after FROM _repos WHERE did = $1`,
+    [did],
+  )
   if (rows.length === 0) return null
   return { retryCount: Number(rows[0].retry_count), retryAfter: Number(rows[0].retry_after) }
 }
 
 export async function listRetryEligibleRepos(maxRetries: number): Promise<string[]> {
   const now = Math.floor(Date.now() / 1000)
-  const rows = await all<{ did: string }>(`SELECT did FROM _repos WHERE status = 'failed' AND retry_after <= $1 AND retry_count < $2`, [
-    now,
-    maxRetries,
-  ])
+  const rows = await all<{ did: string }>(
+    `SELECT did FROM _repos WHERE status = 'failed' AND retry_after <= $1 AND retry_count < $2`,
+    [now, maxRetries],
+  )
   return rows.map((r) => r.did)
 }
 
@@ -500,7 +503,10 @@ export async function listReposPaginated(
 
   const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : ''
 
-  const countRows = await all<{ total: number }>(`SELECT ${dialect.countAsInteger} as total FROM _repos${where}`, params)
+  const countRows = await all<{ total: number }>(
+    `SELECT ${dialect.countAsInteger} as total FROM _repos${where}`,
+    params,
+  )
   const total = Number(countRows[0]?.total || 0)
 
   const rows = await all(
@@ -521,7 +527,9 @@ export async function getCollectionCounts(): Promise<Record<string, number>> {
 }
 
 export async function getRepoStatusCounts(): Promise<Record<string, number>> {
-  const rows = await all<{ status: string; count: number }>(`SELECT status, ${dialect.countAsInteger} as count FROM _repos GROUP BY status`)
+  const rows = await all<{ status: string; count: number }>(
+    `SELECT status, ${dialect.countAsInteger} as count FROM _repos GROUP BY status`,
+  )
   const counts: Record<string, number> = {}
   for (const row of rows) counts[row.status] = Number(row.count)
   return counts
@@ -544,7 +552,9 @@ export async function getDatabaseSize(): Promise<Record<string, string>> {
 }
 
 export async function getLabelCount(val: string): Promise<number> {
-  const rows = await all<{ count: number }>(`SELECT ${dialect.countAsInteger} as count FROM _labels WHERE val = $1`, [val])
+  const rows = await all<{ count: number }>(`SELECT ${dialect.countAsInteger} as count FROM _labels WHERE val = $1`, [
+    val,
+  ])
   return Number(rows[0]?.count || 0)
 }
 
@@ -1434,7 +1444,9 @@ export function getSchema(collection: string): TableSchema | undefined {
 export async function countByField(collection: string, field: string, value: string): Promise<number> {
   const schema = schemas.get(collection)
   if (!schema) return 0
-  const rows = await all<{ count: number }>(`SELECT COUNT(*) as count FROM ${schema.tableName} WHERE ${field} = $1`, [value])
+  const rows = await all<{ count: number }>(`SELECT COUNT(*) as count FROM ${schema.tableName} WHERE ${field} = $1`, [
+    value,
+  ])
   return Number(rows[0]?.count || 0)
 }
 
@@ -1539,7 +1551,10 @@ export function normalizeValue(v: any): any {
 export async function getChildRows(childTableName: string, parentUris: string[]): Promise<Map<string, any[]>> {
   if (parentUris.length === 0) return new Map()
   const placeholders = parentUris.map((_, i) => `$${i + 1}`).join(',')
-  const rows = await all<Record<string, any>>(`SELECT * FROM ${childTableName} WHERE parent_uri IN (${placeholders})`, parentUris)
+  const rows = await all<Record<string, any>>(
+    `SELECT * FROM ${childTableName} WHERE parent_uri IN (${placeholders})`,
+    parentUris,
+  )
   const result = new Map<string, any[]>()
   for (const row of rows) {
     const key = row.parent_uri as string
@@ -1735,7 +1750,10 @@ export async function resolveHandleToDid(handle: string): Promise<string | null>
 export async function filterTakendownDids(dids: string[]): Promise<Set<string>> {
   if (dids.length === 0) return new Set()
   const placeholders = dids.map((_, i) => `$${i + 1}`).join(',')
-  const rows = await all<{ did: string }>(`SELECT did FROM _repos WHERE did IN (${placeholders}) AND status = 'takendown'`, dids)
+  const rows = await all<{ did: string }>(
+    `SELECT did FROM _repos WHERE did IN (${placeholders}) AND status = 'takendown'`,
+    dids,
+  )
   return new Set(rows.map((r) => r.did))
 }
 

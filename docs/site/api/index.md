@@ -30,23 +30,23 @@ Configure OAuth in your `hatk.config.ts` to enable authentication. See [Configur
 The generated `callXrpc()` function from `$hatk/client` provides typed access to all endpoints:
 
 ```typescript
-import { callXrpc } from "$hatk/client";
+import { callXrpc } from '$hatk/client'
 
 // Query (GET)
-const { items, cursor } = await callXrpc("dev.hatk.getRecords", {
-  collection: "fm.teal.alpha.feed.play",
+const { items, cursor } = await callXrpc('dev.hatk.getRecords', {
+  collection: 'fm.teal.alpha.feed.play',
   limit: 10,
-});
+})
 
 // Procedure (POST)
-const { uri, cid } = await callXrpc("dev.hatk.createRecord", {
-  collection: "fm.teal.alpha.feed.play",
+const { uri, cid } = await callXrpc('dev.hatk.createRecord', {
+  collection: 'fm.teal.alpha.feed.play',
   repo: userDid,
   record: { createdAt: new Date().toISOString() },
-});
+})
 
 // Pass SvelteKit's fetch for SSR deduplication
-const data = await callXrpc("dev.hatk.getFeed", { feed: "recent" }, fetch);
+const data = await callXrpc('dev.hatk.getFeed', { feed: 'recent' }, fetch)
 ```
 
 The optional third parameter `customFetch` accepts a fetch function. Pass SvelteKit's `fetch` from load functions to enable request deduplication between server and client renders.

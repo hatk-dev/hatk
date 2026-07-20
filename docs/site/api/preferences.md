@@ -18,9 +18,9 @@ curl "http://127.0.0.1:3000/xrpc/dev.hatk.getPreferences" \
 ```
 
 ```typescript
-import { callXrpc } from "$hatk/client";
+import { callXrpc } from '$hatk/client'
 
-const { preferences } = await callXrpc("dev.hatk.getPreferences");
+const { preferences } = await callXrpc('dev.hatk.getPreferences')
 ```
 
 ### Response
@@ -60,12 +60,12 @@ curl -X POST "http://127.0.0.1:3000/xrpc/dev.hatk.putPreference" \
 ```
 
 ```typescript
-import { callXrpc } from "$hatk/client";
+import { callXrpc } from '$hatk/client'
 
-await callXrpc("dev.hatk.putPreference", {
-  key: "theme",
-  value: "dark",
-});
+await callXrpc('dev.hatk.putPreference', {
+  key: 'theme',
+  value: 'dark',
+})
 ```
 
 ### Response

@@ -40,12 +40,16 @@ export default defineHook('on-login', async (ctx) => {
   const profile = bsky.get(ctx.did)
   if (!profile) return
 
-  await ctx.createRecord('my.app.profile', {
-    displayName: profile.value.displayName,
-    description: profile.value.description,
-    avatar: profile.value.avatar,
-    createdAt: new Date().toISOString(),
-  }, { rkey: 'self' })
+  await ctx.createRecord(
+    'my.app.profile',
+    {
+      displayName: profile.value.displayName,
+      description: profile.value.description,
+      avatar: profile.value.avatar,
+      createdAt: new Date().toISOString(),
+    },
+    { rkey: 'self' },
+  )
 })
 ```
 
@@ -53,20 +57,20 @@ export default defineHook('on-login', async (ctx) => {
 
 The `on-login` handler receives a context object with database access, record helpers, and the login event data:
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `did` | `string` | The DID of the user who logged in |
-| `ensureRepo` | `(did: string) => Promise<void>` | Backfills the user's repo from their PDS and waits for completion |
-| `db.query` | `(sql, params?) => Promise<unknown[]>` | Run a read query |
-| `db.run` | `(sql, params?) => Promise<void>` | Run a write query (INSERT, UPDATE, DELETE) |
-| `lookup` | `(collection, field, values) => Promise<Map>` | Look up records by field values |
-| `count` | `(collection, field, values) => Promise<Map>` | Count records by field values |
-| `getRecords` | `(collection, uris) => Promise<Map>` | Fetch records by URI |
-| `labels` | `(uris) => Promise<Map>` | Get labels for URIs |
-| `blobUrl` | `(did, ref, preset?) => string` | Generate a blob URL |
-| `createRecord` | `(collection, record, opts?) => Promise<{uri?, cid?}>` | Write a record to the user's PDS and index locally |
-| `putRecord` | `(collection, rkey, record) => Promise<{uri?, cid?}>` | Create or update a record on the user's PDS |
-| `deleteRecord` | `(collection, rkey) => Promise<void>` | Delete a record from the user's PDS and local index |
+| Field          | Type                                                   | Description                                                       |
+| -------------- | ------------------------------------------------------ | ----------------------------------------------------------------- |
+| `did`          | `string`                                               | The DID of the user who logged in                                 |
+| `ensureRepo`   | `(did: string) => Promise<void>`                       | Backfills the user's repo from their PDS and waits for completion |
+| `db.query`     | `(sql, params?) => Promise<unknown[]>`                 | Run a read query                                                  |
+| `db.run`       | `(sql, params?) => Promise<void>`                      | Run a write query (INSERT, UPDATE, DELETE)                        |
+| `lookup`       | `(collection, field, values) => Promise<Map>`          | Look up records by field values                                   |
+| `count`        | `(collection, field, values) => Promise<Map>`          | Count records by field values                                     |
+| `getRecords`   | `(collection, uris) => Promise<Map>`                   | Fetch records by URI                                              |
+| `labels`       | `(uris) => Promise<Map>`                               | Get labels for URIs                                               |
+| `blobUrl`      | `(did, ref, preset?) => string`                        | Generate a blob URL                                               |
+| `createRecord` | `(collection, record, opts?) => Promise<{uri?, cid?}>` | Write a record to the user's PDS and index locally                |
+| `putRecord`    | `(collection, rkey, record) => Promise<{uri?, cid?}>`  | Create or update a record on the user's PDS                       |
+| `deleteRecord` | `(collection, rkey) => Promise<void>`                  | Delete a record from the user's PDS and local index               |
 
 ## Error handling
 

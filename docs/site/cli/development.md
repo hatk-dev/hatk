@@ -48,4 +48,3 @@ hatk reset
 ```
 
 This removes the SQLite database file and resets the local PDS container, giving you a fresh start.
-
