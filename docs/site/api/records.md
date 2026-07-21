@@ -3,6 +3,15 @@ title: Records
 description: Create, read, update, and delete AT Protocol records.
 ---
 
+::: tip Private collections
+If a collection is listed in [`privateCollections`](/getting-started/configuration),
+`getRecord`, `getRecords`, and [`searchRecords`](/api/search) return a 404 for
+it — indistinguishable from a collection that doesn't exist — and
+`describeCollections` omits it from its list. The collection is still indexed
+and still queryable from your own feeds and XRPC handlers; this only stops
+hatk from serving it on your behalf through these generic endpoints.
+:::
+
 ## `dev.hatk.getRecord`
 
 Fetch a single record by its AT URI.

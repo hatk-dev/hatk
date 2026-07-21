@@ -71,14 +71,35 @@ export default defineConfig({
 
 ## Server options
 
-| Option        | Type             | Default                   | Env           | Description                                                                               |
-| ------------- | ---------------- | ------------------------- | ------------- | ----------------------------------------------------------------------------------------- |
-| `relay`       | `string`         | `'ws://localhost:2583'`   | `RELAY`       | WebSocket URL for the AT Protocol firehose relay. Use `wss://bsky.network` in production. |
-| `plc`         | `string`         | `'https://plc.directory'` | `DID_PLC_URL` | PLC directory URL for DID resolution. Use `http://localhost:2582` for local dev.          |
-| `port`        | `number`         | `3000`                    | `PORT`        | HTTP port for the hatk backend server.                                                    |
-| `publicDir`   | `string \| null` | `'./public'`              | --            | Directory for static files. Set to `null` to disable static file serving.                 |
-| `collections` | `string[]`       | `[]`                      | --            | Collection NSIDs to index. If empty, auto-derived from your lexicon record definitions.   |
-| `admins`      | `string[]`       | `[]`                      | `ADMINS`      | DIDs allowed to access `/admin/*` endpoints. Env var is comma-separated.                  |
+| Option               | Type             | Default                   | Env           | Description                                                                               |
+| -------------------- | ---------------- | ------------------------- | ------------- | ----------------------------------------------------------------------------------------- |
+| `relay`              | `string`         | `'ws://localhost:2583'`   | `RELAY`       | WebSocket URL for the AT Protocol firehose relay. Use `wss://bsky.network` in production. |
+| `plc`                | `string`         | `'https://plc.directory'` | `DID_PLC_URL` | PLC directory URL for DID resolution. Use `http://localhost:2582` for local dev.          |
+| `port`               | `number`         | `3000`                    | `PORT`        | HTTP port for the hatk backend server.                                                    |
+| `publicDir`          | `string \| null` | `'./public'`              | --            | Directory for static files. Set to `null` to disable static file serving.                 |
+| `collections`        | `string[]`       | `[]`                      | --            | Collection NSIDs to index. If empty, auto-derived from your lexicon record definitions.   |
+| `privateCollections` | `string[]`       | `[]`                      | --            | Collection NSIDs to withhold from the built-in `dev.hatk.*` record endpoints. See below.  |
+| `admins`             | `string[]`       | `[]`                      | `ADMINS`      | DIDs allowed to access `/admin/*` endpoints. Env var is comma-separated.                  |
+
+### `privateCollections`
+
+Collections listed here are still indexed, still typed, and still queryable
+from your own feeds and XRPC handlers. They are only withheld from the
+built-in generic record endpoints: `dev.hatk.getRecords`, `dev.hatk.getRecord`,
+and `dev.hatk.searchRecords` return a 404 for them, indistinguishable from a
+collection that doesn't exist, and `dev.hatk.describeCollections` omits them
+from its list.
+
+This is not an authorization mechanism. It does not protect your own handlers
+or feeds — if a feed you write selects from a private collection and returns
+it, that's on your feed, not on hatk. `privateCollections` only stops hatk
+from serving the collection on your behalf through the generic endpoints.
+
+```ts
+export default defineConfig({
+  privateCollections: ['social.switchback.activity'],
+})
+```
 
 ## Database options
 
