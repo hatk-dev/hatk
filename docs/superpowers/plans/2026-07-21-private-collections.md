@@ -33,11 +33,18 @@ hatk has no test runner. This adds one so the rest of the plan can be test-drive
 - Consumes: nothing
 - Produces: `npm test` at the repo root runs vitest against `packages/hatk/test/**/*.test.ts`
 
-- [ ] **Step 1: Add vitest as a devDependency**
+- [ ] **Step 1: Confirm vitest is already available**
+
+`vitest` is already a **production** dependency of `@hatk/hatk` at `^4` — the
+scaffolding templates in `src/templates/*.tpl` import from it, so hatk supplies
+it to consuming apps. Do **not** install, move, or re-pin it: changing it alters
+the published dependency surface and breaks scaffolded tests downstream.
 
 ```bash
-cd ~/code/hatk && npm install -D -w @hatk/hatk vitest@^3
+cd ~/code/hatk && node -e "console.log(require('./packages/hatk/package.json').dependencies.vitest)"
 ```
+
+Expected: `^4`. If it is absent from `dependencies`, stop and report BLOCKED.
 
 - [ ] **Step 2: Create the vitest config**
 
@@ -93,7 +100,7 @@ Expected: no errors.
 
 ```bash
 cd ~/code/hatk
-git add package.json package-lock.json packages/hatk/package.json packages/hatk/vitest.config.ts packages/hatk/test/smoke.test.ts
+git add package.json packages/hatk/package.json packages/hatk/vitest.config.ts packages/hatk/test/smoke.test.ts
 git commit -m "chore: add vitest test infrastructure"
 ```
 
@@ -713,7 +720,11 @@ git add docs packages/hatk/package.json
 git commit -m "docs: document privateCollections and bump to alpha.64"
 ```
 
-- [ ] **Step 6: Publish**
+- [ ] **Step 6: Publish — NOT performed by the implementer**
+
+Stop here and hand the branch over. The repository owner runs the publish
+themselves, so that the dependency surface of a released package gets a human
+look before it reaches consumers:
 
 ```bash
 cd ~/code/hatk && npm run release
