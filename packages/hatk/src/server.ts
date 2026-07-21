@@ -67,6 +67,7 @@ import {
   ScopeMissingProxyError,
 } from './pds-proxy.ts'
 import { json, jsonError, cors, withCors, file, notFound } from './response.ts'
+import { collectionFromUri, isPrivateCollection } from './private-collections.ts'
 import { serve } from './adapter.ts'
 import { renderPage } from './renderer.ts'
 
@@ -347,6 +348,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       if (url.pathname === coreXrpc('getRecords')) {
         const collection = url.searchParams.get('collection')
         if (!collection) return withCors(jsonError(400, 'Missing collection parameter', acceptEncoding))
+        if (isPrivateCollection(collection))
+          return withCors(jsonError(404, `Unknown collection: ${collection}`, acceptEncoding))
         if (!getSchema(collection)) return withCors(jsonError(404, `Unknown collection: ${collection}`, acceptEncoding))
 
         const limit = parseInt(url.searchParams.get('limit') || '20')
@@ -378,6 +381,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       if (url.pathname === coreXrpc('getRecord')) {
         const uri = url.searchParams.get('uri')
         if (!uri) return withCors(jsonError(400, 'Missing uri parameter', acceptEncoding))
+        if (isPrivateCollection(collectionFromUri(uri)))
+          return withCors(jsonError(404, 'Record not found', acceptEncoding))
 
         const record = await getRecordByUri(uri)
         if (!record) return withCors(jsonError(404, 'Record not found', acceptEncoding))
@@ -412,6 +417,8 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         const q = url.searchParams.get('q')
         if (!collection) return withCors(jsonError(400, 'Missing collection parameter', acceptEncoding))
         if (!q) return withCors(jsonError(400, 'Missing q parameter', acceptEncoding))
+        if (isPrivateCollection(collection))
+          return withCors(jsonError(404, `Unknown collection: ${collection}`, acceptEncoding))
         if (!getSchema(collection)) return withCors(jsonError(404, `Unknown collection: ${collection}`, acceptEncoding))
 
         const limit = parseInt(url.searchParams.get('limit') || '20')
