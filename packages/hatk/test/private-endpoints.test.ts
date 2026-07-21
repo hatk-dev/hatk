@@ -1,8 +1,9 @@
 import { beforeAll, beforeEach, expect, test } from 'vitest'
-import { createHandler } from '../src/server.ts'
+import { createHandler, registerCoreHandlers } from '../src/server.ts'
 import { setPrivateCollections } from '../src/private-collections.ts'
 import { insertRecord } from '../src/database/index.ts'
 import { setupFixtureDatabase, PRIVATE_COLLECTION, PUBLIC_COLLECTION } from './fixture.ts'
+import { callXrpc } from '../src/xrpc.ts'
 
 // A collection that is never registered in the fixture and never marked
 // private — used as the "genuinely unknown" baseline for the indistinguishability
@@ -116,4 +117,42 @@ test('getRecord: private rejection is byte-identical to a not-found rejection', 
 
   expect(privateRes.status).toBe(missingRes.status)
   expect(await privateRes.text()).toBe(await missingRes.text())
+})
+
+test('the in-process getRecords handler rejects a private collection', async () => {
+  registerCoreHandlers([PRIVATE_COLLECTION, PUBLIC_COLLECTION], null)
+  await expect(callXrpc('dev.hatk.getRecords', { collection: PRIVATE_COLLECTION })).rejects.toThrow(
+    /Unknown collection/,
+  )
+})
+
+test('the in-process getRecords handler succeeds for a public collection', async () => {
+  registerCoreHandlers([PRIVATE_COLLECTION, PUBLIC_COLLECTION], null)
+  const result = await callXrpc('dev.hatk.getRecords', { collection: PUBLIC_COLLECTION })
+  expect(result.items).toHaveLength(1)
+  expect(result.items[0].uri).toBe(PUBLIC_URI)
+})
+
+test('the in-process searchRecords handler rejects a private collection', async () => {
+  registerCoreHandlers([PRIVATE_COLLECTION, PUBLIC_COLLECTION], null)
+  await expect(callXrpc('dev.hatk.searchRecords', { collection: PRIVATE_COLLECTION, q: 'record' })).rejects.toThrow(
+    /Unknown collection/,
+  )
+})
+
+test('the in-process searchRecords handler succeeds for a public collection', async () => {
+  registerCoreHandlers([PRIVATE_COLLECTION, PUBLIC_COLLECTION], null)
+  const result = await callXrpc('dev.hatk.searchRecords', { collection: PUBLIC_COLLECTION, q: 'record' })
+  expect(Array.isArray(result.items)).toBe(true)
+})
+
+test('the in-process getRecord handler rejects a private uri', async () => {
+  registerCoreHandlers([PRIVATE_COLLECTION, PUBLIC_COLLECTION], null)
+  await expect(callXrpc('dev.hatk.getRecord', { uri: PRIVATE_URI })).rejects.toThrow(/not found/i)
+})
+
+test('the in-process getRecord handler succeeds for a public uri', async () => {
+  registerCoreHandlers([PRIVATE_COLLECTION, PUBLIC_COLLECTION], null)
+  const result = await callXrpc('dev.hatk.getRecord', { uri: PUBLIC_URI })
+  expect(result.record.uri).toBe(PUBLIC_URI)
 })

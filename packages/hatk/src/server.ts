@@ -92,6 +92,7 @@ export function registerCoreHandlers(collections: string[], oauth: OAuthConfig |
   registerCoreXrpcHandler('dev.hatk.getRecords', async (params, cursor, limit) => {
     const collection = params.collection
     if (!collection) throw new InvalidRequestError('Missing collection parameter')
+    if (isPrivateCollection(collection)) throw new NotFoundError(`Unknown collection: ${collection}`)
     if (!getSchema(collection)) throw new NotFoundError(`Unknown collection: ${collection}`)
 
     const sort = params.sort || undefined
@@ -117,6 +118,7 @@ export function registerCoreHandlers(collections: string[], oauth: OAuthConfig |
   registerCoreXrpcHandler('dev.hatk.getRecord', async (params) => {
     const uri = params.uri
     if (!uri) throw new InvalidRequestError('Missing uri parameter')
+    if (isPrivateCollection(collectionFromUri(uri))) throw new NotFoundError('Record not found')
     const record = await getRecordByUri(uri)
     if (!record) throw new NotFoundError('Record not found')
     const shaped = reshapeRow(record, record?.__childData) as Record<string, any>
@@ -138,6 +140,7 @@ export function registerCoreHandlers(collections: string[], oauth: OAuthConfig |
     const q = params.q
     if (!collection) throw new InvalidRequestError('Missing collection parameter')
     if (!q) throw new InvalidRequestError('Missing q parameter')
+    if (isPrivateCollection(collection)) throw new NotFoundError(`Unknown collection: ${collection}`)
     if (!getSchema(collection)) throw new NotFoundError(`Unknown collection: ${collection}`)
 
     const fuzzy = params.fuzzy !== 'false'
