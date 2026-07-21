@@ -90,6 +90,8 @@ and `dev.hatk.searchRecords` return a 404 for them, indistinguishable from a
 collection that doesn't exist, and `dev.hatk.describeCollections` omits them
 from its list.
 
+Admin-authenticated endpoints like `/admin/search` are not filtered by `privateCollections` and remain accessible to configured admins.
+
 This is not an authorization mechanism. It does not protect your own handlers
 or feeds — if a feed you write selects from a private collection and returns
 it, that's on your feed, not on hatk. `privateCollections` only stops hatk
