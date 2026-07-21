@@ -65,6 +65,7 @@ export interface HatkConfig {
   database: string // database file path (replaces :memory:)
   publicDir: string | null // static file directory (null to disable)
   collections: string[] // optional — auto-derived from lexicons if empty
+  privateCollections: string[] // never served by the built-in dev.hatk.* record endpoints
   backfill: BackfillConfig
   ftsRebuildInterval: number // rebuild FTS index every N writes (lower = fresher search)
   oauth: OAuthConfig | null
@@ -123,6 +124,7 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
     database: database ? resolve(configDir, database) : ':memory:',
     publicDir: parsed.publicDir === null ? null : resolve(configDir, parsed.publicDir || './public'),
     collections: parsed.collections || [],
+    privateCollections: parsed.privateCollections || [],
     backfill: {
       signalCollections: backfillRaw.signalCollections || undefined,
       repos: env.BACKFILL_REPOS ? env.BACKFILL_REPOS.split(',').map((s) => s.trim()) : backfillRaw.repos || undefined,
