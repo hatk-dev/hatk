@@ -35,4 +35,5 @@ test('collectionFromUri extracts the collection segment', () => {
 test('collectionFromUri returns undefined for a malformed uri', () => {
   expect(collectionFromUri('not-a-uri')).toBeUndefined()
   expect(collectionFromUri('at://did:plc:abc')).toBeUndefined()
+  expect(collectionFromUri('at://did:plc:abc/social.switchback.activity')).toBeUndefined()
 })

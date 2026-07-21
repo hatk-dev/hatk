@@ -21,5 +21,5 @@ export function isPrivateCollection(nsid: string | null | undefined): boolean {
  */
 export function collectionFromUri(uri: string): string | undefined {
   const parts = uri.split('/')
-  return parts.length > 3 ? parts[3] : undefined
+  return parts.length > 4 ? parts[3] : undefined
 }
