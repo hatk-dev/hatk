@@ -16,7 +16,8 @@
     "publish:hatk": "npm publish -w @hatk/hatk --tag alpha",
     "release": "npm run build -w @hatk/hatk && npm publish -w @hatk/hatk --tag alpha",
     "docs": "npm run dev -w @hatk/docs",
-    "docs:build": "npm run build -w @hatk/docs"
+    "docs:build": "npm run build -w @hatk/docs",
+    "test": "npm run test -w @hatk/hatk"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
