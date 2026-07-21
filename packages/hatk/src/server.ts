@@ -155,18 +155,20 @@ export function registerCoreHandlers(collections: string[], oauth: OAuthConfig |
   })
 
   registerCoreXrpcHandler('dev.hatk.describeCollections', async () => {
-    const collectionInfo = collections.map((c) => {
-      const schema = getSchema(c)
-      return {
-        collection: c,
-        columns: schema?.columns.map((col) => ({
-          name: col.name,
-          originalName: col.originalName,
-          type: col.sqlType,
-          required: col.notNull,
-        })),
-      }
-    })
+    const collectionInfo = collections
+      .filter((c) => !isPrivateCollection(c))
+      .map((c) => {
+        const schema = getSchema(c)
+        return {
+          collection: c,
+          columns: schema?.columns.map((col) => ({
+            name: col.name,
+            originalName: col.originalName,
+            type: col.sqlType,
+            required: col.notNull,
+          })),
+        }
+      })
     return { collections: collectionInfo }
   })
 
@@ -442,18 +444,20 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
       // GET /xrpc/dev.hatk.describeCollections
       if (url.pathname === coreXrpc('describeCollections')) {
-        const collectionInfo = collections.map((c) => {
-          const schema = getSchema(c)
-          return {
-            collection: c,
-            columns: schema?.columns.map((col) => ({
-              name: col.name,
-              originalName: col.originalName,
-              type: col.sqlType,
-              required: col.notNull,
-            })),
-          }
-        })
+        const collectionInfo = collections
+          .filter((c) => !isPrivateCollection(c))
+          .map((c) => {
+            const schema = getSchema(c)
+            return {
+              collection: c,
+              columns: schema?.columns.map((col) => ({
+                name: col.name,
+                originalName: col.originalName,
+                type: col.sqlType,
+                required: col.notNull,
+              })),
+            }
+          })
         return withCors(json({ collections: collectionInfo }, 200, acceptEncoding))
       }
 

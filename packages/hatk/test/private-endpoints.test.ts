@@ -156,3 +156,11 @@ test('the in-process getRecord handler succeeds for a public uri', async () => {
   const result = await callXrpc('dev.hatk.getRecord', { uri: PUBLIC_URI })
   expect(result.record.uri).toBe(PUBLIC_URI)
 })
+
+test('describeCollections omits private collections', async () => {
+  const res = await handler()(new Request('http://localhost/xrpc/dev.hatk.describeCollections'))
+  const body = (await res.json()) as { collections: { collection: string }[] }
+  const names = body.collections.map((c) => c.collection)
+  expect(names).not.toContain(PRIVATE_COLLECTION)
+  expect(names).toContain(PUBLIC_COLLECTION)
+})
