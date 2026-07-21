@@ -13,6 +13,7 @@ import { configureRelay, configureCdn, configureOAuth } from './xrpc.ts'
 import { initOAuth } from './oauth/server.ts'
 import { initServer } from './server-init.ts'
 import { createHandler, registerCoreHandlers } from './server.ts'
+import { setPrivateCollections } from './private-collections.ts'
 import { startIndexer } from './indexer.ts'
 import { getCursor } from './database/db.ts'
 import { runBackfill } from './backfill.ts'
@@ -74,6 +75,7 @@ try {
 await initServer(resolve(configDir, 'server'))
 
 // Register built-in dev.hatk.* handlers so callXrpc() can find them
+setPrivateCollections(config.privateCollections)
 registerCoreHandlers(collections, config.oauth)
 configureOAuth(config.oauth)
 

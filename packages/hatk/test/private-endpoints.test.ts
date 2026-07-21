@@ -164,3 +164,17 @@ test('describeCollections omits private collections', async () => {
   expect(names).not.toContain(PRIVATE_COLLECTION)
   expect(names).toContain(PUBLIC_COLLECTION)
 })
+
+test('setPrivateCollections drives the guard, so an empty list serves a formerly-private collection normally', async () => {
+  // Pin: proves the registry set by setPrivateCollections is the *only* source
+  // of truth for the guard. If a later refactor hardcoded PRIVATE_COLLECTION's
+  // name into the guard instead of consulting the registry, this would fail
+  // even though every other test in this file (which sets it back to
+  // [PRIVATE_COLLECTION] in beforeEach) would keep passing.
+  setPrivateCollections([])
+  const res = await handler()(new Request(`http://localhost/xrpc/dev.hatk.getRecords?collection=${PRIVATE_COLLECTION}`))
+  expect(res.status).toBe(200)
+  const body = await res.json()
+  expect(body.items).toHaveLength(1)
+  expect(body.items[0].uri).toBe(PRIVATE_URI)
+})

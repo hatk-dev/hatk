@@ -17,6 +17,7 @@ import { initLabels, getLabelDefinitions } from './labels.ts'
 import { startIndexer } from './indexer.ts'
 import { rebuildAllIndexes } from './database/fts.ts'
 import { createHandler, registerCoreHandlers } from './server.ts'
+import { setPrivateCollections } from './private-collections.ts'
 import { serve } from './adapter.ts'
 import { validateLexicons } from '@bigmoves/lexicon'
 import { relayHttpUrl } from './config.ts'
@@ -116,6 +117,7 @@ if (existsSync(serverDir)) {
 }
 
 // Register built-in dev.hatk.* handlers so callXrpc() can find them
+setPrivateCollections(config.privateCollections)
 registerCoreHandlers(collections, config.oauth)
 configureOAuth(config.oauth)
 

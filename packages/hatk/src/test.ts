@@ -21,6 +21,7 @@ import { discoverViews } from './views.ts'
 import { validateLexicons } from '@bigmoves/lexicon'
 import { packCursor, unpackCursor, isTakendownDid, filterTakendownDids } from './database/db.ts'
 import { seed as createSeedHelpers, type SeedOpts } from './seed.ts'
+import { setPrivateCollections } from './private-collections.ts'
 import type { FeedContext } from './feeds.ts'
 
 export interface TestContext {
@@ -282,6 +283,7 @@ export async function startTestServer(): Promise<TestServer> {
     const did = request.headers.get('x-test-viewer')
     return typeof did === 'string' ? { did } : null
   }
+  setPrivateCollections(ctx._config.privateCollections)
   const httpServer = startServer(
     0,
     ctx._collections,
