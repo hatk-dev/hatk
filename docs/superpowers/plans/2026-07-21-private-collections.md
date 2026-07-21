@@ -222,36 +222,22 @@ git commit -m "feat: add private collection registry and at-uri collection parse
 
 **Files:**
 - Modify: `packages/hatk/src/config.ts:59-74` (the `HatkConfig` interface) and `:117-140` (the config literal)
-- Create: `packages/hatk/test/config.test.ts`
 
 **Interfaces:**
 - Consumes: nothing
 - Produces: `HatkConfig.privateCollections: string[]`, defaulting to `[]`
 
-- [ ] **Step 1: Write the failing test**
+There is no unit test for this task. The field's existence is a type-level
+fact, and vitest does not type-check, so a runtime test would pass whether or
+not the field exists. `npm run typecheck` is the gate, and Task 4's tests fail
+without the field. Do not add a test that cannot fail.
 
-Create `packages/hatk/test/config.test.ts`:
+- [ ] **Step 1: Establish the current state**
 
-```ts
-import { expect, test } from 'vitest'
-import type { HatkConfig } from '../src/config.ts'
+Run: `cd ~/code/hatk && npm run typecheck`
+Expected: passes — this is the baseline.
 
-test('privateCollections is part of HatkConfig and accepts a list', () => {
-  const partial: Pick<HatkConfig, 'privateCollections'> = {
-    privateCollections: ['social.switchback.activity'],
-  }
-  expect(partial.privateCollections).toEqual(['social.switchback.activity'])
-})
-```
-
-- [ ] **Step 2: Run the test to verify it fails**
-
-Run: `cd ~/code/hatk && npm test`
-Expected: FAIL — `'privateCollections' does not exist in type 'HatkConfig'`.
-
-Note: vitest does not type-check by default, so if this passes at runtime, confirm the failure with `npm run typecheck` instead — that is the assertion that matters here.
-
-- [ ] **Step 3: Add the field to the interface**
+- [ ] **Step 2: Add the field to the interface**
 
 In `packages/hatk/src/config.ts`, in the `HatkConfig` interface, immediately after the `collections` line:
 
@@ -260,7 +246,7 @@ In `packages/hatk/src/config.ts`, in the `HatkConfig` interface, immediately aft
   privateCollections: string[] // never served by the built-in dev.hatk.* record endpoints
 ```
 
-- [ ] **Step 4: Add the default to the config literal**
+- [ ] **Step 3: Add the default to the config literal**
 
 In the same file, in the `const config: HatkConfig = {` literal, immediately after the `collections:` line:
 
@@ -269,17 +255,17 @@ In the same file, in the `const config: HatkConfig = {` literal, immediately aft
     privateCollections: parsed.privateCollections || [],
 ```
 
-- [ ] **Step 5: Run the tests and typecheck**
+- [ ] **Step 4: Run typecheck**
 
-Run: `cd ~/code/hatk && npm test && npm run typecheck`
-Expected: PASS, no type errors.
+Run: `cd ~/code/hatk && npm run typecheck`
+Expected: no type errors.
 
-- [ ] **Step 6: Format, check, commit**
+- [ ] **Step 5: Format, check, commit**
 
 ```bash
 cd ~/code/hatk
 npm run format && npm run check
-git add packages/hatk/src/config.ts packages/hatk/test/config.test.ts
+git add packages/hatk/src/config.ts
 git commit -m "feat: add privateCollections config field"
 ```
 
@@ -446,30 +432,25 @@ Append to `packages/hatk/test/private-endpoints.test.ts`:
 
 ```ts
 import { registerCoreHandlers } from '../src/server.ts'
-import { callCoreXrpcHandler } from '../src/xrpc.ts'
+import { callXrpc } from '../src/xrpc.ts'
 
 test('the in-process getRecords handler rejects a private collection', async () => {
   registerCoreHandlers([PRIVATE], null)
-  await expect(
-    callCoreXrpcHandler('dev.hatk.getRecords', { collection: PRIVATE }),
-  ).rejects.toThrow(/Unknown collection/)
+  await expect(callXrpc('dev.hatk.getRecords', { collection: PRIVATE })).rejects.toThrow(
+    /Unknown collection/,
+  )
 })
 
 test('the in-process getRecord handler rejects a private uri', async () => {
   registerCoreHandlers([PRIVATE], null)
   await expect(
-    callCoreXrpcHandler('dev.hatk.getRecord', { uri: `at://did:plc:abc/${PRIVATE}/3kx` }),
+    callXrpc('dev.hatk.getRecord', { uri: `at://did:plc:abc/${PRIVATE}/3kx` }),
   ).rejects.toThrow(/not found/i)
 })
 ```
 
-Before running, confirm the exported name for invoking a registered core handler:
-
-```bash
-cd ~/code/hatk && grep -n "export function callCoreXrpcHandler\|export async function callCoreXrpcHandler\|registerCoreXrpcHandler" packages/hatk/src/xrpc.ts
-```
-
-If the invoker is exported under a different name, use that name in the test and in this task's steps.
+`callXrpc(nsid, params, input)` is exported from `packages/hatk/src/xrpc.ts:354`
+and dispatches to handlers registered via `registerCoreXrpcHandler`.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -623,7 +604,11 @@ test('setPrivateCollections drives the guard, so an empty list serves normally',
 - [ ] **Step 2: Run the test to verify it passes already**
 
 Run: `cd ~/code/hatk && npm test`
-Expected: PASS. This test pins the registry's behaviour so the wiring below cannot regress it; it is a guard against Task 7 hardcoding the set.
+Expected: PASS.
+
+This one passes before the change by design — it is not a TDD test. It pins the
+registry as the only source of the private set, so the wiring in the steps below
+cannot satisfy the other tests by hardcoding a collection name. Keep it.
 
 - [ ] **Step 3: Wire main.ts**
 
