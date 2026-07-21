@@ -40,13 +40,13 @@
     "@resvg/resvg-js": "^2.6.2",
     "better-sqlite3": "^12.6.2",
     "satori": "^0.28.1",
+    "vitest": "^4",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.2.14",
-    "vite": "^8.0.0",
-    "vitest": "^3.2.7"
+    "vite": "^8.0.0"
   },
   "peerDependencies": {
     "vite": "^8.0.0"
