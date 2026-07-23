@@ -37,3 +37,10 @@ test('collectionFromUri returns undefined for a malformed uri', () => {
   expect(collectionFromUri('at://did:plc:abc')).toBeUndefined()
   expect(collectionFromUri('at://did:plc:abc/social.switchback.activity')).toBeUndefined()
 })
+
+test('backfill never purges private collections', async () => {
+  const { purgeableCollections } = await import('../src/backfill.ts')
+  setPrivateCollections(['social.switchback.activity'])
+  const cols = new Set(['social.switchback.activity', 'social.switchback.actor.profile'])
+  expect(purgeableCollections(cols)).toEqual(['social.switchback.actor.profile'])
+})

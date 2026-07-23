@@ -13,6 +13,20 @@ import {
   getSchema,
   bulkInsertRecords,
 } from './database/db.ts'
+import { isPrivateCollection } from './private-collections.ts'
+
+/**
+ * The collections whose local rows a full re-import may purge before
+ * re-inserting from the repo CAR.
+ *
+ * Private collections are AppView-authoritative and never present in a repo:
+ * purging their rows would destroy data the re-import can never restore (this
+ * happened — a login-triggered backfill wiped a deployment's activity rows).
+ * Exported for tests.
+ */
+export function purgeableCollections(collections: Iterable<string>): string[] {
+  return [...collections].filter((c) => !isPrivateCollection(c))
+}
 import type { BulkRecord } from './database/db.ts'
 import { emit, timer } from './logger.ts'
 import type { BackfillConfig } from './config.ts'
@@ -214,7 +228,7 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
     // Delete existing records for this DID before re-importing so deletions are reflected
     // Only on full imports (no since) — diff CARs only contain changes
     if (!lastRev) {
-      for (const col of collections) {
+      for (const col of purgeableCollections(collections)) {
         const schema = getSchema(col)
         if (!schema) continue
         await runSQL(`DELETE FROM ${schema.tableName} WHERE did = $1`, [did])
@@ -235,7 +249,7 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
     const validationSkips: Record<string, number> = {}
     for (const entry of entries) {
       const collection = entry.path.split('/')[0]
-      if (!collections.has(collection)) continue
+      if (!collections.has(collection) || isPrivateCollection(collection)) continue
 
       const blockData = blocks.get(entry.cid)
       if (!blockData) continue

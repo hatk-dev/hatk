@@ -1,5 +1,6 @@
 import { cborDecode } from './cbor.ts'
 import { parseCarFrame } from './car.ts'
+import { isPrivateCollection } from './private-collections.ts'
 import {
   insertRecord,
   deleteRecord,
@@ -445,7 +446,13 @@ function processMessage(bytes: Uint8Array, collections: Set<string>): void {
   if (indexerPinnedRepos && !indexerPinnedRepos.has(did)) return
 
   // Check if any ops in this commit are for collections we care about
-  const relevantOps = body.value.ops.filter((op: any) => collections.has(op.path.split('/')[0]))
+  // Private collections are AppView-authoritative: nothing on the network may
+  // write or delete their rows, so firehose ops naming them are spoofed by
+  // definition and must be dropped.
+  const relevantOps = body.value.ops.filter((op: any) => {
+    const collection = op.path.split('/')[0]
+    return collections.has(collection) && !isPrivateCollection(collection)
+  })
   if (relevantOps.length === 0) return
 
   // Copy blocks out of the original buffer before it can be GC'd
