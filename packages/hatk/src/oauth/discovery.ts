@@ -62,7 +62,17 @@ export async function discoverAuthServer(
 }
 
 export async function resolveHandle(handle: string, relayUrl?: string): Promise<string> {
-  const baseUrl = relayUrl?.includes('localhost:2583') ? 'http://localhost:2583' : 'https://bsky.social'
+  // Resolve against the configured network: the localhost PDS in dev, the public
+  // AppView in prod, or a self-hosted PDS (e.g. preview environments) derived
+  // from its relay/firehose URL — otherwise self-hosted handles 400 against bsky.
+  let baseUrl: string
+  if (relayUrl?.includes('localhost:2583')) {
+    baseUrl = 'http://localhost:2583'
+  } else if (!relayUrl || relayUrl.includes('bsky.network')) {
+    baseUrl = 'https://bsky.social'
+  } else {
+    baseUrl = relayUrl.replace(/^ws/, 'http') // wss://pds.example → https://pds.example
+  }
   const res = await fetch(`${baseUrl}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`)
   if (!res.ok) throw new Error(`resolveHandle failed: ${res.status}`)
   const data = await res.json()
