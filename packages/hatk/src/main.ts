@@ -226,7 +226,13 @@ log(
 )
 
 // 6. Start indexer with cursor
-const cursor = await getCursor('relay')
+// HATK_IGNORE_SAVED_CURSOR=1 boots from the live firehose instead of the saved
+// cursor — the escape hatch when a stale cursor would make the relay replay its
+// retention window at line rate (see checkpointCursor in indexer.ts). Unset it
+// after one boot so later restarts resume normally.
+const ignoreSavedCursor = Boolean(process.env.HATK_IGNORE_SAVED_CURSOR)
+if (ignoreSavedCursor) log('[main] HATK_IGNORE_SAVED_CURSOR set — starting indexer from live')
+const cursor = ignoreSavedCursor ? null : await getCursor('relay')
 startIndexer({
   relayUrl: config.relay,
   plcUrl: config.plc,

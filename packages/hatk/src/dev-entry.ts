@@ -85,7 +85,10 @@ if (config.oauth) {
 
 // Start indexer
 const collectionSet = new Set(collections)
-const cursor = await getCursor('relay')
+// Same escape hatch as main.ts: boot from live instead of the saved cursor.
+const ignoreSavedCursor = Boolean(process.env.HATK_IGNORE_SAVED_CURSOR)
+if (ignoreSavedCursor) log('[dev] HATK_IGNORE_SAVED_CURSOR set — starting indexer from live')
+const cursor = ignoreSavedCursor ? null : await getCursor('relay')
 startIndexer({
   relayUrl: config.relay,
   plcUrl: config.plc,

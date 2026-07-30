@@ -31,8 +31,11 @@ interface WriteBuffer {
 let buffer: WriteBuffer[] = []
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 let lastSeq: number | null = null
+let lastPersistedSeq: number | null = null
+let cursorCheckpointTimer: ReturnType<typeof setInterval> | null = null
 const BATCH_SIZE = 100
 const FLUSH_INTERVAL_MS = 500
+const CURSOR_CHECKPOINT_INTERVAL_MS = 5_000
 
 let writesSinceRebuild = 0
 let ftsRebuildInterval = 500
@@ -81,8 +84,10 @@ async function flushBuffer(): Promise<void> {
     }
   }
   if (lastSeq !== null) {
+    const seq = lastSeq
     try {
-      await setCursor('relay', String(lastSeq))
+      await setCursor('relay', String(seq))
+      lastPersistedSeq = seq
     } catch (err: any) {
       cursorError = err.message
     }
@@ -163,6 +168,49 @@ function bufferWrite(item: WriteBuffer): void {
   } else {
     scheduleFlush()
   }
+}
+
+/** Record the latest firehose sequence seen. Source of truth for cursor persistence and reconnect resume. */
+export function noteSeq(seq: number): void {
+  lastSeq = seq
+}
+
+/**
+ * Persist the latest firehose sequence when it has advanced past the stored
+ * cursor. Runs on a timer independent of the write path: an app whose
+ * collections rarely appear on the firehose never flushes a batch, so the
+ * flush-path cursor write alone leaves the stored cursor frozen — and a frozen
+ * cursor makes the relay replay its whole retention window at line rate
+ * (~135 GB/hour observed against bsky.network) on every boot and reconnect.
+ */
+export async function checkpointCursor(): Promise<void> {
+  if (lastSeq === null || lastSeq === lastPersistedSeq) return
+  const seq = lastSeq
+  try {
+    await setCursor('relay', String(seq))
+    lastPersistedSeq = seq
+  } catch (err: any) {
+    emit('indexer', 'cursor_checkpoint_error', { cursor_seq: seq, error: err.message })
+  }
+}
+
+/**
+ * The cursor a reconnect should resume from: the latest seq this process has
+ * seen, falling back to the boot-time cursor before any message has arrived.
+ * Reusing the boot-time cursor on every reconnect would replay everything
+ * received since the process started.
+ */
+export function resumeCursor(
+  liveSeq: number | null,
+  bootCursor: string | null | undefined,
+): string | null | undefined {
+  return liveSeq !== null ? String(liveSeq) : bootCursor
+}
+
+/** Reset module cursor state between tests. */
+export function _resetCursorStateForTests(): void {
+  lastSeq = null
+  lastPersistedSeq = null
 }
 
 /**
@@ -329,6 +377,14 @@ export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
 
   // startMemoryDiagnostics()
 
+  // Checkpoint the cursor on a timer regardless of write activity (see
+  // checkpointCursor). Guarded so reconnects don't stack intervals; unref'd so
+  // it never keeps the process alive.
+  if (!cursorCheckpointTimer) {
+    cursorCheckpointTimer = setInterval(() => void checkpointCursor(), CURSOR_CHECKPOINT_INTERVAL_MS)
+    cursorCheckpointTimer.unref?.()
+  }
+
   let wsUrl = `${relayUrl}/xrpc/com.atproto.sync.subscribeRepos`
   if (cursor) {
     wsUrl += `?cursor=${cursor}`
@@ -354,7 +410,7 @@ export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
   ws.addEventListener('open', () => log('[indexer] Connected to relay'))
   ws.addEventListener('close', () => {
     log('[indexer] Disconnected, reconnecting in 3s...')
-    setTimeout(() => startIndexer(opts), 3000)
+    setTimeout(() => startIndexer({ ...opts, cursor: resumeCursor(lastSeq, opts.cursor) }), 3000)
   })
 
   return ws
@@ -437,7 +493,7 @@ function processMessage(bytes: Uint8Array, collections: Set<string>): void {
   if (!body.value.blocks || !body.value.ops) return
 
   // Track sequence number for cursor
-  if (body.value.seq) lastSeq = body.value.seq
+  if (body.value.seq) noteSeq(body.value.seq)
 
   const did = body.value.repo
   if (!did) return
