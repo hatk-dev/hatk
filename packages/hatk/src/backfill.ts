@@ -27,6 +27,18 @@ import { isPrivateCollection } from './private-collections.ts'
 export function purgeableCollections(collections: Iterable<string>): string[] {
   return [...collections].filter((c) => !isPrivateCollection(c))
 }
+
+/**
+ * Whether a repo with this stored status should be queued for backfill.
+ *
+ * Takendown repos are excluded: re-backfilling one ends in
+ * `setRepoStatus(did, 'active')`, which would silently reinstate an account an
+ * admin took down — takedowns must survive every redeploy. Reinstatement goes
+ * through `/admin/reverse-takedown` only. Exported for tests.
+ */
+export function backfillEligible(status: string | null): boolean {
+  return status !== 'active' && status !== 'takendown'
+}
 import type { BulkRecord } from './database/db.ts'
 import { emit, timer } from './logger.ts'
 import type { BackfillConfig } from './config.ts'
@@ -164,6 +176,13 @@ async function* listReposByCollection(
  * ```
  */
 export async function backfillRepo(did: string, collections: Set<string>, fetchTimeout: number): Promise<number> {
+  // A takendown repo must never be re-imported: the success path ends in
+  // setRepoStatus('active'), which would reinstate the account. Guarding here
+  // covers every caller (boot scan, auto-backfill, admin re-index).
+  if ((await getRepoStatus(did)) === 'takendown') {
+    emit('backfill', 'takedown_skip', { did })
+    return 0
+  }
   const elapsed = timer()
   let count = 0
   let carSizeBytes: number | undefined
@@ -426,7 +445,7 @@ export async function runBackfill(opts: BackfillOpts): Promise<number> {
   const pending: string[] = []
   for (const did of dids) {
     const status = await getRepoStatus(did)
-    if (status !== 'active') {
+    if (backfillEligible(status)) {
       if (!status) await setRepoStatus(did, 'pending')
       pending.push(did)
     }
