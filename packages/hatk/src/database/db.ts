@@ -82,6 +82,19 @@ export async function initDatabase(
   // Re-queue repos with missing handles so backfill populates them
   await run(`UPDATE _repos SET status = 'pending' WHERE handle IS NULL`)
 
+  // Covering index for the status rollups the admin overview and backfill queue
+  // read. Skipped on DuckDB, which scans the column just as fast and would only
+  // pay the ART index's insert cost.
+  if (port.dialect !== 'duckdb') {
+    await run(`CREATE INDEX IF NOT EXISTS idx_repos_status ON _repos(status)`)
+  }
+
+  // resolveHandleToDid runs on every feed request that takes an `actor` handle,
+  // and without this it scans all of _repos. Not UNIQUE: during a handle change
+  // two rows can briefly claim the same handle, and a constraint violation there
+  // would fail the indexer write.
+  await run(`CREATE INDEX IF NOT EXISTS idx_repos_handle ON _repos(handle)`)
+
   await run(`CREATE TABLE IF NOT EXISTS _cursor (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -518,11 +531,23 @@ export async function listReposPaginated(
 }
 
 export async function getCollectionCounts(): Promise<Record<string, number>> {
+  const entries = [...schemas]
   const counts: Record<string, number> = {}
-  for (const [collection, schema] of schemas) {
-    const rows = await all<{ count: number }>(`SELECT ${dialect.countAsInteger} as count FROM ${schema.tableName}`)
-    counts[collection] = Number(rows[0]?.count || 0)
-  }
+  for (const [collection] of entries) counts[collection] = 0
+  if (entries.length === 0) return counts
+
+  // One round trip instead of one per collection — reads are serialized on a
+  // single connection, so N queries means N waits behind whatever else is
+  // reading.
+  const sql = entries
+    .map(
+      ([collection, schema]) =>
+        `SELECT '${collection.replace(/'/g, "''")}' as collection, ${dialect.countAsInteger} as count FROM ${schema.tableName}`,
+    )
+    .join(' UNION ALL ')
+
+  const rows = await all<{ collection: string; count: number }>(sql)
+  for (const row of rows) counts[row.collection] = Number(row.count || 0)
   return counts
 }
 
