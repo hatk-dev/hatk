@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, extname } from 'node:path'
+import { gzipSync } from 'node:zlib'
 import {
   queryRecords,
   getRecordByUri,
@@ -287,6 +289,52 @@ export function registerCoreHandlers(collections: string[], oauth: OAuthConfig |
   }
 }
 
+/**
+ * Assets we ship inside the package never change while the process is alive, so
+ * read, gzip and hash them once. Repeat visits then cost a 304 instead of the
+ * full (uncompressed) payload.
+ */
+const bundledAssets = new Map<string, { raw: Buffer; gzip: Buffer; etag: string }>()
+
+async function serveBundledAsset(
+  path: string,
+  contentType: string,
+  request: Request,
+  devMode: boolean,
+): Promise<Response> {
+  let asset = devMode ? undefined : bundledAssets.get(path)
+  if (!asset) {
+    const raw = await readFile(path)
+    asset = {
+      raw,
+      gzip: gzipSync(raw),
+      etag: `"${createHash('sha256').update(raw).digest('base64url').slice(0, 16)}"`,
+    }
+    if (!devMode) bundledAssets.set(path, asset)
+  }
+
+  const headers: Record<string, string> = { ETag: asset.etag, 'Cache-Control': 'no-cache' }
+  if (request.headers.get('if-none-match') === asset.etag) {
+    return new Response(null, { status: 304, headers })
+  }
+
+  const acceptEncoding = request.headers.get('accept-encoding')
+  const useGzip = !!acceptEncoding && /\bgzip\b/.test(acceptEncoding)
+  if (useGzip) {
+    headers['Content-Encoding'] = 'gzip'
+    headers.Vary = 'Accept-Encoding'
+  }
+  headers['Content-Type'] = contentType
+  return new Response(Buffer.from(useGzip ? asset.gzip : asset.raw), { status: 200, headers })
+}
+
+interface AdminStats {
+  repos: Record<string, number>
+  duckdb: Record<string, string>
+  collections: Record<string, number>
+  openReports: number
+}
+
 export interface HandlerConfig {
   collections: string[]
   publicDir: string | null
@@ -311,6 +359,38 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
     if (!devMode && !admins.includes(viewer.did))
       return withCors(jsonError(403, 'Admin access required', acceptEncoding))
     return null // auth OK
+  }
+
+  // The /admin/info rollups count every row in every collection table, so they get
+  // slower as the index grows. Cache them for a few seconds — that collapses the
+  // overview's repeat loads and any concurrent requests into one scan — and drop
+  // the cache whenever an admin action changes what they report.
+  const ADMIN_STATS_TTL_MS = 10_000
+  let adminStats: { at: number; data: Promise<AdminStats> } | null = null
+
+  function getAdminStats(): Promise<AdminStats> {
+    if (adminStats && Date.now() - adminStats.at < ADMIN_STATS_TTL_MS) return adminStats.data
+    const data = (async () => {
+      const [repos, duckdb, collections, openReports] = await Promise.all([
+        getRepoStatusCounts(),
+        getDatabaseSize(),
+        getCollectionCounts(),
+        getOpenReportCount(),
+      ])
+      return { repos, duckdb, collections, openReports }
+    })()
+    const entry = { at: Date.now(), data }
+    adminStats = entry
+    // Don't cache a failure — and keep the rejection handled so it surfaces only
+    // at the awaiting request.
+    data.catch(() => {
+      if (adminStats === entry) adminStats = null
+    })
+    return data
+  }
+
+  function invalidateAdminStats(): void {
+    adminStats = null
   }
 
   return async (request: Request): Promise<Response> => {
@@ -496,6 +576,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           await setRepoStatus(did, 'pending')
           triggerAutoBackfill(did)
         }
+        invalidateAdminStats()
         return withCors(json({ added: dids.length }, 200, acceptEncoding))
       }
 
@@ -560,6 +641,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         const { did } = JSON.parse(await request.text())
         if (!did) return withCors(jsonError(400, 'Missing did', acceptEncoding))
         await setRepoStatus(did, 'takendown')
+        invalidateAdminStats()
         return withCors(json({ ok: true }, 200, acceptEncoding))
       }
 
@@ -570,6 +652,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         const { did } = JSON.parse(await request.text())
         if (!did) return withCors(jsonError(400, 'Missing did', acceptEncoding))
         await setRepoStatus(did, 'active')
+        invalidateAdminStats()
         return withCors(json({ ok: true }, 200, acceptEncoding))
       }
 
@@ -693,6 +776,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
             triggerAutoBackfill(did)
           }
         }
+        invalidateAdminStats()
         return withCors(json({ resyncing: repoList.length }, 200, acceptEncoding))
       }
 
@@ -705,6 +789,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         for (const did of dids) {
           await removeRepo(did)
         }
+        invalidateAdminStats()
         return withCors(json({ removed: dids.length }, 200, acceptEncoding))
       }
 
@@ -712,9 +797,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       if (url.pathname === '/admin/info') {
         const denied = requireAdmin(viewer, acceptEncoding)
         if (denied) return denied
-        const counts = await getRepoStatusCounts()
-        const dbInfo = await getDatabaseSize()
-        const collectionCounts = await getCollectionCounts()
+        const stats = await getAdminStats()
         const mem = process.memoryUsage()
         const node = {
           rss: `${(mem.rss / 1024 / 1024).toFixed(1)} MiB`,
@@ -722,10 +805,15 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           heapTotal: `${(mem.heapTotal / 1024 / 1024).toFixed(1)} MiB`,
           external: `${(mem.external / 1024 / 1024).toFixed(1)} MiB`,
         }
-        const openReports = await getOpenReportCount()
         return withCors(
           json(
-            { repos: counts, duckdb: dbInfo, node, collections: collectionCounts, openReports },
+            {
+              repos: stats.repos,
+              duckdb: stats.duckdb,
+              node,
+              collections: stats.collections,
+              openReports: stats.openReports,
+            },
             200,
             acceptEncoding,
           ),
@@ -759,6 +847,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         if (action === 'resolve') {
           await insertLabels([{ src: 'admin', uri: report.subjectUri, val: report.label }])
         }
+        invalidateAdminStats()
         return withCors(json({ ok: true }, 200, acceptEncoding))
       }
 
@@ -1057,8 +1146,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       if (url.pathname === '/admin' || url.pathname === '/admin/') {
         const adminPath = join(import.meta.dirname, '../public/admin.html')
         try {
-          const content = await readFile(adminPath)
-          return withCors(file(content, 'text/html'))
+          return withCors(await serveBundledAsset(adminPath, 'text/html', request, devMode))
         } catch {
           return withCors(new Response('Admin page not found', { status: 404 }))
         }
@@ -1068,8 +1156,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       if (url.pathname === '/admin/admin-auth.js') {
         const authPath = join(import.meta.dirname, '../public/admin-auth.js')
         try {
-          const content = await readFile(authPath)
-          return withCors(file(content, 'application/javascript'))
+          return withCors(await serveBundledAsset(authPath, 'application/javascript', request, devMode))
         } catch {
           return notFound()
         }

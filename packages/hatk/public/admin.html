@@ -6,10 +6,20 @@
     <title>Admin</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Loaded off the critical path: media="print" keeps it from blocking the
+         first render, and the system-ui/Menlo fallbacks carry until it swaps in. -->
     <link
       href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Figtree:wght@400;500;600;700&display=swap"
       rel="stylesheet"
+      media="print"
+      onload="this.media = 'all'"
     />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Figtree:wght@400;500;600;700&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
     <style>
       *,
       *::before,
@@ -1318,6 +1328,8 @@
 
       window.auth = auth
       let labelDefinitions = []
+      // Started during boot so the overview's data is in flight while we auth
+      let overviewPrefetch = null
 
       function toast(msg, type = '') {
         const el = document.createElement('div')
@@ -1397,8 +1409,17 @@
         }
         loginScreen.style.display = 'none'
 
+        // Fire these together — awaiting them one at a time puts three round
+        // trips in front of the first render.
+        const whoamiPromise = api('/admin/whoami')
+        const definitionsPromise = api('/admin/labels/definitions').catch(() => null)
+        if (getURLState().tab === 'overview') {
+          overviewPrefetch = api('/admin/info')
+          overviewPrefetch.catch(() => {}) // loadOverview reports the failure
+        }
+
         try {
-          const whoami = await api('/admin/whoami')
+          const whoami = await whoamiPromise
           document.getElementById('viewer-did').textContent = whoami.did
         } catch (e) {
           document.getElementById('error-msg').textContent =
@@ -1409,10 +1430,7 @@
           return
         }
 
-        try {
-          const result = await api('/admin/labels/definitions')
-          labelDefinitions = result.definitions || []
-        } catch {}
+        labelDefinitions = (await definitionsPromise)?.definitions || []
 
         appEl.classList.add('visible')
         restoreFromURL()
@@ -1499,7 +1517,9 @@
 
       async function loadOverview() {
         try {
-          const info = await api('/admin/info')
+          const pending = overviewPrefetch
+          overviewPrefetch = null
+          const info = await (pending || api('/admin/info'))
           const statusCards = document.getElementById('status-cards')
           const repoStatuses = info.repos || {}
           const total = Object.values(repoStatuses).reduce((a, b) => a + b, 0)
