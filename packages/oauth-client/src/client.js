@@ -29,6 +29,7 @@ export class OAuthClient {
     this.namespace = this.clientId.replace(/[^a-z0-9]/gi, '_').slice(0, 32)
     this.storage = createStorage(this.namespace)
     this._initPromise = null
+    this._refreshPromise = null
   }
 
   /** Ensure DPoP key exists in IndexedDB. */
@@ -235,7 +236,18 @@ export class OAuthClient {
       return token
     }
 
-    // Try to refresh
+    // Concurrent requests in this tab share one refresh. Without this they race
+    // for the cross-tab lock, and the losers fall back to the very token that is
+    // being replaced.
+    if (!this._refreshPromise) {
+      this._refreshPromise = this._refresh().finally(() => {
+        this._refreshPromise = null
+      })
+    }
+    return this._refreshPromise
+  }
+
+  async _refresh() {
     const refreshToken = this.storage.get('refreshToken')
     if (!refreshToken) return null
 
