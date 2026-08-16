@@ -46,6 +46,7 @@ import {
   handlePar,
   buildAuthorizeRedirect,
   handleCallback,
+  handleCallbackError,
   serverLogin,
   handleToken,
   authenticate,
@@ -1005,6 +1006,19 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         if (iss !== oauth.issuer) {
           const code = url.searchParams.get('code')
           const state = url.searchParams.get('state')
+          const oauthError = url.searchParams.get('error')
+          if (oauthError) {
+            const errorRedirect = await handleCallbackError(
+              oauth,
+              oauthError,
+              url.searchParams.get('error_description'),
+              state,
+            )
+            return new Response(null, {
+              status: 302,
+              headers: { Location: errorRedirect, 'Set-Cookie': clearSessionCookieHeader() },
+            })
+          }
           if (!code) return withCors(jsonError(400, 'Missing code', acceptEncoding))
           const result = await handleCallback(oauth, code, state, iss)
           const isSecure = requestOrigin.startsWith('https')

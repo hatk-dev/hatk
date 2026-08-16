@@ -665,6 +665,43 @@ export async function handleCallback(
   return { requestUri: request.request_uri, clientRedirectUri, clientState: request.state, did }
 }
 
+/**
+ * Handle an error redirect from the PDS (user denied, request expired, etc).
+ *
+ * The PDS reports failures by redirecting to our callback with `error` and no
+ * `code`. Discard the pending request and return a URL that hands the error
+ * back to the app, so the browser lands somewhere renderable instead of on a
+ * raw error response.
+ */
+export async function handleCallbackError(
+  config: OAuthConfig,
+  error: string,
+  errorDescription: string | null,
+  state: string | null,
+): Promise<string> {
+  let request: any = null
+  if (state) {
+    const rows = await querySQL(`SELECT * FROM _oauth_requests WHERE pds_state = $1`, [state])
+    request = rows.length > 0 ? rows[0] : null
+  }
+  if (request) await deleteOAuthRequest(request.request_uri)
+
+  emit('oauth', 'pds_callback_error', { error, error_description: errorDescription, matched: !!request })
+
+  const params = new URLSearchParams({ error })
+  if (errorDescription) params.set('error_description', errorDescription)
+
+  // Server-initiated logins store redirect_uri as '/' — send the browser home
+  // with the error attached. Same for an unmatched state (expired or replayed).
+  if (!request || request.redirect_uri === '/') return `/?${params}`
+
+  // Client flow: echo the client's state and our issuer so the SPA's callback
+  // handler recognises the redirect as its own rather than re-entering here.
+  if (request.state) params.set('state', request.state)
+  params.set('iss', config.issuer)
+  return `${request.redirect_uri}?${params}`
+}
+
 // --- Token Endpoint ---
 
 export async function handleToken(
