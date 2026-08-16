@@ -71,15 +71,58 @@ export default defineConfig({
 
 ## Server options
 
-| Option               | Type             | Default                   | Env           | Description                                                                               |
-| -------------------- | ---------------- | ------------------------- | ------------- | ----------------------------------------------------------------------------------------- |
-| `relay`              | `string`         | `'ws://localhost:2583'`   | `RELAY`       | WebSocket URL for the AT Protocol firehose relay. Use `wss://bsky.network` in production. |
-| `plc`                | `string`         | `'https://plc.directory'` | `DID_PLC_URL` | PLC directory URL for DID resolution. Use `http://localhost:2582` for local dev.          |
-| `port`               | `number`         | `3000`                    | `PORT`        | HTTP port for the hatk backend server.                                                    |
-| `publicDir`          | `string \| null` | `'./public'`              | --            | Directory for static files. Set to `null` to disable static file serving.                 |
-| `collections`        | `string[]`       | `[]`                      | --            | Collection NSIDs to index. If empty, auto-derived from your lexicon record definitions.   |
-| `privateCollections` | `string[]`       | `[]`                      | --            | Collection NSIDs to withhold from the built-in `dev.hatk.*` record endpoints. See below.  |
-| `admins`             | `string[]`       | `[]`                      | `ADMINS`      | DIDs allowed to access `/admin/*` endpoints. Env var is comma-separated.                  |
+| Option               | Type             | Default                   | Env             | Description                                                                               |
+| -------------------- | ---------------- | ------------------------- | --------------- | ----------------------------------------------------------------------------------------- |
+| `relay`              | `string`         | `'ws://localhost:2583'`   | `RELAY`         | WebSocket URL for the AT Protocol firehose relay. Use `wss://bsky.network` in production. |
+| `jetstream`          | `object \| null` | `null`                    | `JETSTREAM_URL` | Consume a Jetstream v2 instance instead of `relay`. See below.                            |
+| `plc`                | `string`         | `'https://plc.directory'` | `DID_PLC_URL`   | PLC directory URL for DID resolution. Use `http://localhost:2582` for local dev.          |
+| `port`               | `number`         | `3000`                    | `PORT`          | HTTP port for the hatk backend server.                                                    |
+| `publicDir`          | `string \| null` | `'./public'`              | --              | Directory for static files. Set to `null` to disable static file serving.                 |
+| `collections`        | `string[]`       | `[]`                      | --              | Collection NSIDs to index. If empty, auto-derived from your lexicon record definitions.   |
+| `privateCollections` | `string[]`       | `[]`                      | --              | Collection NSIDs to withhold from the built-in `dev.hatk.*` record endpoints. See below.  |
+| `admins`             | `string[]`       | `[]`                      | `ADMINS`        | DIDs allowed to access `/admin/*` endpoints. Env var is comma-separated.                  |
+
+### `jetstream`
+
+Set `jetstream` to consume the stream from a [Jetstream v2](https://bsky.network/docs/jetstream)
+instance instead of the relay firehose:
+
+```ts
+export default defineConfig({
+  jetstream: isProd ? { url: 'wss://jetstream.us-east.bsky.network' } : null,
+  relay: isProd ? 'wss://bsky.network' : 'ws://localhost:2583',
+  // ...
+})
+```
+
+The relay ships every commit on the network as DAG-CBOR frames wrapping a CAR
+block store, so an app indexing three collections still pays to decode all of
+them. Jetstream filters server-side by collection and delivers records as
+already-decoded JSON, so you only receive and decode what you index.
+
+Notes:
+
+- **`relay` is still required.** It is the default source, and backfill resolves
+  repos through it regardless of which stream you tail. A local PDS or
+  self-hosted relay usually has no Jetstream in front of it, which is why this
+  is opt-in rather than the default.
+- **Each source keeps its own cursor.** Relay seqs and Jetstream seqs are
+  different coordinate systems, so hatk stores them under separate `_cursor`
+  rows. Switching sources — or switching back — resumes from the right place;
+  it does not resume one stream from the other's offset.
+- **Identity events are not collection-filtered.** Jetstream delivers
+  `identity` regardless of your `collections` filter, so a niche app receives
+  far more identity events than commits (observed: ~35:1). They are cheap —
+  hatk ignores identity for DIDs it does not track — but the bandwidth saving
+  applies to commits, not the whole stream.
+- **Filter limits.** Jetstream accepts at most 100 collections and 10,000
+  pinned DIDs. hatk fails at startup with an explicit message rather than
+  letting the connection get rejected at the handshake.
+- **Delivery is at-least-once** and the cursor is inclusive, so an event may
+  arrive more than once across a reconnect. Writes upsert on each record's
+  `at://` URI, so duplicates are harmless.
+
+Backfill is unaffected: `getRepo` CAR imports still run against each repo's PDS.
 
 ### `privateCollections`
 

@@ -15,6 +15,7 @@ import { initXrpc, listXrpc, configureRelay, configureCdn, configureOAuth, callX
 import { initOpengraph } from './opengraph.ts'
 import { initLabels, getLabelDefinitions } from './labels.ts'
 import { startIndexer } from './indexer.ts'
+import { startJetstreamIndexer } from './jetstream.ts'
 import { rebuildAllIndexes } from './database/fts.ts'
 import { createHandler, registerCoreHandlers } from './server.ts'
 import { setPrivateCollections } from './private-collections.ts'
@@ -232,19 +233,28 @@ log(
 // after one boot so later restarts resume normally.
 const ignoreSavedCursor = Boolean(process.env.HATK_IGNORE_SAVED_CURSOR)
 if (ignoreSavedCursor) log('[main] HATK_IGNORE_SAVED_CURSOR set — starting indexer from live')
-const cursor = ignoreSavedCursor ? null : await getCursor('relay')
-startIndexer({
-  relayUrl: config.relay,
+
+// Each source keeps its own cursor row: relay seqs and Jetstream seqs are
+// different coordinate systems, so switching sources must not resume one from
+// the other's value.
+const indexerCore = {
   plcUrl: config.plc,
   collections: collectionSet,
   signalCollections: config.backfill.signalCollections ? new Set(config.backfill.signalCollections) : undefined,
   pinnedRepos: config.backfill.repos ? new Set(config.backfill.repos) : undefined,
-  cursor,
   fetchTimeout: config.backfill.fetchTimeout,
   maxRetries: config.backfill.maxRetries,
   parallelism: config.backfill.parallelism,
   ftsRebuildInterval: config.ftsRebuildInterval,
-})
+}
+
+if (config.jetstream) {
+  const cursor = ignoreSavedCursor ? null : await getCursor('jetstream')
+  startJetstreamIndexer({ ...indexerCore, jetstreamUrl: config.jetstream.url, cursor })
+} else {
+  const cursor = ignoreSavedCursor ? null : await getCursor('relay')
+  startIndexer({ ...indexerCore, relayUrl: config.relay, cursor })
+}
 
 // 7. Run backfill in background
 runBackfillAndRestart()

@@ -53,9 +53,18 @@ function minimalLexicon(nsid: string) {
  * in its own process under the default `forks` pool — see the note on
  * `createTestContext` in src/test.ts).
  */
+/**
+ * The fixture's lexicons, keyed by NSID. Tests that exercise the indexer need
+ * these registered via `storeLexicons` — `validateRecord` rejects a collection
+ * it has no lexicon for, so without them every record is skipped as invalid.
+ */
+export function fixtureLexicons(): Map<string, any> {
+  return new Map<string, any>([PRIVATE_COLLECTION, PUBLIC_COLLECTION].map((nsid) => [nsid, minimalLexicon(nsid)]))
+}
+
 export async function setupFixtureDatabase(): Promise<void> {
   const nsids = [PRIVATE_COLLECTION, PUBLIC_COLLECTION]
-  const lexicons = new Map<string, any>(nsids.map((nsid) => [nsid, minimalLexicon(nsid)]))
+  const lexicons = fixtureLexicons()
 
   const tableSchemas = []
   const ddlStatements = []

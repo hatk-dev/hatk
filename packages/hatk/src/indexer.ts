@@ -28,11 +28,32 @@ interface WriteBuffer {
   record: Record<string, any>
 }
 
+/** A single normalized repo operation, independent of the wire it arrived on. */
+export interface CommitOp {
+  action: 'create' | 'update' | 'delete'
+  collection: string
+  rkey: string
+  /** Absent on deletes. */
+  cid?: string
+  /** Absent on deletes. */
+  record?: Record<string, any>
+}
+
 let buffer: WriteBuffer[] = []
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 let lastSeq: number | null = null
 let lastPersistedSeq: number | null = null
 let cursorCheckpointTimer: ReturnType<typeof setInterval> | null = null
+
+/**
+ * Which `_cursor` row this process persists its stream position to.
+ *
+ * The relay's `subscribeRepos` seq and Jetstream's seq are different
+ * coordinate systems — resuming one from the other's value would either skip
+ * a swathe of the stream or replay from a nonsense offset. Each source owns
+ * its own key so switching between them (or back) is safe.
+ */
+let cursorKey: 'relay' | 'jetstream' = 'relay'
 const BATCH_SIZE = 100
 const FLUSH_INTERVAL_MS = 500
 const CURSOR_CHECKPOINT_INTERVAL_MS = 5_000
@@ -86,7 +107,7 @@ async function flushBuffer(): Promise<void> {
   if (lastSeq !== null) {
     const seq = lastSeq
     try {
-      await setCursor('relay', String(seq))
+      await setCursor(cursorKey, String(seq))
       lastPersistedSeq = seq
     } catch (err: any) {
       cursorError = err.message
@@ -175,6 +196,11 @@ export function noteSeq(seq: number): void {
   lastSeq = seq
 }
 
+/** The highest seq this process has seen, or null before the first event. */
+export function getLastSeq(): number | null {
+  return lastSeq
+}
+
 /**
  * Persist the latest firehose sequence when it has advanced past the stored
  * cursor. Runs on a timer independent of the write path: an app whose
@@ -187,11 +213,16 @@ export async function checkpointCursor(): Promise<void> {
   if (lastSeq === null || lastSeq === lastPersistedSeq) return
   const seq = lastSeq
   try {
-    await setCursor('relay', String(seq))
+    await setCursor(cursorKey, String(seq))
     lastPersistedSeq = seq
   } catch (err: any) {
     emit('indexer', 'cursor_checkpoint_error', { cursor_seq: seq, error: err.message })
   }
+}
+
+/** Point cursor persistence at a stream's own `_cursor` row. See {@link cursorKey}. */
+export function setCursorKey(key: 'relay' | 'jetstream'): void {
+  cursorKey = key
 }
 
 /**
@@ -200,10 +231,7 @@ export async function checkpointCursor(): Promise<void> {
  * Reusing the boot-time cursor on every reconnect would replay everything
  * received since the process started.
  */
-export function resumeCursor(
-  liveSeq: number | null,
-  bootCursor: string | null | undefined,
-): string | null | undefined {
+export function resumeCursor(liveSeq: number | null, bootCursor: string | null | undefined): string | null | undefined {
   return liveSeq !== null ? String(liveSeq) : bootCursor
 }
 
@@ -211,6 +239,20 @@ export function resumeCursor(
 export function _resetCursorStateForTests(): void {
   lastSeq = null
   lastPersistedSeq = null
+  cursorKey = 'relay'
+}
+
+/**
+ * Drain the write buffer synchronously instead of waiting out
+ * FLUSH_INTERVAL_MS. Lets end-to-end tests assert on rows immediately after
+ * feeding a frame.
+ */
+export async function _flushForTests(): Promise<void> {
+  if (flushTimer) {
+    clearTimeout(flushTimer)
+    flushTimer = null
+  }
+  await flushBuffer()
 }
 
 /**
@@ -307,18 +349,26 @@ export async function triggerAutoBackfill(did: string, attempt = 0): Promise<voi
   }
 }
 
-/** Configuration for the firehose indexer. */
-interface IndexerOpts {
-  relayUrl: string
+/**
+ * Indexing behaviour shared by every stream source. Both the relay firehose
+ * and the Jetstream live tail feed the same buffers, backfill signalling, and
+ * cursor machinery — only the wire differs.
+ */
+export interface IndexerCoreOpts {
   plcUrl: string
   collections: Set<string>
   signalCollections?: Set<string>
   pinnedRepos?: Set<string>
-  cursor?: string | null
   fetchTimeout: number
   maxRetries: number
   parallelism?: number
   ftsRebuildInterval?: number
+}
+
+/** Configuration for the relay firehose indexer. */
+interface IndexerOpts extends IndexerCoreOpts {
+  relayUrl: string
+  cursor?: string | null
 }
 
 /** Emit a memory diagnostics wide event every 30s for observability. */
@@ -354,13 +404,12 @@ function startMemoryDiagnostics(): void {
  *
  * @returns The WebSocket connection (for shutdown coordination)
  */
-export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
-  const { relayUrl, collections, cursor, fetchTimeout } = opts
+export async function configureIndexer(opts: IndexerCoreOpts): Promise<void> {
   if (opts.ftsRebuildInterval != null) ftsRebuildInterval = opts.ftsRebuildInterval
-  indexerCollections = collections
-  indexerSignalCollections = opts.signalCollections || collections
+  indexerCollections = opts.collections
+  indexerSignalCollections = opts.signalCollections || opts.collections
   indexerPinnedRepos = opts.pinnedRepos || null
-  indexerFetchTimeout = fetchTimeout
+  indexerFetchTimeout = opts.fetchTimeout
   indexerMaxRetries = opts.maxRetries
   indexerPlcUrl = opts.plcUrl
   maxConcurrentBackfills = opts.parallelism ?? 3
@@ -384,6 +433,12 @@ export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
     cursorCheckpointTimer = setInterval(() => void checkpointCursor(), CURSOR_CHECKPOINT_INTERVAL_MS)
     cursorCheckpointTimer.unref?.()
   }
+}
+
+export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
+  const { relayUrl, collections, cursor } = opts
+  setCursorKey('relay')
+  await configureIndexer(opts)
 
   let wsUrl = `${relayUrl}/xrpc/com.atproto.sync.subscribeRepos`
   if (cursor) {
@@ -425,7 +480,7 @@ export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
  * Only updates DIDs we already track (present in repoStatusCache) to avoid
  * writing rows for the entire network.
  */
-async function handleIdentityEvent(did: string, payloadHandle: string | undefined): Promise<void> {
+export async function handleIdentityEvent(did: string, payloadHandle: string | undefined): Promise<void> {
   if (!repoStatusCache.has(did)) return
 
   let handle = payloadHandle
@@ -472,11 +527,106 @@ async function handleIdentityEvent(did: string, payloadHandle: string | undefine
 }
 
 /**
+ * Whether a collection's records may be written from network data.
+ *
+ * Private collections are AppView-authoritative: nothing on the network may
+ * write or delete their rows, so stream ops naming them are spoofed by
+ * definition and must be dropped regardless of which source delivered them.
+ */
+export function isIndexableCollection(collection: string, collections: Set<string>): boolean {
+  return collections.has(collection) && !isPrivateCollection(collection)
+}
+
+/**
+ * Apply a repo's commit ops to the index.
+ *
+ * Wire-agnostic: the relay path reaches here after CBOR/CAR decoding, the
+ * Jetstream path after parsing JSON. Callers must have already filtered `ops`
+ * through {@link isIndexableCollection}.
+ *
+ * Handles auto-backfill signalling, buffering for DIDs mid-backfill, lexicon
+ * validation, and delete/put routing.
+ */
+export function applyCommit(did: string, ops: CommitOp[]): void {
+  if (ops.length === 0) return
+
+  // When repos are pinned, only process events from those DIDs
+  if (indexerPinnedRepos && !indexerPinnedRepos.has(did)) return
+
+  // Only auto-backfill when we see activity in a signal collection
+  const hasSignalOp = ops.some((op) => indexerSignalCollections.has(op.collection))
+
+  // Use in-memory cache only — never hit DB from the hot path.
+  // Unknown DIDs stay unknown until backfill or auto-backfill discovers them.
+  // The cache is populated by triggerAutoBackfill and setRepoStatus calls.
+  const cachedStatus = repoStatusCache.get(did)
+  const repoStatus = cachedStatus === undefined || cachedStatus === 'unknown' ? null : cachedStatus
+  if (cachedStatus === undefined) {
+    repoStatusCache.set(did, 'unknown')
+  }
+
+  if (hasSignalOp) {
+    if (repoStatus === null && backfillInFlight.size < maxConcurrentBackfills) {
+      repoStatusCache.set(did, 'pending')
+      triggerAutoBackfill(did)
+    } else if (repoStatus === null) {
+      repoStatusCache.set(did, 'pending')
+      setRepoStatus(did, 'pending')
+    }
+  }
+
+  // For non-signal ops (e.g. profile updates), only process if this DID is already tracked
+  if (!hasSignalOp && repoStatus === null) return
+
+  for (const op of ops) {
+    const uri = `at://${did}/${op.collection}/${op.rkey}`
+
+    if (op.action === 'delete') {
+      deleteRecord(op.collection, uri)
+      fireOnCommitHooks([
+        {
+          action: 'delete',
+          collection: op.collection,
+          uri,
+          authorDid: did,
+          record: null,
+        },
+      ])
+      continue
+    }
+
+    const record = op.record
+    if (!op.cid || !record) continue
+    if (record.$type !== op.collection) continue
+
+    const validationError = validateRecord(getLexiconArray(), op.collection, record)
+    if (validationError) {
+      emit('indexer', 'validation_skip', {
+        uri,
+        collection: op.collection,
+        path: validationError.path,
+        error: validationError.message,
+      })
+      continue
+    }
+
+    const item = { collection: op.collection, uri, cid: op.cid, authorDid: did, record }
+
+    // If DID is mid-backfill, buffer instead of writing directly
+    if (pendingBuffers.has(did)) {
+      pendingBuffers.get(did)!.push(item)
+    } else {
+      bufferWrite(item)
+    }
+  }
+}
+
+/**
  * Process a single firehose message. Decodes the CBOR header/body, filters
  * for relevant collections, validates records against lexicons, and routes
  * writes to the buffer (or pending buffer if the DID is mid-backfill).
  */
-function processMessage(bytes: Uint8Array, collections: Set<string>): void {
+export function processMessage(bytes: Uint8Array, collections: Set<string>): void {
   const header = cborDecode(bytes, 0)
   const body = cborDecode(bytes, header.offset)
 
@@ -498,64 +648,21 @@ function processMessage(bytes: Uint8Array, collections: Set<string>): void {
   const did = body.value.repo
   if (!did) return
 
-  // When repos are pinned, only process events from those DIDs
-  if (indexerPinnedRepos && !indexerPinnedRepos.has(did)) return
-
-  // Check if any ops in this commit are for collections we care about
-  // Private collections are AppView-authoritative: nothing on the network may
-  // write or delete their rows, so firehose ops naming them are spoofed by
-  // definition and must be dropped.
-  const relevantOps = body.value.ops.filter((op: any) => {
-    const collection = op.path.split('/')[0]
-    return collections.has(collection) && !isPrivateCollection(collection)
-  })
+  // Check if any ops in this commit are for collections we care about, before
+  // paying for the CAR parse below.
+  const relevantOps = body.value.ops.filter((op: any) => isIndexableCollection(op.path.split('/')[0], collections))
   if (relevantOps.length === 0) return
 
   // Copy blocks out of the original buffer before it can be GC'd
   const { blocks } = parseCarFrame(new Uint8Array(body.value.blocks))
 
-  // Only auto-backfill when we see activity in a signal collection
-  const hasSignalOp = relevantOps.some((op: any) => indexerSignalCollections.has(op.path.split('/')[0]))
-
-  // Use in-memory cache only — never hit DB from the hot path.
-  // Unknown DIDs stay unknown until backfill or auto-backfill discovers them.
-  // The cache is populated by triggerAutoBackfill and setRepoStatus calls.
-  const cachedStatus = repoStatusCache.get(did)
-  const repoStatus = cachedStatus === undefined || cachedStatus === 'unknown' ? null : cachedStatus
-  if (cachedStatus === undefined) {
-    repoStatusCache.set(did, 'unknown')
-  }
-
-  if (hasSignalOp && (!indexerPinnedRepos || indexerPinnedRepos.has(did))) {
-    if (repoStatus === null && backfillInFlight.size < maxConcurrentBackfills) {
-      repoStatusCache.set(did, 'pending')
-      triggerAutoBackfill(did)
-    } else if (repoStatus === null) {
-      repoStatusCache.set(did, 'pending')
-      setRepoStatus(did, 'pending')
-    }
-  }
-
-  // For non-signal ops (e.g. profile updates), only process if this DID is already tracked
-  if (!hasSignalOp) {
-    if (repoStatus === null) return
-  }
-
+  const ops: CommitOp[] = []
   for (const op of relevantOps) {
     const collection = op.path.split('/')[0]
-    const uri = `at://${did}/${op.path}`
+    const rkey = op.path.split('/').slice(1).join('/')
 
     if (op.action === 'delete') {
-      deleteRecord(collection, uri)
-      fireOnCommitHooks([
-        {
-          action: 'delete',
-          collection,
-          uri,
-          authorDid: did,
-          record: null,
-        },
-      ])
+      ops.push({ action: 'delete', collection, rkey })
       continue
     }
 
@@ -566,26 +673,9 @@ function processMessage(bytes: Uint8Array, collections: Set<string>): void {
 
     try {
       const { value: record } = cborDecode(data)
-      if (record?.$type === collection) {
-        const validationError = validateRecord(getLexiconArray(), collection, record)
-        if (validationError) {
-          emit('indexer', 'validation_skip', {
-            uri,
-            collection,
-            path: validationError.path,
-            error: validationError.message,
-          })
-          continue
-        }
-        const item = { collection, uri, cid: opCid, authorDid: did, record }
-
-        // If DID is mid-backfill, buffer instead of writing directly
-        if (pendingBuffers.has(did)) {
-          pendingBuffers.get(did)!.push(item)
-        } else {
-          bufferWrite(item)
-        }
-      }
+      ops.push({ action: op.action === 'update' ? 'update' : 'create', collection, rkey, cid: opCid, record })
     } catch {}
   }
+
+  applyCommit(did, ops)
 }

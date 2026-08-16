@@ -56,8 +56,22 @@ export interface CdnConfig {
   salt: string // hex-encoded HMAC salt for imgproxy URL signing
 }
 
+export interface JetstreamConfig {
+  /** Instance base URL, e.g. `wss://jetstream.us-east.bsky.network`. */
+  url: string
+}
+
 export interface HatkConfig {
   relay: string
+  /**
+   * Consume the stream from a Jetstream v2 instance instead of `relay`.
+   *
+   * Jetstream filters server-side and delivers records as decoded JSON, so an
+   * AppView tracking a few collections stops paying to decode the whole
+   * network. Not every deployment has one — a local PDS or self-hosted relay
+   * won't — so `relay` stays the default.
+   */
+  jetstream: JetstreamConfig | null
   plc: string // PLC directory URL for DID resolution
   port: number
   cdn: CdnConfig | null // CDN with imgproxy URL signing (null to use cdn.bsky.app)
@@ -74,11 +88,12 @@ export interface HatkConfig {
 }
 
 /** Input type for defineConfig — fields that have defaults are optional. */
-export type HatkConfigInput = Partial<Omit<HatkConfig, 'oauth' | 'backfill' | 'push' | 'cdn'>> & {
+export type HatkConfigInput = Partial<Omit<HatkConfig, 'oauth' | 'backfill' | 'push' | 'cdn' | 'jetstream'>> & {
   cdn?: CdnConfig | null
   oauth?: (Partial<OAuthConfig> & { clients: OAuthClientConfig[] }) | null
   backfill?: Partial<BackfillConfig>
   push?: PushConfig | null
+  jetstream?: JetstreamConfig | null
 }
 
 /** Identity function that provides type inference for hatk config files. */
@@ -118,6 +133,7 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
   const database = env.DATABASE || parsed.database
   const config: HatkConfig = {
     relay: env.RELAY || parsed.relay || 'ws://localhost:2583',
+    jetstream: env.JETSTREAM_URL ? { url: env.JETSTREAM_URL } : parsed.jetstream || null,
     plc: env.DID_PLC_URL || parsed.plc || 'https://plc.directory',
     port: parseInt(env.PORT || '') || parsed.port || 3000,
     databaseEngine: (env.DATABASE_ENGINE || parsed.databaseEngine || 'sqlite') as HatkConfig['databaseEngine'],
