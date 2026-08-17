@@ -43,6 +43,7 @@ import {
   getProtectedResourceMetadata,
   getJwks,
   getClientMetadata,
+  getClientJwks,
   handlePar,
   buildAuthorizeRedirect,
   handleCallback,
@@ -940,6 +941,10 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       }
       if ((url.pathname === '/oauth/client-metadata.json' || url.pathname === '/oauth-client-metadata.json') && oauth) {
         return withCors(json(getClientMetadata(oauth.issuer, oauth), 200, acceptEncoding))
+      }
+      // Public key a PDS fetches to verify our client assertions.
+      if (url.pathname === '/oauth/client-jwks.json' && oauth) {
+        return withCors(json(getClientJwks(), 200, acceptEncoding))
       }
 
       // Dev-only: create a session cookie for any DID (for testing)

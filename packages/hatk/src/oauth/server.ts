@@ -43,6 +43,8 @@ import { querySQL } from '../database/db.ts'
 import { fireOnLoginHook } from '../hooks.ts'
 
 const SERVER_KEY_KID = 'appview-oauth-key'
+const CLIENT_KEY_KID = 'pds-client-auth-key'
+const CLIENT_ASSERTION_TYPE = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
 
 /**
  * RFC 6749 §5.2 OAuth token-endpoint error.
@@ -103,6 +105,8 @@ let serverPrivateJwk: JsonWebKey
 let serverPublicJwk: JsonWebKey
 let serverPrivateKey: CryptoKey
 let serverJkt: string
+let clientPublicJwk: JsonWebKey
+let clientPrivateKey: CryptoKey
 let _plcUrl: string
 let _relayUrl: string
 
@@ -122,6 +126,24 @@ export async function initOAuth(_config: OAuthConfig, plcUrl: string, relayUrl: 
   }
   serverPrivateKey = await importPrivateKey(serverPrivateJwk)
   serverJkt = await computeJwkThumbprint(serverPublicJwk)
+
+  // Client-authentication key, kept separate from the access-token signing key
+  // above. A PDS binds each session to the kid that authenticated it and
+  // refuses a later refresh signed by a different one, so this key can't be
+  // rotated without signing every user out — keeping it distinct means the
+  // access-token key stays rotatable.
+  const existingClientKey = await getServerKey(CLIENT_KEY_KID)
+  let clientPrivateJwk: JsonWebKey
+  if (existingClientKey) {
+    clientPrivateJwk = JSON.parse(existingClientKey.privateKey)
+    clientPublicJwk = JSON.parse(existingClientKey.publicKey)
+  } else {
+    const kp = await generateKeyPair()
+    clientPrivateJwk = kp.privateJwk
+    clientPublicJwk = kp.publicJwk
+    await storeServerKey(CLIENT_KEY_KID, JSON.stringify(clientPrivateJwk), JSON.stringify(clientPublicJwk))
+  }
+  clientPrivateKey = await importPrivateKey(clientPrivateJwk)
 
   // Initialize SSR session cookie signing
   initSession(serverPrivateJwk, _config.cookieName)
@@ -177,17 +199,92 @@ export function getJwks() {
   }
 }
 
+/**
+ * Whether we authenticate to PDSes as a confidential client.
+ *
+ * A confidential client gets a 2-year session and 3-month refresh window
+ * instead of 2 weeks, and is exempt from the consent screen atproto forces on
+ * every authorization request from a public client. It requires a fetchable
+ * `jwks_uri`, so loopback deployments (local dev) stay public.
+ */
+export function isConfidentialClient(issuer: string): boolean {
+  return !isLoopbackClient(issuer)
+}
+
+/** Public half of the client-authentication key, for the PDS to verify assertions. */
+export function getClientJwks() {
+  return {
+    keys: [
+      {
+        ...clientPublicJwk,
+        kid: CLIENT_KEY_KID,
+        use: 'sig',
+        alg: 'ES256',
+      },
+    ],
+  }
+}
+
+/**
+ * A JWT proving we are this client, per RFC 7523. The PDS checks `sub` against
+ * the client_id it resolved and `aud` against its own issuer, then verifies the
+ * signature against the key it fetched from `jwks_uri`.
+ */
+async function createClientAssertion(issuer: string, config: OAuthConfig, audience: string): Promise<string> {
+  const clientId = pdsClientId(issuer, config)
+  const now = Math.floor(Date.now() / 1000)
+  return signJwt(
+    { typ: 'JWT', alg: 'ES256', kid: CLIENT_KEY_KID },
+    {
+      iss: clientId,
+      sub: clientId,
+      aud: audience,
+      jti: randomToken(),
+      iat: now,
+      exp: now + 60,
+    },
+    clientPrivateKey,
+  )
+}
+
+/**
+ * Add client authentication to a PAR or token request body. No-op for loopback
+ * deployments, which stay public clients.
+ */
+async function withClientAuth(
+  params: Record<string, string>,
+  issuer: string,
+  config: OAuthConfig,
+  audience: string,
+): Promise<Record<string, string>> {
+  if (!isConfidentialClient(issuer)) return params
+  return {
+    ...params,
+    client_assertion_type: CLIENT_ASSERTION_TYPE,
+    client_assertion: await createClientAssertion(issuer, config, audience),
+  }
+}
+
 export function getClientMetadata(issuer: string, config: OAuthConfig) {
   // Find the metadata client entry to get its scope
   const metadataClientId = `${issuer}/oauth-client-metadata.json`
   const clientConfig = config.clients.find((c) => c.client_id === metadataClientId)
+  const confidential = isConfidentialClient(issuer)
   return {
     client_id: metadataClientId,
     client_name: clientConfig?.client_name || 'hatk',
     redirect_uris: [`${issuer}/oauth/callback`],
     grant_types: ['authorization_code', 'refresh_token'],
     response_types: ['code'],
-    token_endpoint_auth_method: 'none',
+    // atproto requires the signing alg alongside private_key_jwt, and requires
+    // its absence for a public client.
+    ...(confidential
+      ? {
+          token_endpoint_auth_method: 'private_key_jwt',
+          token_endpoint_auth_signing_alg: 'ES256',
+          jwks_uri: `${issuer}/oauth/client-jwks.json`,
+        }
+      : { token_endpoint_auth_method: 'none' }),
     dpop_bound_access_tokens: true,
     scope: clientConfig?.scope || 'atproto transition:generic',
   }
@@ -298,7 +395,9 @@ export async function handlePar(
     if (did) {
       pdsParParams.login_hint = body.login_hint || did
     }
-    const pdsParBody = new URLSearchParams(pdsParParams)
+    const pdsParBody = new URLSearchParams(
+      await withClientAuth(pdsParParams, config.issuer, config, authServerMetadata.issuer || pdsAuthServer),
+    )
 
     const pdsParRes = await fetch(parEndpoint, {
       method: 'POST',
@@ -460,7 +559,9 @@ export async function serverLogin(
   if (did) {
     pdsParParams.login_hint = handle
   }
-  const pdsParBody = new URLSearchParams(pdsParParams)
+  const pdsParBody = new URLSearchParams(
+    await withClientAuth(pdsParParams, config.issuer, config, authServerMetadata.issuer || pdsAuthServer),
+  )
 
   let pdsRequestUri: string | undefined
 
@@ -568,13 +669,20 @@ export async function handleCallback(
   const tokenEndpoint = `${request.pds_auth_server}/oauth/token`
   const serverDpopProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', tokenEndpoint)
 
-  const tokenBody = new URLSearchParams({
-    grant_type: 'authorization_code',
-    code,
-    redirect_uri: pdsRedirectUri(config.issuer),
-    client_id: pdsClientId(config.issuer, config),
-    code_verifier: request.pds_code_verifier,
-  })
+  const tokenBody = new URLSearchParams(
+    await withClientAuth(
+      {
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: pdsRedirectUri(config.issuer),
+        client_id: pdsClientId(config.issuer, config),
+        code_verifier: request.pds_code_verifier,
+      },
+      config.issuer,
+      config,
+      request.pds_auth_server,
+    ),
+  )
 
   let tokenRes = await fetch(tokenEndpoint, {
     method: 'POST',
@@ -886,11 +994,18 @@ export async function refreshPdsSession(
   const clientId = pdsClientId(config.issuer, config)
   const dpopProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', tokenEndpoint)
 
-  const body = new URLSearchParams({
-    grant_type: 'refresh_token',
-    refresh_token: session.refresh_token,
-    client_id: clientId,
-  })
+  const body = new URLSearchParams(
+    await withClientAuth(
+      {
+        grant_type: 'refresh_token',
+        refresh_token: session.refresh_token,
+        client_id: clientId,
+      },
+      config.issuer,
+      config,
+      session.pds_auth_server || session.pds_endpoint,
+    ),
+  )
 
   let tokenRes = await fetch(tokenEndpoint, {
     method: 'POST',
