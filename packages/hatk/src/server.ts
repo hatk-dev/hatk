@@ -1078,8 +1078,15 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       // Accounts this browser may switch between. The cookie is HttpOnly, so
       // this is the only way for a client to see what's in it.
       if (url.pathname === '/auth/accounts' && request.method === 'GET') {
-        const accounts = await parseAccountsCookie(request)
+        const stored = await parseAccountsCookie(request)
         const active = await parseSessionCookie(request)
+
+        // Sessions created before this feature existed have a session cookie
+        // and no accounts cookie. Adopt the active account into the list rather
+        // than reporting it as unknown — otherwise the switcher looks empty and
+        // signing into a second account appears to drop the first.
+        const needsHealing = !!active && !stored.some((a) => a.did === active.did)
+        const accounts = needsHealing ? withAccount(stored, active) : stored
         // An account whose server-side OAuth session is gone can't be switched
         // to — say so rather than letting the client offer a dead option.
         // `__dev/login` fabricates a session with no OAuth grant behind it, so
@@ -1087,7 +1094,16 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         const resolved = await Promise.all(
           accounts.map(async (a) => ({ ...a, available: devMode || !!(await getSession(a.did)) })),
         )
-        return withCors(json({ accounts: resolved, active: active?.did ?? null }, 200, acceptEncoding))
+        const res = withCors(json({ accounts: resolved, active: active?.did ?? null }, 200, acceptEncoding))
+        // Persist the adoption so the next switch has something to authorize
+        // against, instead of healing the list again on every load.
+        if (needsHealing) {
+          res.headers.append(
+            'Set-Cookie',
+            accountsCookieHeader(await createAccountsCookie(accounts), requestOrigin.startsWith('https')),
+          )
+        }
+        return res
       }
 
       // Switch the active account without re-authorizing at the PDS.

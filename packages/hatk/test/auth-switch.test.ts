@@ -182,3 +182,29 @@ test('signing out the last account clears the list entirely', async () => {
   expect(cleared).toBeDefined()
   expect(cleared).toContain('Max-Age=0')
 })
+
+test('an account signed in before the accounts cookie existed is still listed', async () => {
+  // Sessions predating this feature have a session cookie and no accounts
+  // cookie. If /auth/accounts reports an empty list for them, the switcher
+  // shows nothing, and signing into a second account replaces the first —
+  // which reads to the user as their account being dropped.
+  const cookie = `${getSessionCookieName()}=${await createSessionCookie(alice)}`
+  const res = await handler()(new Request('http://localhost/auth/accounts', { headers: { cookie } }))
+
+  const body = await res.json()
+  expect(body.active).toBe(alice.did)
+  expect(body.accounts.map((a: SessionData) => a.did)).toEqual([alice.did])
+})
+
+test('listing heals the accounts cookie so the next switch works', async () => {
+  const cookie = `${getSessionCookieName()}=${await createSessionCookie(alice)}`
+  const listed = await handler()(new Request('http://localhost/auth/accounts', { headers: { cookie } }))
+
+  const healed = listed.headers.getSetCookie().find((c) => c.startsWith(`${getAccountsCookieName()}=`))
+  expect(healed).toBeDefined()
+
+  // With the healed cookie, alice is switchable rather than a stranger.
+  const withHealed = `${cookie}; ${healed!.split(';')[0]}`
+  const res = await handler()(switchRequest(withHealed, alice.did))
+  expect(res.status).toBe(200)
+})
