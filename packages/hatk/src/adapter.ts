@@ -73,6 +73,8 @@ export const HATK_ROUTES = [
   '/_health',
   '/robots.txt',
   '/auth/logout',
+  '/auth/switch',
+  '/auth/accounts',
   '/__dev/',
 ]
 

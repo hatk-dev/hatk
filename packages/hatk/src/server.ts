@@ -57,8 +57,15 @@ import {
   sessionCookieHeader,
   clearSessionCookieHeader,
   parseSessionCookie,
+  createAccountsCookie,
+  accountsCookieHeader,
+  clearAccountsCookieHeader,
+  parseAccountsCookie,
+  withAccount,
+  withoutAccount,
+  type SessionData,
 } from './oauth/session.ts'
-import { getOAuthRequest } from './oauth/db.ts'
+import { getOAuthRequest, getSession } from './oauth/db.ts'
 import type { OAuthConfig } from './config.ts'
 import {
   pdsCreateRecord,
@@ -942,12 +949,14 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         const handle = (await getRepoHandle(did)) ?? did
         const cookieValue = await createSessionCookie({ did, handle })
         const secure = url.protocol === 'https:'
+        const accounts = await createAccountsCookie(withAccount(await parseAccountsCookie(request), { did, handle }))
         return new Response(JSON.stringify({ ok: true }), {
           status: 200,
-          headers: {
-            'Content-Type': 'application/json',
-            'Set-Cookie': sessionCookieHeader(cookieValue, secure),
-          },
+          headers: [
+            ['Content-Type', 'application/json'],
+            ['Set-Cookie', sessionCookieHeader(cookieValue, secure)],
+            ['Set-Cookie', accountsCookieHeader(accounts, secure)],
+          ],
         })
       }
 
@@ -1023,7 +1032,11 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           const result = await handleCallback(oauth, code, state, iss)
           const isSecure = requestOrigin.startsWith('https')
           const handle = (await getRepoHandle(result.did)) ?? result.did
-          const cookie = await createSessionCookie({ did: result.did, handle })
+          const session: SessionData = { did: result.did, handle }
+          const cookie = await createSessionCookie(session)
+          // Remember the account alongside the active session so the browser
+          // can switch back to it later without another trip to the PDS.
+          const accounts = await createAccountsCookie(withAccount(await parseAccountsCookie(request), session))
           // Server-initiated login stores redirectUri as '/' — redirect cleanly without code/iss params
           const redirectTo = result.clientRedirectUri.startsWith('/?code=') ? '/' : result.clientRedirectUri
           return new Response(null, {
@@ -1031,18 +1044,95 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
             headers: [
               ['Location', redirectTo],
               ['Set-Cookie', sessionCookieHeader(cookie, isSecure)],
+              ['Set-Cookie', accountsCookieHeader(accounts, isSecure)],
             ],
           })
         }
         // Client-side callback — fall through to SPA
       }
 
-      // Session cookie logout
+      // Session cookie logout. Also drops the account from the switch list —
+      // leaving it there would keep a working path back into an account the
+      // user believes they signed out of, which matters on a shared machine.
       if (url.pathname === '/auth/logout' && request.method === 'POST') {
-        return new Response(null, {
-          status: 200,
-          headers: { 'Set-Cookie': clearSessionCookieHeader() },
-        })
+        const current = await parseSessionCookie(request)
+        const isSecure = requestOrigin.startsWith('https')
+        const headers: [string, string][] = [['Set-Cookie', clearSessionCookieHeader()]]
+        if (current) {
+          const remaining = withoutAccount(await parseAccountsCookie(request), current.did)
+          headers.push([
+            'Set-Cookie',
+            remaining.length
+              ? accountsCookieHeader(await createAccountsCookie(remaining), isSecure)
+              : clearAccountsCookieHeader(),
+          ])
+        }
+        return new Response(null, { status: 200, headers })
+      }
+
+      // Accounts this browser may switch between. The cookie is HttpOnly, so
+      // this is the only way for a client to see what's in it.
+      if (url.pathname === '/auth/accounts' && request.method === 'GET') {
+        const accounts = await parseAccountsCookie(request)
+        const active = await parseSessionCookie(request)
+        // An account whose server-side OAuth session is gone can't be switched
+        // to — say so rather than letting the client offer a dead option.
+        // `__dev/login` fabricates a session with no OAuth grant behind it, so
+        // in dev every remembered account counts as switchable.
+        const resolved = await Promise.all(
+          accounts.map(async (a) => ({ ...a, available: devMode || !!(await getSession(a.did)) })),
+        )
+        return withCors(json({ accounts: resolved, active: active?.did ?? null }, 200, acceptEncoding))
+      }
+
+      // Switch the active account without re-authorizing at the PDS.
+      //
+      // The OAuth grant belongs to this server acting for the user, not to a
+      // browser session — so once a browser has proven it owns an account, we
+      // can re-issue its session cookie from the stored session. The accounts
+      // cookie is the proof: it's encrypted with the server key, so a client
+      // can't name a DID it never signed in as.
+      if (url.pathname === '/auth/switch' && request.method === 'POST') {
+        let did: string | undefined
+        try {
+          const body = await request.json()
+          did = typeof body?.did === 'string' ? body.did : undefined
+        } catch {
+          return withCors(jsonError(400, 'Invalid JSON body', acceptEncoding))
+        }
+        if (!did) return withCors(jsonError(400, 'did required', acceptEncoding))
+
+        const accounts = await parseAccountsCookie(request)
+        const account = accounts.find((a) => a.did === did)
+        if (!account) return withCors(jsonError(403, 'Not signed in as that account', acceptEncoding))
+
+        if (!devMode && !(await getSession(account.did))) {
+          // The stored grant is gone (revoked, or cleaned up). Drop it from the
+          // list so the client stops offering it and can send the user through
+          // a fresh sign-in instead.
+          const isSecure = requestOrigin.startsWith('https')
+          const remaining = withoutAccount(accounts, account.did)
+          const res = withCors(jsonError(409, 'Session expired for that account', acceptEncoding))
+          res.headers.append(
+            'Set-Cookie',
+            remaining.length
+              ? accountsCookieHeader(await createAccountsCookie(remaining), isSecure)
+              : clearAccountsCookieHeader(),
+          )
+          return res
+        }
+
+        // Refresh the handle in passing — it may have changed while dormant.
+        const handle = (await getRepoHandle(account.did)) ?? account.handle
+        const session: SessionData = { did: account.did, handle }
+        const isSecure = requestOrigin.startsWith('https')
+        const res = withCors(json({ did: session.did, handle: session.handle }, 200, acceptEncoding))
+        res.headers.append('Set-Cookie', sessionCookieHeader(await createSessionCookie(session), isSecure))
+        res.headers.append(
+          'Set-Cookie',
+          accountsCookieHeader(await createAccountsCookie(withAccount(accounts, session)), isSecure),
+        )
+        return res
       }
 
       // OAuth Token
