@@ -1321,6 +1321,11 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
         try {
           const result = await executeXrpc(method, params, cursor, limit, viewer, input)
+          // A handler may answer with a Response of its own, which is the only
+          // way to serve anything but JSON — com.atproto.sync.getBlob is the
+          // shape in the wild, and a lexicon declaring `encoding: "*/*"` has no
+          // other way to honour it. Everything else is serialized as before.
+          if (result instanceof Response) return withCors(result)
           if (result) return withCors(json(result, 200, acceptEncoding))
         } catch (err: any) {
           if (err instanceof ScopeMissingProxyError) return scopeMissingResponse(acceptEncoding, viewer?.handle)
