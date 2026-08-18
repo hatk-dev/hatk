@@ -27,6 +27,22 @@ export interface OAuthConfig {
   scopes: string[]
   clients: OAuthClientConfig[]
   cookieName?: string
+  /**
+   * Scopes requested only from PDSes that serve `whenMethod`, discovered
+   * through `community.lexicon.service.describe` before the authorization
+   * request is pushed.
+   *
+   * For optional protocol features — permissioned spaces (proposal 0016) being
+   * the first — where asking every PDS for the scope would put a permission on
+   * the consent screen that most servers cannot honor.
+   */
+  conditionalScopes?: ConditionalScopeConfig[]
+}
+
+export interface ConditionalScopeConfig {
+  /** An XRPC method whose presence means the PDS implements the feature. */
+  whenMethod: string
+  scopes: string[]
 }
 
 export interface BackfillConfig {
@@ -165,6 +181,7 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
       issuer: process.env.OAUTH_ISSUER || oauthRaw.issuer || `http://127.0.0.1:${config.port}`,
       scopes: oauthRaw.scopes || ['atproto'],
       clients: oauthRaw.clients || [],
+      conditionalScopes: oauthRaw.conditionalScopes || [],
     }
   }
 

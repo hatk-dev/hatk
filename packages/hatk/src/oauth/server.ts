@@ -16,6 +16,7 @@ import {
 import { parseDpopProof, createDpopProof } from './dpop.ts'
 import { initSession } from './session.ts'
 import { resolveClient, validateRedirectUri, isLoopbackClient } from './client.ts'
+import { negotiateScope } from './service-describe.ts'
 import {
   discoverAuthServer,
   resolveHandle,
@@ -380,13 +381,19 @@ export async function handlePar(
     const parEndpoint = authServerMetadata.pushed_authorization_request_endpoint || `${pdsAuthServer}/oauth/par`
     const serverDpopProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', parEndpoint)
 
+    const pdsScope = await negotiateScope(
+      config,
+      body.scope || 'atproto transition:generic',
+      pdsEndpoint,
+      isLoopbackClient(config.issuer),
+    )
     const pdsParParams: Record<string, string> = {
       client_id: pdsClientId(config.issuer, config),
       redirect_uri: pdsRedirectUri(config.issuer),
       response_type: 'code',
       code_challenge: pdsCodeChallenge,
       code_challenge_method: 'S256',
-      scope: body.scope || 'atproto transition:generic',
+      scope: pdsScope,
       state: pdsState,
     }
     if (prompt === 'create') {
@@ -543,7 +550,12 @@ export async function serverLogin(
   const parEndpoint = authServerMetadata.pushed_authorization_request_endpoint || `${pdsAuthServer}/oauth/par`
   const serverDpopProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', parEndpoint)
 
-  const scope = config.scopes?.join(' ') || 'atproto transition:generic'
+  const scope = await negotiateScope(
+    config,
+    config.scopes?.join(' ') || 'atproto transition:generic',
+    pdsEndpoint,
+    isLoopbackClient(config.issuer),
+  )
   const pdsParParams: Record<string, string> = {
     client_id: pdsClientId(config.issuer, config),
     redirect_uri: pdsRedirectUri(config.issuer),
