@@ -65,10 +65,7 @@ async function withDpopRetry(
   }
 
   // Step 3: handle expired PDS token — refresh and retry
-  // The PDS returns 'InvalidToken' or 'ExpiredToken' (AT Proto PascalCase convention)
-  // while the OAuth spec uses 'invalid_token' (RFC 6750 snake_case)
-  const err = result.body.error
-  if (err === 'invalid_token' || err === 'InvalidToken' || err === 'ExpiredToken') {
+  if (isTokenError(result.body.error)) {
     const refreshed = await refreshPdsSession(oauthConfig, session)
     if (refreshed) {
       accessToken = refreshed.accessToken
@@ -78,10 +75,33 @@ async function withDpopRetry(
         nonce = result.headers.get('DPoP-Nonce') || undefined
         if (nonce) result = await doFetch(accessToken, nonce)
       }
+
+      // A token minted seconds ago cannot be expired, so a second refusal is
+      // about the grant rather than the token: the session was authorized
+      // before the app asked for the scope this call needs, and no number of
+      // refreshes will add it. Read as a scope problem it becomes the prompt to
+      // authorize again; read as expiry it was an opaque 500.
+      //
+      // Not every PDS names this case. The reference answers ScopeMissingError,
+      // handled above; pds.js answers InvalidToken for a scope its permissioned
+      // space endpoints refuse, which is indistinguishable from expiry until
+      // the refresh rules expiry out.
+      if (!result.ok && isTokenError(result.body.error)) {
+        await deleteSession(session.did)
+        throw new ScopeMissingProxyError()
+      }
     }
   }
 
   return result
+}
+
+/**
+ * The PDS returns 'InvalidToken' or 'ExpiredToken' (AT Proto PascalCase
+ * convention) while the OAuth spec uses 'invalid_token' (RFC 6750 snake_case).
+ */
+function isTokenError(error: unknown): boolean {
+  return error === 'invalid_token' || error === 'InvalidToken' || error === 'ExpiredToken'
 }
 
 async function proxyToPds(
