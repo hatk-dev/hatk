@@ -41,7 +41,8 @@ import { getLexicon } from './database/schema.ts'
 import type { Row, FlatRow } from './lex-types.ts'
 import { createHmac } from 'node:crypto'
 import type { OAuthConfig, CdnConfig } from './config.ts'
-import { pdsCreateRecord, pdsPutRecord, pdsDeleteRecord, pdsApplyWrites } from './pds-proxy.ts'
+import { pdsCreateRecord, pdsPutRecord, pdsDeleteRecord, pdsApplyWrites, pdsXrpc } from './pds-proxy.ts'
+import type { PdsXrpcOptions } from './pds-proxy.ts'
 
 export type { Row, FlatRow }
 
@@ -121,6 +122,12 @@ export interface XrpcContext<
       value?: Record<string, unknown>
     }>,
   ) => Promise<{ results?: Array<{ $type: string; uri?: string; cid?: string }> }>
+  /**
+   * Call any XRPC method on the viewer's PDS with their session. The escape
+   * hatch beside the record helpers above: nothing is validated or indexed, and
+   * the granted scopes still apply. See {@link pdsXrpc}.
+   */
+  pds: (nsid: string, options?: PdsXrpcOptions) => Promise<Record<string, unknown>>
 }
 
 /** Internal representation of a loaded XRPC handler module. */
@@ -229,6 +236,11 @@ export function buildXrpcContext(
       if (!_oauthConfig) throw new Error('No OAuth config — cannot write to PDS')
       if (!viewer) throw new Error('Authentication required to write records')
       return pdsApplyWrites(_oauthConfig, viewer, { writes })
+    },
+    pds: async (nsid, options) => {
+      if (!_oauthConfig) throw new Error('No OAuth config — cannot call the PDS')
+      if (!viewer) throw new Error('Authentication required to call the PDS')
+      return pdsXrpc(_oauthConfig, viewer, nsid, options)
     },
   }
 }

@@ -97,14 +97,17 @@ async function proxyToPds(
 
   return withDpopRetry(oauthConfig, session, async (token, nonce) => {
     const proof = await createDpopProof(privateJwk, publicJwk, method, pdsUrl, token, nonce)
+    // A GET carries no body, and sending a JSON content-type without one makes
+    // some servers try to parse it. Queries reach here through pdsXrpc.
+    const hasBody = method !== 'GET' && body !== undefined
     const res = await fetch(pdsUrl, {
       method,
       headers: {
-        'Content-Type': 'application/json',
+        ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
         Authorization: `DPoP ${token}`,
         DPoP: proof,
       },
-      body: JSON.stringify(body),
+      body: hasBody ? JSON.stringify(body) : undefined,
     })
     const resBody: Record<string, unknown> = await res.json().catch(() => ({}))
     return { ok: res.ok, status: res.status, body: resBody, headers: res.headers }
@@ -141,6 +144,53 @@ async function proxyToPdsRaw(
 }
 
 // --- High-level proxy functions ---
+
+export interface PdsXrpcOptions {
+  /** Defaults to GET, matching the XRPC convention for queries. */
+  method?: 'GET' | 'POST'
+  /** Query parameters. Undefined values are dropped; arrays repeat the key. */
+  params?: Record<string, string | number | boolean | string[] | undefined>
+  /** JSON request body. Ignored for GET. */
+  body?: unknown
+}
+
+/**
+ * Call any XRPC method on the user's PDS with their session.
+ *
+ * The escape hatch beside the typed record helpers above, for methods hatk has
+ * no opinion about — `com.atproto.space.*` and the rest of proposal 0016 being
+ * the case it was added for. Nothing is validated or indexed: the response is
+ * whatever the PDS sent, and it is the caller's job to know its shape.
+ *
+ * The session's granted scopes still apply. A method the user never authorized
+ * comes back as a 403 from the PDS, not from here.
+ */
+export async function pdsXrpc(
+  oauthConfig: OAuthConfig,
+  viewer: { did: string },
+  nsid: string,
+  options: PdsXrpcOptions = {},
+): Promise<Record<string, unknown>> {
+  const session = await getSession(viewer.did)
+  if (!session) throw new ProxyError(401, 'No PDS session for user')
+
+  const method = options.method ?? 'GET'
+  const url = new URL(`${session.pds_endpoint}/xrpc/${nsid}`)
+  for (const [key, value] of Object.entries(options.params ?? {})) {
+    if (value === undefined) continue
+    if (Array.isArray(value)) {
+      for (const v of value) url.searchParams.append(key, String(v))
+    } else {
+      url.searchParams.append(key, String(value))
+    }
+  }
+
+  const res = await proxyToPds(oauthConfig, session, method, url.toString(), options.body)
+  if (!res.ok) {
+    throw new ProxyError(res.status, String(res.body.error || `${nsid} failed`))
+  }
+  return res.body
+}
 
 export async function pdsCreateRecord(
   oauthConfig: OAuthConfig,
