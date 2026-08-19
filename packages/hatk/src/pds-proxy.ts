@@ -50,7 +50,7 @@ async function withDpopRetry(
   let nonce: string | undefined
 
   // Step 1: handle DPoP nonce requirement
-  if (result.body.error === 'use_dpop_nonce') {
+  if (isNonceChallenge(result)) {
     nonce = result.headers.get('DPoP-Nonce') || undefined
     if (nonce) {
       result = await doFetch(accessToken, nonce)
@@ -71,7 +71,7 @@ async function withDpopRetry(
       accessToken = refreshed.accessToken
       result = await doFetch(accessToken, nonce)
       if (result.ok) return result
-      if (result.body.error === 'use_dpop_nonce') {
+      if (isNonceChallenge(result)) {
         nonce = result.headers.get('DPoP-Nonce') || undefined
         if (nonce) result = await doFetch(accessToken, nonce)
       }
@@ -94,6 +94,31 @@ async function withDpopRetry(
   }
 
   return result
+}
+
+/**
+ * Is this refusal a DPoP nonce challenge — a request to retry, not a dead token?
+ *
+ * A nonce challenge is the one 401 that costs nothing to satisfy: the server
+ * hands back the nonce it wants in the same response. Miss it and the failure
+ * falls through to the token-error branch below, which refreshes, replays the
+ * identical proof, is refused identically, and drops the user's session — a
+ * re-authorization to fix a header.
+ *
+ * So it is read the way RFC 9449 §8 writes it, from
+ * `WWW-Authenticate: DPoP error="use_dpop_nonce"`, and only then from the body.
+ * The body is not always available to read: zds sends that header but an
+ * `InvalidToken` body, because its XRPC error handler overwrites the
+ * `UseDpopNonce` one on the way out.
+ *
+ * The `DPoP-Nonce` header alone is not the signal. A server may attach one to
+ * every 401 it sends, including 401s about a genuinely invalid token, and
+ * treating those as challenges would replay every dead token once for nothing.
+ */
+function isNonceChallenge(result: PdsProxyResult): boolean {
+  const error = result.body.error
+  if (error === 'use_dpop_nonce' || error === 'UseDpopNonce') return true
+  return result.status === 401 && (result.headers.get('WWW-Authenticate') ?? '').includes('use_dpop_nonce')
 }
 
 /**
