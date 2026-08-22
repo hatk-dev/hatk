@@ -62,8 +62,22 @@ export interface ApnsPushConfig {
   production?: boolean // defaults to true; set false for sandbox
 }
 
+/**
+ * Firebase Cloud Messaging, for Android devices.
+ *
+ * `keyFile` is a Google service-account JSON carrying the Firebase Messaging
+ * role, resolved relative to the config file like the APNs key. The project id
+ * comes from that file unless it's overridden here.
+ */
+export interface FcmPushConfig {
+  keyFile: string
+  projectId?: string
+}
+
+/** Either transport may stand alone; a platform without one simply isn't sent to. */
 export interface PushConfig {
-  apns: ApnsPushConfig
+  apns?: ApnsPushConfig
+  fcm?: FcmPushConfig
 }
 
 export interface CdnConfig {

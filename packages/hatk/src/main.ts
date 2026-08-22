@@ -26,7 +26,7 @@ import { runBackfill } from './backfill.ts'
 import { initOAuth } from './oauth/server.ts'
 import { parseSessionCookie, getSessionCookieName } from './oauth/session.ts'
 import { loadOnLoginHook } from './hooks.ts'
-import { initPush, isPushEnabled } from './push.ts'
+import { enabledPushTransports, initPush, isPushEnabled } from './push.ts'
 import { initSetup } from './setup.ts'
 import { initServer } from './server-init.ts'
 
@@ -156,9 +156,9 @@ if (config.oauth) {
 if (config.push) {
   initPush(config.push, configDir)
   if (isPushEnabled()) {
-    log(`[main] Push initialized (APNs bundle: ${config.push.apns.bundleId})`)
+    log(`[main] Push initialized (${enabledPushTransports().join(', ')})`)
   } else {
-    log(`[main] Push configured but key file missing — push disabled`)
+    log(`[main] Push configured but no usable credential — push disabled`)
   }
 }
 
