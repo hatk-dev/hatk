@@ -38,6 +38,25 @@ const KINDS = ['commit', 'identity'] as const
 
 const RECONNECT_DELAY_MS = 3000
 
+/**
+ * Refused handshakes before the next attempt drops its cursor and probes live.
+ *
+ * Jetstream retains roughly a day of seqs. A cursor older than that is refused
+ * at the handshake — a bare close 1006, no `open`, no message. Nothing arrives,
+ * so {@link getLastSeq} stays null and a plain resume offers the same dead
+ * cursor forever. Restarting does not clear it either: the boot cursor is read
+ * back from the row this stream never got to advance. The stream wedges for
+ * good, while records written through the AppView's own path keep indexing, so
+ * nothing looks broken from inside the app.
+ *
+ * A cursorless probe tells a dead cursor from a dead instance without guessing:
+ * a reachable instance always accepts a cursorless subscribe, so a probe that
+ * opens means the cursor was the problem, and a probe that is refused too means
+ * the instance is down and the cursor is still worth keeping. Probing every Nth
+ * attempt rather than once keeps that true across an outage of any length.
+ */
+export const CURSOR_PROBE_EVERY = 3
+
 export interface JetstreamOpts extends IndexerCoreOpts {
   /** Instance base URL, e.g. `wss://jetstream.us-east.bsky.network`. */
   jetstreamUrl: string
@@ -156,6 +175,28 @@ export function processEvent(payload: any, collections: Set<string>): void {
 }
 
 /**
+ * The cursor a connection attempt should offer, given how many attempts in a
+ * row were refused before it.
+ *
+ * `refusals` counts consecutive closes that never reached `open`; it resets the
+ * moment one does. Every {@link CURSOR_PROBE_EVERY}th refusal answers null so
+ * the attempt subscribes to the live tip instead — see the constant for why
+ * that is the discriminator.
+ *
+ * Exported for tests.
+ */
+export function reconnectCursor(
+  refusals: number,
+  liveSeq: number | null,
+  bootCursor: string | null | undefined,
+): string | null | undefined {
+  const resume = resumeCursor(liveSeq, bootCursor)
+  // Nothing to abandon — an attempt with no cursor is already a live tail.
+  if (!resume) return resume
+  return refusals > 0 && refusals % CURSOR_PROBE_EVERY === 0 ? null : resume
+}
+
+/**
  * Connect to a Jetstream v2 instance and begin indexing.
  *
  * Reconnects on disconnect after {@link RECONNECT_DELAY_MS}, resuming from the
@@ -163,18 +204,26 @@ export function processEvent(payload: any, collections: Set<string>): void {
  * inclusive and delivery is at-least-once, so the event at the resume point
  * arrives again — harmless, since writes upsert on the record's `at://` URI.
  *
+ * `opts.cursor` is the boot-time cursor and stays fixed across reconnects;
+ * what each attempt actually offers comes from {@link reconnectCursor}, so a
+ * live probe can drop the cursor for one attempt without losing it.
+ *
+ * @param refusals Consecutive refused handshakes so far. Internal — reconnects
+ *   pass their own count; callers start at 0.
  * @returns The WebSocket connection (for shutdown coordination)
  */
-export async function startJetstreamIndexer(opts: JetstreamOpts): Promise<WebSocket> {
-  const { jetstreamUrl, collections, cursor } = opts
+export async function startJetstreamIndexer(opts: JetstreamOpts, refusals = 0): Promise<WebSocket> {
+  const { jetstreamUrl, collections } = opts
   const pinnedRepos = opts.pinnedRepos || null
 
   assertFilterLimits(collections, pinnedRepos)
   setCursorKey('jetstream')
   await configureIndexer(opts)
 
+  const cursor = reconnectCursor(refusals, getLastSeq(), opts.cursor)
   const wsUrl = buildSubscribeUrl(jetstreamUrl, collections, pinnedRepos, cursor)
   if (cursor) log(`[jetstream] Resuming from cursor ${cursor}`)
+  else if (refusals > 0) log('[jetstream] Probing the live tip — the resume cursor keeps being refused')
   log(`[jetstream] Connecting to ${jetstreamUrl} (${collections.size} collections)...`)
 
   // The lexicon default is identical framing, so an empty subprotocol echo is
@@ -192,15 +241,32 @@ export async function startJetstreamIndexer(opts: JetstreamOpts): Promise<WebSoc
     }
   })
 
-  ws.addEventListener('open', () => log('[jetstream] Connected'))
-  ws.addEventListener('close', () => {
-    log(`[jetstream] Disconnected, reconnecting in ${RECONNECT_DELAY_MS / 1000}s...`)
-    // Read the seq at close time, not connect time — reusing the boot cursor on
-    // every reconnect would replay everything received since the process started.
-    setTimeout(
-      () => startJetstreamIndexer({ ...opts, cursor: resumeCursor(getLastSeq(), opts.cursor) }),
-      RECONNECT_DELAY_MS,
-    )
+  let opened = false
+  ws.addEventListener('open', () => {
+    opened = true
+    log('[jetstream] Connected')
+  })
+  ws.addEventListener('close', (event: CloseEvent) => {
+    // A close that never reached `open` is a refused handshake, not a dropped
+    // stream, and the two want opposite things from the cursor.
+    const nextRefusals = opened ? 0 : refusals + 1
+    if (opened) {
+      log(`[jetstream] Disconnected (${event.code}), reconnecting in ${RECONNECT_DELAY_MS / 1000}s...`)
+    } else {
+      log(
+        `[jetstream] Handshake refused (${event.code}${event.reason ? `: ${event.reason}` : ''}) ` +
+          `x${nextRefusals}, retrying in ${RECONNECT_DELAY_MS / 1000}s...`,
+      )
+      emit('jetstream', 'handshake_refused', {
+        code: event.code,
+        reason: event.reason || undefined,
+        cursor: cursor ?? null,
+        refusals: nextRefusals,
+      })
+    }
+    // `opts` goes back unchanged so the boot cursor survives a probe; the seq
+    // is read at reconnect time, not here, so a resume uses everything seen.
+    setTimeout(() => startJetstreamIndexer(opts, nextRefusals), RECONNECT_DELAY_MS)
   })
 
   return ws

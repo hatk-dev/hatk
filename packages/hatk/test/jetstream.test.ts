@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { setPrivateCollections } from '../src/private-collections.ts'
 import {
+  CURSOR_PROBE_EVERY,
   MAX_COLLECTIONS,
   MAX_DIDS,
   assertFilterLimits,
   buildSubscribeUrl,
   commitToOp,
   processEvent,
+  reconnectCursor,
 } from '../src/jetstream.ts'
 import { applyCommit, handleIdentityEvent, noteSeq } from '../src/indexer.ts'
 
@@ -190,4 +192,50 @@ test('processEvent survives an unrecognised payload shape', () => {
   expect(() => processEvent({}, COLLECTIONS)).not.toThrow()
   expect(() => processEvent(null, COLLECTIONS)).not.toThrow()
   expect(applyCommit).not.toHaveBeenCalled()
+})
+
+// --- reconnectCursor -------------------------------------------------------
+
+test('reconnectCursor offers the boot cursor on the first attempt', () => {
+  expect(reconnectCursor(0, null, '24943722777')).toBe('24943722777')
+})
+
+test('reconnectCursor prefers the live seq once events have arrived', () => {
+  expect(reconnectCursor(0, 25087768193, '24943722777')).toBe('25087768193')
+})
+
+test('reconnectCursor keeps offering the cursor while a refusal could still be the network', () => {
+  for (let refusals = 1; refusals < CURSOR_PROBE_EVERY; refusals++) {
+    expect(reconnectCursor(refusals, null, '24943722777')).toBe('24943722777')
+  }
+})
+
+test('reconnectCursor drops the cursor to probe live once refusals reach the threshold', () => {
+  // The wedge this exists for: a cursor past Jetstream's ~1 day of retention is
+  // refused at the handshake, so no seq is ever seen and the plain resume would
+  // offer the same dead cursor forever.
+  expect(reconnectCursor(CURSOR_PROBE_EVERY, null, '24943722777')).toBeNull()
+})
+
+test('reconnectCursor goes back to the cursor after a probe is refused too', () => {
+  // A refused probe means the instance is down, not that the cursor is stale —
+  // and a cursor worth resuming from should survive an outage.
+  expect(reconnectCursor(CURSOR_PROBE_EVERY + 1, null, '24943722777')).toBe('24943722777')
+})
+
+test('reconnectCursor probes again every Nth refusal, however long the outage', () => {
+  expect(reconnectCursor(CURSOR_PROBE_EVERY * 2, null, '24943722777')).toBeNull()
+  expect(reconnectCursor(CURSOR_PROBE_EVERY * 7, null, '24943722777')).toBeNull()
+})
+
+test('reconnectCursor probes away a stale live seq as well as a stale boot cursor', () => {
+  // An AppView down longer than the retention window resumes from a seq it did
+  // see, which is just as dead as the stored one.
+  expect(reconnectCursor(CURSOR_PROBE_EVERY, 24943722777, '100')).toBeNull()
+})
+
+test('reconnectCursor leaves an already-live tail alone', () => {
+  // Nothing to abandon, so refusals mean the instance is unreachable.
+  expect(reconnectCursor(CURSOR_PROBE_EVERY, null, null)).toBeNull()
+  expect(reconnectCursor(CURSOR_PROBE_EVERY, null, undefined)).toBeUndefined()
 })
