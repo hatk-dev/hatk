@@ -21,9 +21,15 @@ interface StubbedSend {
   body?: unknown
 }
 
+/** One intercepted fetch: where it went, and what it carried. */
+interface FetchCall {
+  url: string
+  init?: RequestInit
+}
+
 /** Answer the token exchange, then hand out the queued send responses in order. */
 function stubFetch(sends: StubbedSend[] = [{ status: 200, body: { name: 'projects/grain-test/messages/1' } }]) {
-  const calls: { url: string; init?: RequestInit }[] = []
+  const calls: FetchCall[] = []
   let i = 0
   vi.stubGlobal(
     'fetch',
@@ -46,11 +52,11 @@ function stubFetch(sends: StubbedSend[] = [{ status: 200, body: { name: 'project
   return calls
 }
 
-const sendCalls = (calls: { url: string }[]) => calls.filter((c) => c.url.includes('messages:send'))
-const tokenCalls = (calls: { url: string }[]) => calls.filter((c) => c.url === TOKEN_URI)
+const sendCalls = (calls: FetchCall[]) => calls.filter((c) => c.url.includes('messages:send'))
+const tokenCalls = (calls: FetchCall[]) => calls.filter((c) => c.url === TOKEN_URI)
 
 /** The `message` object a messages:send call carried. */
-function messageOf(call: { init?: RequestInit }): any {
+function messageOf(call: FetchCall): any {
   return JSON.parse(String(call.init?.body)).message
 }
 
@@ -98,7 +104,7 @@ test('an Android device is sent a data-only message it can route itself', async 
   await vi.waitFor(() => expect(sendCalls(calls)).toHaveLength(1))
   const call = sendCalls(calls)[0]
   expect(call.url).toBe('https://fcm.googleapis.com/v1/projects/grain-test/messages:send')
-  expect((call.init?.headers as Record<string, string>).authorization).toBe('Bearer ya29.test')
+  expect(new Headers(call.init?.headers).get('authorization')).toBe('Bearer ya29.test')
 
   const message = messageOf(call)
   expect(message.token).toBe('android-token')
