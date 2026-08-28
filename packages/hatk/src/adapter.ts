@@ -62,6 +62,7 @@ export async function sendResponse(res: ServerResponse, response: Response): Pro
 /** Routes handled by hatk — everything else can fall through to a framework handler. */
 export const HATK_ROUTES = [
   '/xrpc/',
+  '/blob/', // dev image proxy — see blobUrl in xrpc.ts
   '/oauth/',
   '/oauth-client-metadata.json',
   '/.well-known/oauth-authorization-server',

@@ -32,7 +32,8 @@ import {
   getOpenReportCount,
 } from './database/db.ts'
 import { executeFeed, listFeeds } from './feeds.ts'
-import { executeXrpc, InvalidRequestError, NotFoundError, registerCoreXrpcHandler } from './xrpc.ts'
+import { executeXrpc, InvalidRequestError, NotFoundError, registerCoreXrpcHandler, isLocalRelay } from './xrpc.ts'
+import { pdsFor } from './backfill.ts'
 import { resolveRecords } from './hydrate.ts'
 import { handleOpengraphRequest, buildOgMeta } from './opengraph.ts'
 import { getLabelDefinitions, rescanLabels } from './labels.ts'
@@ -1333,6 +1334,31 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
             return withCors(jsonError(err.status, err.errorName || err.message, acceptEncoding))
           }
           throw err
+        }
+      }
+
+      // GET /blob/:did/:cid — dev-only image proxy (see blobUrl in xrpc.ts).
+      // A PDS serves getBlob as an attachment with nosniff, which a browser
+      // refuses to render in <img>; re-serving it from here drops that and
+      // lets one origin cover repos on any number of local PDSes.
+      if (url.pathname.startsWith('/blob/') && isLocalRelay()) {
+        const [did, cid] = url.pathname.slice('/blob/'.length).split('/')
+        if (!did || !cid) return withCors(jsonError(400, 'Expected /blob/:did/:cid', acceptEncoding))
+        try {
+          const pds = await pdsFor(did)
+          const upstream = await fetch(`${pds}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(did)}&cid=${encodeURIComponent(cid)}`)
+          if (!upstream.ok) return withCors(jsonError(upstream.status, 'Blob not found', acceptEncoding))
+          return withCors(
+            new Response(upstream.body, {
+              status: 200,
+              headers: {
+                'content-type': upstream.headers.get('content-type') || 'application/octet-stream',
+                'cache-control': 'public, max-age=3600',
+              },
+            }),
+          )
+        } catch (err: any) {
+          return withCors(jsonError(502, `Blob fetch failed: ${err.message}`, acceptEncoding))
         }
       }
 

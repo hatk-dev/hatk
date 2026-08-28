@@ -146,6 +146,16 @@ let _relayUrl = ''
 let _cdn: { url: string; key: Buffer; salt: Buffer } | null = null
 
 /** Set the relay URL used for blob URL generation. Called once during boot. */
+/** True when the relay is a loopback URL — a dev PDS rather than the network. */
+export function isLocalRelay(): boolean {
+  try {
+    const host = new URL(_relayUrl).hostname
+    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1' || host.endsWith('.localhost')
+  } catch {
+    return false
+  }
+}
+
 export function configureRelay(relay: string) {
   _relayUrl = relay
 }
@@ -180,8 +190,11 @@ export function blobUrl(did: string, ref: unknown, preset: string = 'avatar'): s
   if (!ref) return undefined
   const p = typeof ref === 'string' ? JSON.parse(ref) : ref
   if (!p?.ref?.$link) return undefined
-  if (_relayUrl.includes('localhost:2583')) {
-    return `http://localhost:2583/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${p.ref.$link}`
+  // A local network has no image CDN. Serve blobs through the dev proxy
+  // (see /blob/ in server.ts), which fetches from each repo's own PDS — on a
+  // multi-PDS dev stack the repos are not all behind the relay being tailed.
+  if (isLocalRelay()) {
+    return `/blob/${did}/${p.ref.$link}`
   }
   if (_cdn) {
     const path = `/${preset}/plain/${did}/${p.ref.$link}`
