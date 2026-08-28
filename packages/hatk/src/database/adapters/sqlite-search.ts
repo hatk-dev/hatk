@@ -8,6 +8,9 @@ import type { DatabasePort } from '../ports.ts'
  * references the shadow data table. Updates happen incrementally per-record
  * instead of dropping and rebuilding the entire index.
  */
+/** Quote an identifier. Lexicon property names are SQL-agnostic (`group`, `order`, `from` are all legal), so every column is quoted. */
+const q = (name: string) => `"${name.replace(/"/g, '""')}"`
+
 export class SQLiteSearchPort implements SearchPort {
   constructor(private port: DatabasePort) {}
 
@@ -28,14 +31,14 @@ export class SQLiteSearchPort implements SearchPort {
     await this.port.execute(`CREATE UNIQUE INDEX IF NOT EXISTS ${shadowTable}_uri ON ${shadowTable}(uri)`, [])
 
     // Create FTS5 virtual table with external content pointing to shadow table
-    const colList = searchColumns.join(', ')
+    const colList = searchColumns.map(q).join(', ')
     await this.port.execute(
       `CREATE VIRTUAL TABLE ${shadowTable}_fts USING fts5(uri UNINDEXED, ${colList}, content=${shadowTable}, content_rowid=rowid, tokenize='porter unicode61 remove_diacritics 2')`,
       [],
     )
 
     // Populate FTS from shadow table
-    const selectCols = ['uri', ...searchColumns].map((c) => `COALESCE(CAST(${c} AS TEXT), '')`)
+    const selectCols = ['uri', ...searchColumns].map((c) => `COALESCE(CAST(${q(c)} AS TEXT), '')`)
     await this.port.execute(
       `INSERT INTO ${shadowTable}_fts (uri, ${colList}) SELECT ${selectCols.join(', ')} FROM ${shadowTable}`,
       [],
@@ -48,14 +51,14 @@ export class SQLiteSearchPort implements SearchPort {
     row: Record<string, string | null>,
     searchColumns: string[],
   ): Promise<void> {
-    const colList = searchColumns.join(', ')
+    const colList = searchColumns.map(q).join(', ')
 
     // Remove old FTS entry if record already indexed
     await this._deleteFromFts(shadowTable, uri, searchColumns)
 
     // Upsert shadow table
     const placeholders = searchColumns.map((_, i) => `$${i + 2}`)
-    const setClauses = searchColumns.map((c, i) => `${c} = $${i + 2}`)
+    const setClauses = searchColumns.map((c, i) => `${q(c)} = $${i + 2}`)
     const values = [uri, ...searchColumns.map((c) => row[c] ?? null)]
     await this.port.execute(
       `INSERT INTO ${shadowTable} (uri, ${colList}) VALUES ($1, ${placeholders.join(', ')}) ON CONFLICT(uri) DO UPDATE SET ${setClauses.join(', ')}`,
@@ -80,7 +83,7 @@ export class SQLiteSearchPort implements SearchPort {
   }
 
   private async _deleteFromFts(shadowTable: string, uri: string, searchColumns: string[]): Promise<void> {
-    const colList = searchColumns.join(', ')
+    const colList = searchColumns.map(q).join(', ')
     const rows = await this.port.query(`SELECT rowid, uri, ${colList} FROM ${shadowTable} WHERE uri = $1`, [uri])
     if (rows.length === 0) return
 
