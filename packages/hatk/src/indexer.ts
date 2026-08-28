@@ -471,6 +471,83 @@ export async function startIndexer(opts: IndexerOpts): Promise<WebSocket> {
   return ws
 }
 
+/** Configuration for an auxiliary firehose (see {@link startAuxIndexer}). */
+export interface AuxIndexerOpts {
+  relayUrl: string
+  collections: Set<string>
+  cursor?: string | null
+}
+
+/** The `_cursor` row an auxiliary firehose persists its position to. */
+export function auxCursorKey(relayUrl: string): string {
+  return `relay:${relayUrl}`
+}
+
+/**
+ * Tail a second `subscribeRepos` alongside the primary stream.
+ *
+ * A relay is one coordinate system; a PDS tailed directly is another. Nothing
+ * below the wire cares which socket a frame arrived on — `processMessage`
+ * decodes it and `applyCommit` indexes it — so the only state an extra source
+ * needs of its own is a seq and a cursor row. Both live in this closure,
+ * keyed by URL, so an aux stream never advances (or resumes from) the primary
+ * cursor. Use this when a repo's PDS is not behind the relay being tailed —
+ * a self-hosted network, a dev stack with more than one PDS — rather than
+ * standing up a relay just to merge two streams.
+ *
+ * Must be called after {@link configureIndexer} (or {@link startIndexer}),
+ * which owns the shared indexer configuration.
+ */
+export function startAuxIndexer(opts: AuxIndexerOpts): WebSocket {
+  const { relayUrl, collections } = opts
+  const cursorKey = auxCursorKey(relayUrl)
+  let seq: number | null = null
+  let persistedSeq: number | null = null
+
+  const checkpoint = async () => {
+    if (seq === null || seq === persistedSeq) return
+    const s = seq
+    try {
+      await setCursor(cursorKey, String(s))
+      persistedSeq = s
+    } catch (err: any) {
+      emit('indexer', 'cursor_checkpoint_error', { source: relayUrl, cursor_seq: s, error: err.message })
+    }
+  }
+  const timer = setInterval(() => void checkpoint(), CURSOR_CHECKPOINT_INTERVAL_MS)
+  timer.unref?.()
+
+  const connect = (cursor: string | null | undefined): WebSocket => {
+    let wsUrl = `${relayUrl}/xrpc/com.atproto.sync.subscribeRepos`
+    if (cursor) {
+      wsUrl += `?cursor=${cursor}`
+      log(`[indexer:aux] Resuming ${relayUrl} from cursor ${cursor}`)
+    }
+    log(`[indexer:aux] Connecting to ${relayUrl}...`)
+
+    const ws = new WebSocket(wsUrl)
+    ws.binaryType = 'arraybuffer'
+    ws.addEventListener('message', (event: MessageEvent) => {
+      try {
+        if (!(event.data instanceof ArrayBuffer)) return
+        processMessage(new Uint8Array(event.data), collections, (s) => {
+          seq = s
+        })
+      } catch (err: unknown) {
+        emit('indexer', 'decode_error', { source: relayUrl, error: err instanceof Error ? err.message : String(err) })
+      }
+    })
+    ws.addEventListener('open', () => log(`[indexer:aux] Connected to ${relayUrl}`))
+    ws.addEventListener('close', () => {
+      log(`[indexer:aux] Disconnected from ${relayUrl}, reconnecting in 3s...`)
+      setTimeout(() => connect(resumeCursor(seq, opts.cursor)), 3000)
+    })
+    return ws
+  }
+
+  return connect(opts.cursor)
+}
+
 /**
  * Handle a `#identity` firehose event for a DID. The `handle` field on the
  * event is optional per the lexicon, and some emitters omit it (signalling
@@ -626,7 +703,11 @@ export function applyCommit(did: string, ops: CommitOp[]): void {
  * for relevant collections, validates records against lexicons, and routes
  * writes to the buffer (or pending buffer if the DID is mid-backfill).
  */
-export function processMessage(bytes: Uint8Array, collections: Set<string>): void {
+export function processMessage(
+  bytes: Uint8Array,
+  collections: Set<string>,
+  onSeq: (seq: number) => void = noteSeq,
+): void {
   const header = cborDecode(bytes, 0)
   const body = cborDecode(bytes, header.offset)
 
@@ -643,7 +724,7 @@ export function processMessage(bytes: Uint8Array, collections: Set<string>): voi
   if (!body.value.blocks || !body.value.ops) return
 
   // Track sequence number for cursor
-  if (body.value.seq) noteSeq(body.value.seq)
+  if (body.value.seq) onSeq(body.value.seq)
 
   const did = body.value.repo
   if (!did) return

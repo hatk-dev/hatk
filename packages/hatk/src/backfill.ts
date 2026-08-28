@@ -49,6 +49,8 @@ import { getLexiconArray } from './database/schema.ts'
 interface BackfillOpts {
   /** Base URL of the relay or PDS to enumerate repos from (e.g. `wss://bsky.network`). */
   pdsUrl: string
+  /** Further relays/PDSes to enumerate — the HTTP side of `config.relays`. */
+  extraPdsUrls?: string[]
   /** PLC directory URL used to resolve `did:plc` identifiers (e.g. `https://plc.directory`). */
   plcUrl: string
   /** AT Protocol collection NSIDs to index (e.g. `app.bsky.feed.post`). */
@@ -65,6 +67,24 @@ interface PdsResolution {
 }
 
 let plcUrl: string
+
+/** Point DID resolution at a PLC directory. `runBackfill` does this too; call it
+ *  at boot so resolvers that run before the first backfill have somewhere to go. */
+export function configurePlc(url: string): void {
+  plcUrl = url
+}
+
+const pdsCache = new Map<string, string>()
+
+/** A repo's PDS endpoint, cached for the process. For serving blobs, where a
+ *  stale answer after a migration costs one broken image, not a wrong row. */
+export async function pdsFor(did: string): Promise<string> {
+  const cached = pdsCache.get(did)
+  if (cached) return cached
+  const { pds } = await resolvePds(did)
+  pdsCache.set(did, pds)
+  return pds
+}
 
 /**
  * Resolves a DID to its PDS endpoint and handle by fetching the DID document.
@@ -419,24 +439,28 @@ export async function runBackfill(opts: BackfillOpts): Promise<number> {
       dids.add(did)
     }
   } else if (config.fullNetwork) {
-    for await (const repo of listRepos(pdsUrl)) {
-      dids.add(repo.did)
+    for (const url of [pdsUrl, ...(opts.extraPdsUrls ?? [])]) {
+      for await (const repo of listRepos(url)) {
+        dids.add(repo.did)
+      }
     }
   } else {
-    for (const col of signalCollections) {
-      try {
-        for await (const repo of listReposByCollection(pdsUrl, col)) {
-          dids.add(repo.did)
-        }
-      } catch (err: any) {
-        // Fall back to listRepos if listReposByCollection not supported
-        if (err.message.includes('400') || err.message.includes('401') || err.message.includes('501')) {
-          for await (const repo of listRepos(pdsUrl)) {
+    for (const url of [pdsUrl, ...(opts.extraPdsUrls ?? [])]) {
+      for (const col of signalCollections) {
+        try {
+          for await (const repo of listReposByCollection(url, col)) {
             dids.add(repo.did)
           }
-          break
+        } catch (err: any) {
+          // Fall back to listRepos if listReposByCollection not supported
+          if (err.message.includes('400') || err.message.includes('401') || err.message.includes('501')) {
+            for await (const repo of listRepos(url)) {
+              dids.add(repo.did)
+            }
+            break
+          }
+          throw err
         }
-        throw err
       }
     }
   }

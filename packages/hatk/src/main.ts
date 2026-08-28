@@ -14,7 +14,7 @@ import { initFeeds, listFeeds } from './feeds.ts'
 import { initXrpc, listXrpc, configureRelay, configureCdn, configureOAuth, callXrpc } from './xrpc.ts'
 import { initOpengraph } from './opengraph.ts'
 import { initLabels, getLabelDefinitions } from './labels.ts'
-import { startIndexer } from './indexer.ts'
+import { auxCursorKey, startAuxIndexer, startIndexer } from './indexer.ts'
 import { startJetstreamIndexer } from './jetstream.ts'
 import { rebuildAllIndexes } from './database/fts.ts'
 import { createHandler, registerCoreHandlers } from './server.ts'
@@ -22,7 +22,7 @@ import { setPrivateCollections } from './private-collections.ts'
 import { serve } from './adapter.ts'
 import { validateLexicons } from '@bigmoves/lexicon'
 import { relayHttpUrl } from './config.ts'
-import { runBackfill } from './backfill.ts'
+import { runBackfill, configurePlc } from './backfill.ts'
 import { initOAuth } from './oauth/server.ts'
 import { parseSessionCookie, getSessionCookieName } from './oauth/session.ts'
 import { loadOnLoginHook } from './hooks.ts'
@@ -38,6 +38,7 @@ registerHatkResolveHook()
 // 1. Load config
 const config = await loadConfig(configPath)
 configureRelay(config.relay)
+configurePlc(config.plc)
 configureCdn(config.cdn)
 
 // 2. Load lexicons, validate schemas, and discover collections
@@ -167,6 +168,7 @@ const collectionSet = new Set(collections)
 
 const backfillOpts = {
   pdsUrl: relayHttpUrl(config.relay),
+  extraPdsUrls: config.relays.map(relayHttpUrl),
   plcUrl: config.plc,
   collections: collectionSet,
   config: config.backfill,
@@ -254,6 +256,10 @@ if (config.jetstream) {
 } else {
   const cursor = ignoreSavedCursor ? null : await getCursor('relay')
   startIndexer({ ...indexerCore, relayUrl: config.relay, cursor })
+  for (const relayUrl of config.relays) {
+    const auxCursor = ignoreSavedCursor ? null : await getCursor(auxCursorKey(relayUrl))
+    startAuxIndexer({ relayUrl, collections: collectionSet, cursor: auxCursor })
+  }
 }
 
 // 7. Run backfill in background

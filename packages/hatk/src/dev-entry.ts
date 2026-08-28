@@ -14,9 +14,9 @@ import { initOAuth } from './oauth/server.ts'
 import { initServer } from './server-init.ts'
 import { createHandler, registerCoreHandlers } from './server.ts'
 import { setPrivateCollections } from './private-collections.ts'
-import { startIndexer } from './indexer.ts'
+import { auxCursorKey, startAuxIndexer, startIndexer } from './indexer.ts'
 import { getCursor } from './database/db.ts'
-import { runBackfill } from './backfill.ts'
+import { runBackfill, configurePlc } from './backfill.ts'
 import { rebuildAllIndexes } from './database/fts.ts'
 import { relayHttpUrl } from './config.ts'
 import { validateLexicons } from '@bigmoves/lexicon'
@@ -32,6 +32,7 @@ const configDir = dirname(resolve(configPath))
 
 const config = await loadConfig(configPath)
 configureRelay(config.relay)
+configurePlc(config.plc)
 configureCdn(config.cdn)
 
 const lexicons = loadLexicons(resolve(configDir, 'lexicons'))
@@ -101,10 +102,15 @@ startIndexer({
   parallelism: config.backfill.parallelism,
   ftsRebuildInterval: config.ftsRebuildInterval,
 })
+for (const relayUrl of config.relays) {
+  const auxCursor = ignoreSavedCursor ? null : await getCursor(auxCursorKey(relayUrl))
+  startAuxIndexer({ relayUrl, collections: collectionSet, cursor: auxCursor })
+}
 
 // Run backfill in background (no restart in dev mode)
 runBackfill({
   pdsUrl: relayHttpUrl(config.relay),
+  extraPdsUrls: config.relays.map(relayHttpUrl),
   plcUrl: config.plc,
   collections: collectionSet,
   config: config.backfill,
@@ -131,6 +137,6 @@ export { callXrpc } from './xrpc.ts'
 export { parseSessionCookie, getSessionCookieName } from './oauth/session.ts'
 
 log(`[hatk] Dev server ready`)
-log(`  Relay: ${config.relay}`)
+log(`  Relay: ${config.relay}${config.relays.length ? ` (+ ${config.relays.join(', ')})` : ''}`)
 log(`  Database: ${config.database}`)
 log(`  Collections: ${collections.join(', ')}`)

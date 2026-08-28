@@ -94,6 +94,14 @@ export interface JetstreamConfig {
 export interface HatkConfig {
   relay: string
   /**
+   * Additional `subscribeRepos` sources tailed alongside `relay`, each with
+   * its own cursor. For repos whose PDS is not behind the relay — a dev stack
+   * with more than one PDS, a self-hosted network — tail the PDS directly
+   * instead of standing up a relay to merge the streams. Ignored when
+   * `jetstream` is set (Jetstream is the sole source then).
+   */
+  relays: string[]
+  /**
    * Consume the stream from a Jetstream v2 instance instead of `relay`.
    *
    * Jetstream filters server-side and delivers records as decoded JSON, so an
@@ -163,6 +171,7 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
   const database = env.DATABASE || parsed.database
   const config: HatkConfig = {
     relay: env.RELAY || parsed.relay || 'ws://localhost:2583',
+    relays: env.RELAYS ? env.RELAYS.split(',').map((s) => s.trim()).filter(Boolean) : parsed.relays || [],
     jetstream: env.JETSTREAM_URL ? { url: env.JETSTREAM_URL } : parsed.jetstream || null,
     plc: env.DID_PLC_URL || parsed.plc || 'https://plc.directory',
     port: parseInt(env.PORT || '') || parsed.port || 3000,
