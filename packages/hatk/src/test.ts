@@ -13,7 +13,7 @@ import {
 import { initDatabase, querySQL, runSQL, insertRecord, closeDatabase } from './database/db.ts'
 import { createAdapter } from './database/adapter-factory.ts'
 import { SQLITE_DIALECT } from './database/dialect.ts'
-import { setSearchPort } from './database/fts.ts'
+import { rebuildAllIndexes, setSearchPort } from './database/fts.ts'
 import { executeFeed, listFeeds, createPaginate } from './feeds.ts'
 import { executeXrpc, listXrpc, configureRelay, configureCdn } from './xrpc.ts'
 import { initServer } from './server-init.ts'
@@ -108,6 +108,19 @@ export async function createTestContext(): Promise<TestContext> {
   const { adapter, searchPort } = await createAdapter('sqlite')
   setSearchPort(searchPort)
   await initDatabase(adapter, ':memory:', schemas, ddlStatements)
+
+  // Create the FTS shadow tables up front. main.ts does this after backfill;
+  // a test has no backfill, so without it the tables never exist and every
+  // ctx.search() fails its BM25 phase with "no such table: _fts_...". SQLite
+  // has no fuzzy phase to fall back on — jaroWinklerSimilarity is null there —
+  // so the failure surfaces as an empty result rather than an error, which is
+  // why it went unnoticed.
+  //
+  // The indexes are empty at this point; what matters is that this also fills
+  // the search-column cache, which is what lets insertRecord() index each
+  // record as it is written. Records inserted with raw SQL bypass that path and
+  // remain unsearchable, as they do in production.
+  await rebuildAllIndexes(collections)
 
   // Discover views
   discoverViews()
