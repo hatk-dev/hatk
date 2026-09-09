@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS _oauth_sessions (
   did TEXT PRIMARY KEY,
   pds_endpoint TEXT NOT NULL,
   pds_auth_server TEXT,
+  pds_token_endpoint TEXT,
   access_token TEXT NOT NULL,
   refresh_token TEXT,
   dpop_jkt TEXT NOT NULL,
@@ -35,6 +36,8 @@ CREATE TABLE IF NOT EXISTS _oauth_requests (
   dpop_jkt TEXT NOT NULL,
   pds_request_uri TEXT,
   pds_auth_server TEXT,
+  pds_authorization_endpoint TEXT,
+  pds_token_endpoint TEXT,
   pds_endpoint TEXT,
   pds_code_verifier TEXT,
   pds_state TEXT,
@@ -99,6 +102,11 @@ export async function storeOAuthRequest(
     dpopJkt: string
     pdsRequestUri?: string
     pdsAuthServer?: string
+    // Read from the auth server's metadata document, not rebuilt from its
+    // issuer: the authorize redirect and the token exchange happen on later
+    // requests, and re-deriving the paths there would ignore the metadata.
+    pdsAuthorizationEndpoint?: string
+    pdsTokenEndpoint?: string
     pdsEndpoint?: string
     pdsCodeVerifier?: string
     pdsState?: string
@@ -108,8 +116,8 @@ export async function storeOAuthRequest(
   },
 ): Promise<void> {
   await runSQL(
-    `INSERT INTO _oauth_requests (request_uri, client_id, redirect_uri, scope, state, code_challenge, code_challenge_method, dpop_jkt, pds_request_uri, pds_auth_server, pds_endpoint, pds_code_verifier, pds_state, did, login_hint, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+    `INSERT INTO _oauth_requests (request_uri, client_id, redirect_uri, scope, state, code_challenge, code_challenge_method, dpop_jkt, pds_request_uri, pds_auth_server, pds_authorization_endpoint, pds_token_endpoint, pds_endpoint, pds_code_verifier, pds_state, did, login_hint, expires_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
     [
       requestUri,
       data.clientId,
@@ -121,6 +129,8 @@ export async function storeOAuthRequest(
       data.dpopJkt,
       data.pdsRequestUri || null,
       data.pdsAuthServer || null,
+      data.pdsAuthorizationEndpoint || null,
+      data.pdsTokenEndpoint || null,
       data.pdsEndpoint || null,
       data.pdsCodeVerifier || null,
       data.pdsState || null,
@@ -169,6 +179,8 @@ export async function storeSession(
   data: {
     pdsEndpoint: string
     pdsAuthServer?: string
+    /** From the auth server's metadata, so refreshes don't guess the path. */
+    pdsTokenEndpoint?: string
     accessToken: string
     refreshToken?: string
     dpopJkt: string
@@ -176,12 +188,13 @@ export async function storeSession(
   },
 ): Promise<void> {
   await runSQL(
-    `INSERT OR REPLACE INTO _oauth_sessions (did, pds_endpoint, pds_auth_server, access_token, refresh_token, dpop_jkt, token_expires_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,CURRENT_TIMESTAMP)`,
+    `INSERT OR REPLACE INTO _oauth_sessions (did, pds_endpoint, pds_auth_server, pds_token_endpoint, access_token, refresh_token, dpop_jkt, token_expires_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,CURRENT_TIMESTAMP)`,
     [
       did,
       data.pdsEndpoint,
       data.pdsAuthServer || null,
+      data.pdsTokenEndpoint || null,
       data.accessToken,
       data.refreshToken || null,
       data.dpopJkt,

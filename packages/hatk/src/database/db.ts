@@ -183,6 +183,18 @@ export async function initDatabase(
   try {
     await run(`ALTER TABLE _oauth_sessions ADD COLUMN pds_auth_server TEXT`)
   } catch {}
+  // Endpoints read from the auth server's metadata document. NULL on rows that
+  // predate this, and the OAuth code falls back to the paths it used to
+  // hardcode, so sessions authorized before the upgrade still refresh.
+  try {
+    await run(`ALTER TABLE _oauth_sessions ADD COLUMN pds_token_endpoint TEXT`)
+  } catch {}
+  try {
+    await run(`ALTER TABLE _oauth_requests ADD COLUMN pds_authorization_endpoint TEXT`)
+  } catch {}
+  try {
+    await run(`ALTER TABLE _oauth_requests ADD COLUMN pds_token_endpoint TEXT`)
+  } catch {}
 }
 
 interface MigrationChange {

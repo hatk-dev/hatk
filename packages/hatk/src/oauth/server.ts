@@ -22,6 +22,7 @@ import {
   resolveHandle,
   fetchProtectedResourceMetadata,
   fetchAuthServerMetadata,
+  type AuthServerMetadata,
 } from './discovery.ts'
 import {
   getServerKey,
@@ -100,6 +101,57 @@ function pdsClientId(issuer: string, config?: OAuthConfig): string {
     return `http://localhost/?redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}`
   }
   return `${issuer}/oauth-client-metadata.json`
+}
+
+/**
+ * The endpoints a remote auth server advertises, taken from its metadata rather
+ * than rebuilt from its issuer.
+ *
+ * RFC 8414 requires `authorization_endpoint` and `token_endpoint` and the
+ * atproto OAuth profile requires PAR on top of that, so an auth server is free
+ * to serve any of them from a path of its choosing. Concatenating `/oauth/...`
+ * onto the issuer only ever worked because bsky.social and the reference PDS
+ * happen to use those paths.
+ *
+ * PAR keeps its legacy fallback: it was already read from metadata, and the
+ * fallback is what deployments without it have been relying on.
+ */
+function authServerEndpoints(
+  metadata: AuthServerMetadata,
+  authServer: string,
+): { authorizationEndpoint: string; tokenEndpoint: string; parEndpoint: string } {
+  if (!metadata.authorization_endpoint) {
+    throw new Error(`Auth server ${authServer} advertises no authorization_endpoint`)
+  }
+  if (!metadata.token_endpoint) {
+    throw new Error(`Auth server ${authServer} advertises no token_endpoint`)
+  }
+  return {
+    authorizationEndpoint: metadata.authorization_endpoint,
+    tokenEndpoint: metadata.token_endpoint,
+    parEndpoint: metadata.pushed_authorization_request_endpoint || `${authServer}/oauth/par`,
+  }
+}
+
+/**
+ * Endpoint stored on a request or session row, falling back to the path this
+ * used to hardcode. The fallback is for rows written before those columns
+ * existed, not for fresh discovery — a login started after the upgrade always
+ * has the advertised endpoint.
+ */
+function storedEndpoint(stored: string | null | undefined, authServer: string, legacyPath: string): string {
+  return stored || `${authServer}${legacyPath}`
+}
+
+/**
+ * Append query parameters to an endpoint URL. RFC 6749 §3.1 lets an
+ * authorization endpoint carry its own query component, which a bare
+ * `${endpoint}?${params}` would corrupt.
+ */
+function withQuery(endpoint: string, params: URLSearchParams): string {
+  const url = new URL(endpoint)
+  for (const [key, value] of params) url.searchParams.set(key, value)
+  return url.toString()
 }
 
 let serverPrivateJwk: JsonWebKey
@@ -335,6 +387,8 @@ export async function handlePar(
   let did: string | undefined = body.login_hint
   let pdsRequestUri: string | undefined
   let pdsAuthServer: string | undefined
+  let pdsAuthorizationEndpoint: string | undefined
+  let pdsTokenEndpoint: string | undefined
   let pdsCodeVerifier: string | undefined
   let pdsState: string | undefined
   let pdsEndpoint: string | undefined
@@ -371,6 +425,11 @@ export async function handlePar(
 
   if (pdsAuthServer) {
     const authServerMetadata = await fetchAuthServerMetadata(pdsAuthServer)
+    const endpoints = authServerEndpoints(authServerMetadata, pdsAuthServer)
+    // Held for the authorize redirect and the token exchange, which run on
+    // later requests with only this row to go on.
+    pdsAuthorizationEndpoint = endpoints.authorizationEndpoint
+    pdsTokenEndpoint = endpoints.tokenEndpoint
 
     // Create PKCE for our PAR to the PDS
     pdsCodeVerifier = randomToken()
@@ -378,7 +437,7 @@ export async function handlePar(
     pdsState = randomToken() // unique state to correlate callback
 
     // PAR to the PDS
-    const parEndpoint = authServerMetadata.pushed_authorization_request_endpoint || `${pdsAuthServer}/oauth/par`
+    const parEndpoint = endpoints.parEndpoint
     const serverDpopProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', parEndpoint)
 
     const pdsScope = await negotiateScope(
@@ -475,6 +534,8 @@ export async function handlePar(
     dpopJkt: dpop.jkt,
     pdsRequestUri,
     pdsAuthServer,
+    pdsAuthorizationEndpoint,
+    pdsTokenEndpoint,
     pdsEndpoint,
     pdsCodeVerifier,
     pdsState,
@@ -496,7 +557,10 @@ export function buildAuthorizeRedirect(config: OAuthConfig, request: any): strin
     request_uri: request.pds_request_uri,
     client_id: pdsClientId(config.issuer, config),
   })
-  return `${request.pds_auth_server}/oauth/authorize?${params}`
+  return withQuery(
+    storedEndpoint(request.pds_authorization_endpoint, request.pds_auth_server, '/oauth/authorize'),
+    params,
+  )
 }
 
 // --- Server-initiated login (no DPoP required from browser) ---
@@ -540,6 +604,7 @@ export async function serverLogin(
   }
 
   const authServerMetadata = await fetchAuthServerMetadata(pdsAuthServer)
+  const endpoints = authServerEndpoints(authServerMetadata, pdsAuthServer)
 
   // Create PKCE for PAR to PDS
   const pdsCodeVerifier = randomToken()
@@ -547,7 +612,7 @@ export async function serverLogin(
   const pdsState = randomToken()
 
   // PAR to the PDS
-  const parEndpoint = authServerMetadata.pushed_authorization_request_endpoint || `${pdsAuthServer}/oauth/par`
+  const parEndpoint = endpoints.parEndpoint
   const serverDpopProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', parEndpoint)
 
   const scope = await negotiateScope(
@@ -630,6 +695,8 @@ export async function serverLogin(
     dpopJkt: serverJkt,
     pdsRequestUri,
     pdsAuthServer,
+    pdsAuthorizationEndpoint: endpoints.authorizationEndpoint,
+    pdsTokenEndpoint: endpoints.tokenEndpoint,
     pdsEndpoint,
     pdsCodeVerifier,
     pdsState,
@@ -643,7 +710,7 @@ export async function serverLogin(
     request_uri: pdsRequestUri!,
     client_id: pdsClientId(config.issuer, config),
   })
-  return `${pdsAuthServer}/oauth/authorize?${params}`
+  return withQuery(endpoints.authorizationEndpoint, params)
 }
 
 // --- OAuth Callback (PDS redirects here) ---
@@ -678,7 +745,7 @@ export async function handleCallback(
   if (!request) throw new Error('No matching authorization request found')
 
   // Exchange code at PDS token endpoint
-  const tokenEndpoint = `${request.pds_auth_server}/oauth/token`
+  const tokenEndpoint = storedEndpoint(request.pds_token_endpoint, request.pds_auth_server, '/oauth/token')
   const serverDpopProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', tokenEndpoint)
 
   const tokenBody = new URLSearchParams(
@@ -759,6 +826,7 @@ export async function handleCallback(
   await storeSession(did, {
     pdsEndpoint: request.pds_endpoint,
     pdsAuthServer: request.pds_auth_server,
+    pdsTokenEndpoint: tokenEndpoint,
     accessToken: tokenData.access_token,
     refreshToken: tokenData.refresh_token,
     dpopJkt: serverJkt,
@@ -997,12 +1065,25 @@ async function handleRefreshTokenGrant(
 
 export async function refreshPdsSession(
   config: OAuthConfig,
-  session: { did: string; pds_endpoint: string; pds_auth_server?: string; refresh_token: string; dpop_jkt: string },
+  session: {
+    did: string
+    pds_endpoint: string
+    pds_auth_server?: string
+    pds_token_endpoint?: string
+    refresh_token: string
+    dpop_jkt: string
+  },
 ): Promise<{ accessToken: string; refreshToken?: string; expiresAt?: number } | null> {
   if (!session.refresh_token) return null
 
-  // Use auth server for token endpoint (falls back to pds_endpoint for sessions created before this fix)
-  const tokenEndpoint = `${session.pds_auth_server || session.pds_endpoint}/oauth/token`
+  // Prefer the endpoint the auth server advertised when this session was
+  // authorized. Sessions predating that column fall back to the auth server
+  // (or, older still, the PDS) with the path this used to hardcode.
+  const tokenEndpoint = storedEndpoint(
+    session.pds_token_endpoint,
+    session.pds_auth_server || session.pds_endpoint,
+    '/oauth/token',
+  )
   const clientId = pdsClientId(config.issuer, config)
   const dpopProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', tokenEndpoint)
 
@@ -1064,6 +1145,7 @@ export async function refreshPdsSession(
   await storeSession(session.did, {
     pdsEndpoint: session.pds_endpoint,
     pdsAuthServer: session.pds_auth_server,
+    pdsTokenEndpoint: session.pds_token_endpoint,
     accessToken: tokenData.access_token,
     refreshToken: tokenData.refresh_token || session.refresh_token,
     dpopJkt: session.dpop_jkt,
