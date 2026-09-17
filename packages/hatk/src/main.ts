@@ -20,7 +20,7 @@ import { initFeeds, listFeeds } from './feeds.ts'
 import { initXrpc, listXrpc, configureRelay, configureCdn, configureOAuth, callXrpc } from './xrpc.ts'
 import { initOpengraph } from './opengraph.ts'
 import { initLabels, getLabelDefinitions } from './labels.ts'
-import { auxCursorKey, startAuxIndexer, startIndexer, sweepReferences } from './indexer.ts'
+import { auxCursorKey, jetstreamCursorKey, startAuxIndexer, startIndexer, sweepReferences } from './indexer.ts'
 import { startJetstreamIndexer } from './jetstream.ts'
 import { rebuildAllIndexes } from './database/fts.ts'
 import { createHandler, registerCoreHandlers } from './server.ts'
@@ -271,7 +271,7 @@ const indexerCore = {
 }
 
 if (config.jetstream) {
-  const cursor = ignoreSavedCursor ? null : await getCursor('jetstream')
+  const cursor = ignoreSavedCursor ? null : await getCursor(jetstreamCursorKey(config.jetstream.url))
   startJetstreamIndexer({ ...indexerCore, jetstreamUrl: config.jetstream.url, cursor })
 } else {
   const cursor = ignoreSavedCursor ? null : await getCursor('relay')

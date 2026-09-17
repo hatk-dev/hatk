@@ -14,7 +14,13 @@ import { storeLexicons } from '../src/database/schema.ts'
 import { setPrivateCollections } from '../src/private-collections.ts'
 import { getCursor, querySQL, runSQL, setRepoStatus } from '../src/database/db.ts'
 import { emit } from '../src/logger.ts'
-import { _flushForTests, _resetCursorStateForTests, checkpointCursor, configureIndexer } from '../src/indexer.ts'
+import {
+  _flushForTests,
+  _resetCursorStateForTests,
+  checkpointCursor,
+  configureIndexer,
+  jetstreamCursorKey,
+} from '../src/indexer.ts'
 import { CURSOR_PROBE_EVERY, MAX_COLLECTIONS, startJetstreamIndexer } from '../src/jetstream.ts'
 import { jetstreamCommitFrame } from './firehose-frame.ts'
 
@@ -153,8 +159,49 @@ test('an event envelope off the socket is unwrapped and indexed', async () => {
   expect(await rkeys()).toEqual(['j1'])
   // The seq rides the same cursor machinery as the relay, under its own key.
   await checkpointCursor()
-  expect(await getCursor('jetstream')).toBe('24664288881')
+  expect(await getCursor(jetstreamCursorKey(JETSTREAM))).toBe('24664288881')
   expect(await getCursor('relay')).toBeNull()
+})
+
+test('two instances keep their own cursors', async () => {
+  // A Jetstream seq addresses a position on the instance that issued it and
+  // nothing on any other. Sharing one row across instances hands a number from
+  // somewhere else to whichever is pointed at next — no error, no refusal, and
+  // the stream resumes past whatever fell in between. Found that way: an
+  // instance went to 503, the deployment moved region, and a day of records
+  // were skipped in silence.
+  const other = 'wss://jetstream.elsewhere.invalid'
+  const ws = (await startJetstreamIndexer(baseOpts)) as unknown as FakeWebSocket
+  ws.emitEvent('open')
+  ws.emitEvent('message', {
+    data: jetstreamCommitFrame(DID, 11111111111, {
+      action: 'create',
+      collection: PUBLIC_COLLECTION,
+      rkey: 'from-first',
+      record: { $type: PUBLIC_COLLECTION, text: 'first' },
+    }),
+  })
+  await _flushForTests()
+  await checkpointCursor()
+
+  const second = (await startJetstreamIndexer({
+    ...baseOpts,
+    jetstreamUrl: other,
+  })) as unknown as FakeWebSocket
+  second.emitEvent('open')
+  second.emitEvent('message', {
+    data: jetstreamCommitFrame(DID, 22222222222, {
+      action: 'create',
+      collection: PUBLIC_COLLECTION,
+      rkey: 'from-second',
+      record: { $type: PUBLIC_COLLECTION, text: 'second' },
+    }),
+  })
+  await _flushForTests()
+  await checkpointCursor()
+
+  expect(await getCursor(jetstreamCursorKey(JETSTREAM))).toBe('11111111111')
+  expect(await getCursor(jetstreamCursorKey(other))).toBe('22222222222')
 })
 
 test('a frame with no payload is ignored', async () => {

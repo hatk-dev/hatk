@@ -21,6 +21,7 @@ import {
   getLastSeq,
   handleIdentityEvent,
   isIndexableCollection,
+  jetstreamCursorKey,
   noteSeq,
   resumeCursor,
   setCursorKey,
@@ -217,7 +218,7 @@ export async function startJetstreamIndexer(opts: JetstreamOpts, refusals = 0): 
   const pinnedRepos = opts.pinnedRepos || null
 
   assertFilterLimits(collections, pinnedRepos)
-  setCursorKey('jetstream')
+  setCursorKey(jetstreamCursorKey(opts.jetstreamUrl))
   await configureIndexer(opts)
 
   const cursor = reconnectCursor(refusals, getLastSeq(), opts.cursor)

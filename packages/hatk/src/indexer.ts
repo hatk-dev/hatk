@@ -67,10 +67,12 @@ let cursorCheckpointTimer: ReturnType<typeof setInterval> | null = null
  *
  * The relay's `subscribeRepos` seq and Jetstream's seq are different
  * coordinate systems — resuming one from the other's value would either skip
- * a swathe of the stream or replay from a nonsense offset. Each source owns
- * its own key so switching between them (or back) is safe.
+ * a swathe of the stream or replay from a nonsense offset. So is one Jetstream
+ * instance's seq against another's, which is why the key names the instance
+ * rather than the kind. Each source owns its own key so switching between them
+ * (or back) is safe.
  */
-let cursorKey: 'relay' | 'jetstream' = 'relay'
+let cursorKey = 'relay'
 const BATCH_SIZE = 100
 const FLUSH_INTERVAL_MS = 500
 const CURSOR_CHECKPOINT_INTERVAL_MS = 5_000
@@ -276,7 +278,7 @@ export async function checkpointCursor(): Promise<void> {
 }
 
 /** Point cursor persistence at a stream's own `_cursor` row. See {@link cursorKey}. */
-export function setCursorKey(key: 'relay' | 'jetstream'): void {
+export function setCursorKey(key: string): void {
   cursorKey = key
 }
 
@@ -617,6 +619,19 @@ export interface AuxIndexerOpts {
 /** The `_cursor` row an auxiliary firehose persists its position to. */
 export function auxCursorKey(relayUrl: string): string {
   return `relay:${relayUrl}`
+}
+
+/**
+ * The `_cursor` row a Jetstream instance persists its position to.
+ *
+ * Named for the instance, because a Jetstream sequence means nothing on
+ * another one. Pointed at a second instance — a region swap, an outage
+ * worked around — a shared row would hand over a number from somewhere else,
+ * and the stream would resume at whatever that happens to address there:
+ * no error, no refusal, just a silent jump past whatever fell in between.
+ */
+export function jetstreamCursorKey(jetstreamUrl: string): string {
+  return `jetstream:${jetstreamUrl}`
 }
 
 /**
