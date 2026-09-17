@@ -63,6 +63,7 @@ export async function sendResponse(res: ServerResponse, response: Response): Pro
 export const HATK_ROUTES = [
   '/xrpc/',
   '/blob/', // dev image proxy — see blobUrl in xrpc.ts
+  '/space-blob', // a blob inside a permissioned space, served per viewer
   '/oauth/',
   '/oauth-client-metadata.json',
   '/.well-known/oauth-authorization-server',

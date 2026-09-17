@@ -43,6 +43,18 @@ export function withReadableSpaces<T>(spaces: Iterable<string>, fn: () => T): T 
   return store.run(new Set(spaces), fn)
 }
 
+/**
+ * Set the readable spaces for the rest of the current async context.
+ *
+ * `withReadableSpaces` wants a callback, and a request handler is a long body
+ * rather than something to wrap — restructuring it around a closure to hold a
+ * scope would be the tail wagging the dog. A server handler already runs in its
+ * own async context per request, which is the case `enterWith` exists for.
+ */
+export function enterReadableSpaces(spaces: Iterable<string>): void {
+  store.enterWith(new Set(spaces))
+}
+
 /** The spaces this read may serve. Empty outside any scope. */
 export function readableSpaces(): ReadonlySet<string> {
   return store.getStore() ?? EMPTY

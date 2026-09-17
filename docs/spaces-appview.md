@@ -350,22 +350,35 @@ fetched rather than guessed. Writers the authority stops naming have their rows
 dropped, which is what ejection looks like from here. Failures are recorded per
 space so one unreachable host does not stop the sweep.
 
+**Per-viewer reads** (`spaces/viewer.ts`). The scope is established once per
+request, right after the viewer is resolved, and every query below it reads
+that scope. The answer to "may this viewer see this space" is not re-derived
+from indexed access and membership records — that would be a second
+implementation of somebody else's authorization, drifting from it in exactly
+the cases that matter. It is the real check: mint a credential as that viewer
+and take the answer, which is the same call their own browser would make. The
+answer is cached for five minutes, so revocation lags by that much; the space
+host already lets a minted credential outlive a revocation by up to two hours.
+
+**Blobs** (`spaces/blob.ts`, `GET /space-blob`). A space blob has no public URL
+by design, so it is fetched from the repo that holds it with the viewer's own
+credential and served `private, no-store` with a content-type allowlist. A
+viewer who may not read the space gets the same 404 as a missing blob.
+
 ### Known gaps, in the order they matter
 
-- **Nothing opens the scope yet.** `withReadableSpaces` exists and is enforced,
-  but no request handler calls it, so space rows are indexed and served to
-  nobody. The next step is resolving a viewer's readable set — by attempting a
-  credential mint as that viewer and caching the answer — and wrapping the
-  request in it.
+- **No notice receiver**, so a write appears within one reconcile interval
+  rather than within a second. It needs verifying a service-auth JWT signed by
+  the authority's key, which for most `did:plc` accounts is secp256k1 — a curve
+  WebCrypto does not implement and hatk has no library for. That is a
+  dependency decision, not a coding one. The `registered_until` column is
+  already in place for it.
+- **Viewer resolution costs a round trip per followed space** on a cache miss,
+  so an instance following many communities pays for all of them per viewer.
+  Fine for a handful; a narrowing hook is the answer if it stops being.
 - **Raw SQL is opt-in.** A feed or query handler writing its own SQL must apply
   `ctx.spaceFilter`; nothing can inject a predicate into a string somebody else
   wrote. Only matters once `spaces` is configured.
-- **No notice receiver.** Sync is the sweep alone, so a write shows up within
-  one reconcile interval rather than within a second. `registerNotify`,
-  `notifyWrite` and `notifySpaceDeleted` are the next increment, and the
-  `registered_until` column is already there for them.
-- **No blob path.** A space blob has no public URL; it needs a viewer-gated
-  proxy route fetching with a borrowed credential.
 - **No verification.** The alpha signs a commit over the repo's LtHash state and
   a syncer can check it. hatk does not check the equivalent on the firehose path
   either, so checking here alone would claim a guarantee the rest of the index

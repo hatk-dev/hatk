@@ -80,6 +80,9 @@ import {
 } from './pds-proxy.ts'
 import { json, jsonError, cors, withCors, file, notFound } from './response.ts'
 import { collectionFromUri, isPrivateCollection } from './private-collections.ts'
+import { enterReadableSpaces } from './spaces/visibility.ts'
+import { readableSpacesFor } from './spaces/viewer.ts'
+import { parseSpaceBlobRequest, serveSpaceBlob } from './spaces/blob.ts'
 import { serve } from './adapter.ts'
 import { renderPage } from './renderer.ts'
 
@@ -467,6 +470,19 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       try {
         viewer = await parseSessionCookie(request)
       } catch {}
+    }
+
+    // Which permissioned spaces this request may be shown, established once and
+    // read by every query below. A signed-out visitor gets none — there is no
+    // anonymous read path into a space — and so does an instance that indexes
+    // none, which is every deployment that has not configured `spaces`.
+    try {
+      enterReadableSpaces(await readableSpacesFor(oauth, viewer))
+    } catch (err: any) {
+      // Failing to establish the scope must not widen it: the default is to
+      // serve no space row, and that is what an unresolved viewer gets.
+      enterReadableSpaces([])
+      emit('spaces', 'viewer_resolve_error', { error: err.message })
     }
 
     try {
@@ -1393,6 +1409,16 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           }
           throw err
         }
+      }
+
+      // GET /space-blob?space=&repo=&cid= — a blob inside a permissioned space,
+      // fetched with the viewer's own credential. Unlike /blob/ below it is not
+      // dev-only and not cacheable: a space blob has no public URL by design,
+      // and this response belongs to one viewer.
+      if (url.pathname === '/space-blob') {
+        const parsed = parseSpaceBlobRequest(url.searchParams)
+        if (!parsed) return withCors(jsonError(400, 'Expected space, repo and cid', acceptEncoding))
+        return withCors(await serveSpaceBlob(oauth, viewer, parsed))
       }
 
       // GET /blob/:did/:cid — dev-only image proxy (see blobUrl in xrpc.ts).
