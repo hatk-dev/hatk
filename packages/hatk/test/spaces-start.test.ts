@@ -118,3 +118,48 @@ test('stopping ends the sweep', async () => {
   await vi.advanceTimersByTimeAsync(600_000)
   expect(reconcileAll).not.toHaveBeenCalled()
 })
+
+// --- Receiving notices ---
+
+test('with no service DID the instance is addressable by nobody', async () => {
+  // Which is also what makes the inbound notice routes refuse everything.
+  const { spaceServiceId } = await import('../src/spaces/index.ts')
+  startSpaces(base)
+  expect(spaceServiceId()).toBeNull()
+  expect(configureSpaceEngine.mock.calls[0][0].serviceId).toBeUndefined()
+})
+
+test('a service DID gives the instance an identifier notices are addressed to', async () => {
+  const { spaceServiceId } = await import('../src/spaces/index.ts')
+  startSpaces({ ...base, spaces: { ...base.spaces, serviceDid: 'did:web:appview.test' } })
+  expect(spaceServiceId()).toBe('did:web:appview.test#atproto_space_syncer')
+  expect(configureSpaceEngine.mock.calls[0][0].serviceId).toBe('did:web:appview.test#atproto_space_syncer')
+})
+
+test('the service fragment can be named rather than assumed', async () => {
+  const { spaceServiceId } = await import('../src/spaces/index.ts')
+  startSpaces({
+    ...base,
+    spaces: { ...base.spaces, serviceDid: 'did:web:appview.test', serviceFragment: 'hatk' },
+  })
+  expect(spaceServiceId()).toBe('did:web:appview.test#hatk')
+})
+
+test('stopping makes the instance unaddressable again', async () => {
+  const { spaceServiceId } = await import('../src/spaces/index.ts')
+  startSpaces({ ...base, spaces: { ...base.spaces, serviceDid: 'did:web:appview.test' } })
+  stopSpaces()
+  expect(spaceServiceId()).toBeNull()
+})
+
+test('the published document points an authority at this instance and carries no key', async () => {
+  const { spaceDidDocument } = await import('../src/spaces/index.ts')
+  const doc = spaceDidDocument('did:web:appview.test', 'https://appview.test', 'atproto_space_syncer') as any
+  expect(doc.id).toBe('did:web:appview.test')
+  expect(doc.service[0]).toEqual({
+    id: '#atproto_space_syncer',
+    type: 'AtprotoSpaceService',
+    serviceEndpoint: 'https://appview.test',
+  })
+  expect(doc.verificationMethod).toBeUndefined()
+})

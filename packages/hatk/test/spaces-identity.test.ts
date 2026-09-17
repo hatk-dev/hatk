@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 const pdsFor = vi.fn()
 vi.mock('../src/backfill.ts', () => ({ pdsFor: (...args: unknown[]) => pdsFor(...args) }))
 
-const { clearSpaceIdentityCache, configureSpaceIdentity, repoEndpoint, spaceHostEndpoint } =
+const { atprotoSigningKey, clearSpaceIdentityCache, configureSpaceIdentity, repoEndpoint, spaceHostEndpoint } =
   await import('../src/spaces/identity.ts')
 
 const AUTHORITY = 'did:plc:authority'
@@ -90,4 +90,57 @@ test('a writer repo is resolved the way every other repo is', async () => {
   pdsFor.mockResolvedValue('https://alice.test')
   expect(await repoEndpoint('did:plc:alice')).toBe('https://alice.test')
   expect(pdsFor).toHaveBeenCalledWith('did:plc:alice')
+})
+
+// --- Signing keys ---
+
+/** A DID document carrying verification methods rather than services. */
+function keyDoc(methods: { id: string; publicKeyMultibase?: string }[]) {
+  return async () =>
+    Response.json({
+      id: AUTHORITY,
+      verificationMethod: methods.map((m) => ({ ...m, type: 'Multikey', controller: AUTHORITY })),
+    })
+}
+
+// A real secp256k1 key, multicodec-prefixed and base58btc-encoded — the shape
+// a did:plc document actually publishes.
+const SECP_KEY = 'zQ3shokFTS3brHcDQrn82RUDfCZESWL1ZdCEJwekUDPQiYBme'
+
+test('the atproto signing key is read from the DID document', async () => {
+  fetchMock.mockImplementation(keyDoc([{ id: '#atproto', publicKeyMultibase: SECP_KEY }]))
+  const key = await atprotoSigningKey(AUTHORITY)
+  expect(key?.curve).toBe('secp256k1')
+  expect(key?.bytes).toHaveLength(33)
+})
+
+test('a dedicated space-signing key is preferred over the account key', async () => {
+  fetchMock.mockImplementation(
+    keyDoc([
+      { id: '#atproto', publicKeyMultibase: SECP_KEY },
+      { id: '#atproto_space', publicKeyMultibase: SECP_KEY },
+    ]),
+  )
+  expect((await atprotoSigningKey(AUTHORITY))?.curve).toBe('secp256k1')
+})
+
+test('a document with no usable key answers null rather than guessing', async () => {
+  fetchMock.mockImplementation(keyDoc([{ id: '#something-else', publicKeyMultibase: SECP_KEY }]))
+  expect(await atprotoSigningKey(AUTHORITY)).toBeNull()
+})
+
+test('a verification method with no key material answers null', async () => {
+  fetchMock.mockImplementation(keyDoc([{ id: '#atproto' }]))
+  expect(await atprotoSigningKey(AUTHORITY)).toBeNull()
+})
+
+test('an unparseable key answers null rather than throwing', async () => {
+  // A malformed document must fail the notice, not the process.
+  fetchMock.mockImplementation(keyDoc([{ id: '#atproto', publicKeyMultibase: 'not-multibase' }]))
+  expect(await atprotoSigningKey(AUTHORITY)).toBeNull()
+})
+
+test('an unresolvable DID has no key', async () => {
+  fetchMock.mockImplementation(async () => new Response('nope', { status: 404 }))
+  expect(await atprotoSigningKey(AUTHORITY)).toBeNull()
 })

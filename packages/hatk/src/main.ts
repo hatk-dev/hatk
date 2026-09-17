@@ -200,6 +200,18 @@ const handler = createHandler({
   oauth: config.oauth,
   admins: config.admins,
   onResync: runBackfillAndRestart,
+  ...(config.spaces?.serviceDid
+    ? {
+        spaces: {
+          serviceDid: config.spaces.serviceDid,
+          serviceFragment: config.spaces.serviceFragment ?? 'atproto_space_syncer',
+          // The origin an authority delivers to. The OAuth issuer is already
+          // the public origin an operator has had to get right, so it is the
+          // honest default rather than a second thing to configure wrong.
+          ...(config.oauth?.issuer ? { publicUrl: config.oauth.issuer } : {}),
+        },
+      }
+    : {}),
 })
 
 // Expose server bridge on globalThis so SvelteKit SSR can call XRPC handlers directly.

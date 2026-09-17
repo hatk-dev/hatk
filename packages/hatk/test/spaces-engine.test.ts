@@ -23,8 +23,15 @@ vi.mock('../src/oauth/db.ts', async () => {
   return { ...actual, listSessionDids: () => listSessionDids() }
 })
 
-const { collectionsForSpaceType, configureSpaceEngine, reconcileAll, reconcileSpace, unwatchSpace, watchSpace } =
-  await import('../src/spaces/engine.ts')
+const {
+  collectionsForSpaceType,
+  configureSpaceEngine,
+  handleWriteNotice,
+  reconcileAll,
+  reconcileSpace,
+  unwatchSpace,
+  watchSpace,
+} = await import('../src/spaces/engine.ts')
 const { insertRecord, querySQL, runSQL } = await import('../src/database/db.ts')
 const { storeLexicons } = await import('../src/database/schema.ts')
 const { getSpaceRepo, getSpaceWatch, listSpaceRepos, putSpaceRepo, putSpaceWatch } =
@@ -579,4 +586,111 @@ test('a synced record is stored under its space and served only in scope', async
   const row = await withReadableSpaces([SPACE_URI], () => getRecordByUri(uri))
   expect(row?.space).toBe(SPACE_URI)
   expect(row?.did).toBe(ALICE)
+})
+
+// --- Write notices ---
+
+const SERVICE_ID = 'did:web:appview.test#atproto_space_syncer'
+
+function withService() {
+  configureSpaceEngine({
+    oauth: oauth as any,
+    types: new Set([SPACE_TYPE]),
+    collections: new Set([PUBLIC_COLLECTION, PRIVATE_COLLECTION]),
+    serviceId: SERVICE_ID,
+  })
+}
+
+test('an instance that receives notices subscribes while it has a credential in hand', async () => {
+  // registerNotify is authenticated with the space credential, so only somebody
+  // the authority already admits can subscribe — which is why it happens inside
+  // reconcile rather than on its own.
+  withService()
+  await putSpaceWatch({ space: SPACE_URI, authority: SPACE_AUTHORITY, spaceType: SPACE_TYPE })
+  routes = {
+    registerNotify: () => ({ expiresAt: '2030-01-01T00:00:00.000Z' }),
+    listRepos: () => ({ repos: [] }),
+  }
+
+  await reconcileSpace({ ...watch })
+
+  expect(calls.map((c) => c.nsid)).toContain('registerNotify')
+  expect((await getSpaceWatch(SPACE_URI))?.registeredUntil).toBe('2030-01-01T00:00:00.000Z')
+})
+
+test('a registration still well inside its life is not renewed', async () => {
+  withService()
+  const far = new Date(Date.now() + 20 * 60 * 60 * 1000).toISOString()
+  routes = { listRepos: () => ({ repos: [] }) }
+  await reconcileSpace({ ...watch, registeredUntil: far })
+  expect(calls.map((c) => c.nsid)).not.toContain('registerNotify')
+})
+
+test('a registration close to lapsing is renewed before it does', async () => {
+  // A lapsed one stops notices silently: the sweep carries on working and
+  // nobody notices the latency went back up.
+  withService()
+  const soon = new Date(Date.now() + 10 * 60 * 1000).toISOString()
+  routes = {
+    registerNotify: () => ({ expiresAt: '2030-01-01T00:00:00.000Z' }),
+    listRepos: () => ({ repos: [] }),
+  }
+  await reconcileSpace({ ...watch, registeredUntil: soon })
+  expect(calls.map((c) => c.nsid)).toContain('registerNotify')
+})
+
+test('failing to subscribe costs latency, not the sweep', async () => {
+  withService()
+  routes = {
+    registerNotify: () => Response.json({ error: 'ServiceNotResolvable' }, { status: 400 }),
+    listRepos: () => ({ repos: [{ did: ALICE, rev: '3a' }] }),
+    getLatestCommit: () => ({ commit: { rev: '3a' } }),
+    listRecords: () => ({ records: [] }),
+  }
+
+  await reconcileSpace({ ...watch })
+
+  expect((await getSpaceRepo(SPACE_URI, ALICE))?.rev).toBe('3a')
+})
+
+test('an instance that receives no notices never subscribes', async () => {
+  routes = { listRepos: () => ({ repos: [] }) }
+  await reconcileSpace({ ...watch })
+  expect(calls.map((c) => c.nsid)).not.toContain('registerNotify')
+})
+
+test('a notice reads the one repo it names', async () => {
+  await putSpaceWatch({ space: SPACE_URI, authority: SPACE_AUTHORITY, spaceType: SPACE_TYPE })
+  routes = {
+    getLatestCommit: () => ({ commit: { rev: '3a' } }),
+    listRecords: (p) =>
+      p.get('collection') === PUBLIC_COLLECTION
+        ? { records: [{ rkey: 'fresh', cid: 'c1', value: { text: 'just written' } }] }
+        : { records: [] },
+  }
+
+  expect(await handleWriteNotice({ space: SPACE_URI, repo: ALICE })).toBe(true)
+
+  expect(await indexedUris()).toEqual([spaceRecord(ALICE, PUBLIC_COLLECTION, 'fresh')])
+  // The writer set is not re-listed: a notice names its repo, so there is
+  // nothing to enumerate.
+  expect(calls.map((c) => c.nsid)).not.toContain('listRepos')
+})
+
+test('a notice about a space this instance does not follow is ignored', async () => {
+  // Not an instruction to start following it: that decision belongs to config
+  // or to the app, never to whoever can reach the endpoint.
+  expect(await handleWriteNotice({ space: SPACE_URI, repo: ALICE })).toBe(false)
+  expect(calls).toEqual([])
+})
+
+test('the revision a notice claims is not trusted as the new position', async () => {
+  // It is read from the repo's own host, which is the source of truth.
+  await putSpaceWatch({ space: SPACE_URI, authority: SPACE_AUTHORITY, spaceType: SPACE_TYPE })
+  routes = {
+    getLatestCommit: () => ({ commit: { rev: '3real' } }),
+    listRecords: () => ({ records: [] }),
+  }
+  await handleWriteNotice({ space: SPACE_URI, repo: ALICE })
+  expect((await getSpaceRepo(SPACE_URI, ALICE))?.rev).toBe('3real')
 })

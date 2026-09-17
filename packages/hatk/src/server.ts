@@ -83,6 +83,17 @@ import { collectionFromUri, isPrivateCollection } from './private-collections.ts
 import { enterReadableSpaces } from './spaces/visibility.ts'
 import { readableSpacesFor } from './spaces/viewer.ts'
 import { parseSpaceBlobRequest, serveSpaceBlob } from './spaces/blob.ts'
+import {
+  handleWriteNotice,
+  NoticeError,
+  parseWriteNotice,
+  scheduleNoticeSync,
+  spaceDidDocument,
+  spaceServiceId,
+  unwatchSpace,
+  verifyNotice,
+} from './spaces/index.ts'
+import { parseSpaceRef } from './spaces/uri.ts'
 import { serve } from './adapter.ts'
 import { renderPage } from './renderer.ts'
 
@@ -379,6 +390,13 @@ interface AdminStats {
   openReports: number
 }
 
+export interface SpaceHandlerConfig {
+  serviceDid?: string
+  serviceFragment?: string
+  /** The origin an authority should deliver to, when it is not the request's own. */
+  publicUrl?: string
+}
+
 export interface HandlerConfig {
   collections: string[]
   publicDir: string | null
@@ -387,6 +405,8 @@ export interface HandlerConfig {
   renderer?: (request: Request, manifest: any) => Promise<{ html: string; head?: string }>
   resolveViewer?: (request: Request) => { did: string } | null
   onResync?: () => void
+  /** Permissioned-space notice delivery. Absent on an instance that indexes none. */
+  spaces?: SpaceHandlerConfig
 }
 
 /**
@@ -988,6 +1008,23 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
       // --- OAuth Endpoints ---
 
+      // GET /.well-known/did.json — this instance's own DID document, so a space
+      // authority can resolve where to deliver notices. Published only when a
+      // service DID is configured; it carries a service entry and no key.
+      if (url.pathname === '/.well-known/did.json' && config.spaces?.serviceDid) {
+        return withCors(
+          json(
+            spaceDidDocument(
+              config.spaces.serviceDid,
+              config.spaces.publicUrl ?? requestOrigin,
+              config.spaces.serviceFragment ?? 'atproto_space_syncer',
+            ),
+            200,
+            acceptEncoding,
+          ),
+        )
+      }
+
       // OAuth well-known endpoints
       if (url.pathname === '/.well-known/oauth-authorization-server' && oauth) {
         return withCors(json(getAuthServerMetadata(oauth.issuer, oauth), 200, acceptEncoding))
@@ -1374,6 +1411,57 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       }
 
       // GET/POST /xrpc/{nsid} — custom XRPC handlers (matched by full NSID from folder structure)
+      // POST /xrpc/com.atproto.space.notifyWrite — a space authority telling us
+      // one of its repos moved. Carries no records: it says look again, and the
+      // read that follows uses our own credential like any other.
+      //
+      // Best-effort by protocol, so this answers before syncing and never lets
+      // a sync failure become the authority's problem. A missed notice is
+      // recovered by the reconcile sweep.
+      if (url.pathname === '/xrpc/com.atproto.space.notifyWrite' && request.method === 'POST') {
+        const serviceId = spaceServiceId()
+        if (!serviceId) return withCors(jsonError(404, 'This instance receives no space notices', acceptEncoding))
+        const notice = parseWriteNotice(await request.json().catch(() => null))
+        if (!notice) return withCors(jsonError(400, 'Expected space, repo and rev', acceptEncoding))
+        try {
+          await verifyNotice(request.headers.get('authorization'), {
+            iss: parseSpaceRef(notice.space)!.authority,
+            aud: serviceId,
+            lxm: 'com.atproto.space.notifyWrite',
+          })
+        } catch (err: any) {
+          if (err instanceof NoticeError) return withCors(jsonError(err.status, err.message, acceptEncoding))
+          throw err
+        }
+        // Debounced per repo: one member writing a gallery sends a notice per
+        // record, and each is an invitation to read the same repo again.
+        scheduleNoticeSync(`${notice.space}|${notice.repo}`, () => handleWriteNotice(notice).then(() => {}))
+        return withCors(json({}, 200, acceptEncoding))
+      }
+
+      // POST /xrpc/com.atproto.space.notifySpaceDeleted — the authority saying a
+      // space is gone and every copy of it should go too.
+      if (url.pathname === '/xrpc/com.atproto.space.notifySpaceDeleted' && request.method === 'POST') {
+        const serviceId = spaceServiceId()
+        if (!serviceId) return withCors(jsonError(404, 'This instance receives no space notices', acceptEncoding))
+        const body = (await request.json().catch(() => null)) as { space?: unknown } | null
+        const space = typeof body?.space === 'string' ? body.space : null
+        const ref = space ? parseSpaceRef(space) : null
+        if (!space || !ref) return withCors(jsonError(400, 'Expected a space', acceptEncoding))
+        try {
+          await verifyNotice(request.headers.get('authorization'), {
+            iss: ref.authority,
+            aud: serviceId,
+            lxm: 'com.atproto.space.notifySpaceDeleted',
+          })
+        } catch (err: any) {
+          if (err instanceof NoticeError) return withCors(jsonError(err.status, err.message, acceptEncoding))
+          throw err
+        }
+        await unwatchSpace(space)
+        return withCors(json({}, 200, acceptEncoding))
+      }
+
       if (url.pathname.startsWith('/xrpc/')) {
         const method = url.pathname.slice('/xrpc/'.length)
         const limit = parseInt(url.searchParams.get('limit') || '20')

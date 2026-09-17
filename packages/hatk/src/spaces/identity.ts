@@ -13,9 +13,11 @@
  */
 
 import { pdsFor } from '../backfill.ts'
+import { parseMultibaseKey, type PublicKey } from './verify.ts'
 
 interface DidDocument {
   service?: { id?: string; type?: string; serviceEndpoint?: string }[]
+  verificationMethod?: { id?: string; type?: string; publicKeyMultibase?: string }[]
 }
 
 let plcUrl = 'https://plc.directory'
@@ -71,4 +73,25 @@ export function repoEndpoint(did: string): Promise<string> {
 /** Drop cached DID documents. For tests, and for a host that has just moved. */
 export function clearSpaceIdentityCache(): void {
   docCache.clear()
+}
+
+/**
+ * An account's atproto signing key, as its DID document publishes it.
+ *
+ * Used to check that a write notice really came from the space authority it
+ * claims to. `#atproto` is the entry every atproto DID document carries;
+ * `#atproto_space` is the optional dedicated credential-signing key, preferred
+ * when an authority publishes one.
+ */
+export async function atprotoSigningKey(did: string): Promise<PublicKey | null> {
+  const doc = await fetchDidDoc(did)
+  const methods = doc?.verificationMethod ?? []
+  const named = (id: string) => methods.find((m) => m.id === id || m.id?.endsWith(id))
+  const method = named('#atproto_space') ?? named('#atproto')
+  if (!method?.publicKeyMultibase) return null
+  try {
+    return parseMultibaseKey(method.publicKeyMultibase)
+  } catch {
+    return null
+  }
 }

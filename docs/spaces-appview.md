@@ -365,14 +365,31 @@ by design, so it is fetched from the repo that holds it with the viewer's own
 credential and served `private, no-store` with a content-type allowlist. A
 viewer who may not read the space gets the same 404 as a missing blob.
 
+**Write notices** (`spaces/notify.ts`, `spaces/verify.ts`). Registration happens
+inside reconcile, where a credential is already in hand — `registerNotify` is
+authenticated with one, so only somebody the authority already admits can
+subscribe — and renews an hour before its 24-hour expiry. Two inbound routes
+receive the forwarded notices, ahead of the XRPC catch-all that would otherwise
+answer for those NSIDs first. A notice carries no records: it says look again,
+and the read that follows uses hatk's own borrowed credential. It is answered
+before the sync runs, and syncs are debounced per repo, because one member
+writing a gallery sends a notice per record.
+
+The forwarded notice needed its own verifier. At origin a writer's host signs
+with `iss` = the writer and `aud` = the bare authority DID; forwarded onward the
+authority re-signs with `iss` = itself and `aud` = the service identifier
+including its fragment. The reference PDS's own handler rejects exactly that
+shape, so there was nothing to borrow. Verification also meant handling
+secp256k1, which most `did:plc` accounts sign with and WebCrypto does not
+implement at all — `@noble/curves` is the one dependency this added, and
+`spaces/verify.ts` is base58btc plus multicodec prefix parsing on top of it.
+
+hatk publishes a `did:web` document at `/.well-known/did.json` naming where to
+deliver. It carries a service entry and no verification method: a syncer signs
+nothing, so there is no key to publish or to steal.
+
 ### Known gaps, in the order they matter
 
-- **No notice receiver**, so a write appears within one reconcile interval
-  rather than within a second. It needs verifying a service-auth JWT signed by
-  the authority's key, which for most `did:plc` accounts is secp256k1 — a curve
-  WebCrypto does not implement and hatk has no library for. That is a
-  dependency decision, not a coding one. The `registered_until` column is
-  already in place for it.
 - **Viewer resolution costs a round trip per followed space** on a cache miss,
   so an instance following many communities pays for all of them per viewer.
   Fine for a handful; a narrowing hook is the answer if it stops being.

@@ -60,7 +60,22 @@ export interface SpaceEngineOptions {
   types: Set<string>
   /** Collections hatk indexes at all; a space collection outside this is skipped. */
   collections: Set<string>
+  /**
+   * This instance's service identifier — `did:web:...#atproto_space_syncer`.
+   * Absent when the instance receives no notices, in which case the sweep is
+   * the only thing that notices a write.
+   */
+  serviceId?: string
 }
+
+/**
+ * Re-register this long before a registration lapses.
+ *
+ * The reference host holds one for a day, and a lapsed registration stops
+ * notices silently — the sweep would carry on working and nobody would notice
+ * the latency had gone back up.
+ */
+const REGISTRATION_RENEW_LEAD_MS = 60 * 60 * 1000
 
 let options: SpaceEngineOptions | null = null
 
@@ -424,6 +439,46 @@ export async function syncSpaceRepo(watch: SpaceWatch, writer: string, credentia
 
 // --- Reconcile ---
 
+/**
+ * Subscribe to this space's write notices, if this instance can receive them.
+ *
+ * Authenticated with the space credential, so only somebody the authority
+ * already admits can subscribe — which is why this happens inside reconcile,
+ * where a credential is already in hand. The delivery endpoint is not sent:
+ * the authority resolves it from our own DID document, so a registration can
+ * only ever point at an endpoint we published for ourselves.
+ *
+ * Best-effort. Failing to register costs latency, not correctness, and must
+ * not fail the sweep that was about to read the space anyway.
+ */
+async function ensureRegistered(watch: SpaceWatch, credential: SpaceCredential): Promise<void> {
+  const { serviceId } = requireOptions()
+  if (!serviceId) return
+  const until = watch.registeredUntil ? Date.parse(watch.registeredUntil) : 0
+  if (Number.isFinite(until) && until - REGISTRATION_RENEW_LEAD_MS > Date.now()) return
+
+  try {
+    const authorityHost = await spaceHostEndpoint(watch.authority)
+    const res = await credential.fetch(`${authorityHost}/xrpc/com.atproto.space.registerNotify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ space: watch.space, service: serviceId }),
+    })
+    if (!res.ok) throw new Error(`registerNotify refused (${res.status})`)
+    const body = (await res.json()) as { expiresAt?: string }
+    if (body.expiresAt) {
+      await updateSpaceWatch(watch.space, { registeredUntil: body.expiresAt })
+      watch.registeredUntil = body.expiresAt
+    }
+    emit('spaces', 'registered', { space: watch.space, expires_at: body.expiresAt })
+  } catch (err) {
+    emit('spaces', 'register_failed', {
+      space: watch.space,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
 async function listWriters(
   watch: SpaceWatch,
   credential: SpaceCredential,
@@ -459,6 +514,7 @@ async function listWriters(
 export async function reconcileSpace(watch: SpaceWatch): Promise<void> {
   const elapsed = timer()
   await withCredential(watch, async (credential) => {
+    await ensureRegistered(watch, credential)
     const writers = await listWriters(watch, credential)
     const remote = new Set(writers.map((w) => w.did))
 
@@ -520,6 +576,24 @@ export async function unwatchSpace(space: string): Promise<void> {
   await deleteSpaceWatch(space)
   forgetSpaceCredential(space)
   emit('spaces', 'unwatched', { space })
+}
+
+/**
+ * Act on a write notice: read the one repo it names.
+ *
+ * Only for a space already followed. A notice about anything else is not an
+ * instruction to start following it — that decision belongs to config or to the
+ * app, never to whoever can reach this endpoint.
+ *
+ * The notice's `rev` is deliberately not trusted as the new position: it is
+ * read from the repo's own host, which is the source of truth, by the ordinary
+ * sync path. The notice only says "look again".
+ */
+export async function handleWriteNotice(notice: { space: string; repo: string }): Promise<boolean> {
+  const watch = await getSpaceWatch(notice.space)
+  if (!watch) return false
+  await withCredential(watch, (credential) => syncSpaceRepo(watch, notice.repo, credential))
+  return true
 }
 
 /**

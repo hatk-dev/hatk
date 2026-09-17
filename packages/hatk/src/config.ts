@@ -113,6 +113,22 @@ export interface SpacesConfig {
    * what makes sync correct rather than merely prompt.
    */
   reconcileInterval?: number
+  /**
+   * This instance's own DID, for receiving write notices — e.g.
+   * `did:web:appview.example.com`. hatk serves the matching document at
+   * `/.well-known/did.json`, so the DID has to resolve to this origin.
+   *
+   * Without it the sweep is the only thing that notices a write, which is
+   * correct but no faster than the interval. The DID publishes no signing key:
+   * notices are only ever verified here, never signed.
+   */
+  serviceDid?: string
+  /**
+   * The service entry notices are delivered to, named in the DID document and
+   * in every registration. Its own fragment rather than the bare DID, so a
+   * notice cannot be confused with one addressed to an account.
+   */
+  serviceFragment?: string
 }
 
 export interface JetstreamConfig {
@@ -242,6 +258,8 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
                 .filter(Boolean)
             : parsed.spaces.watch || [],
           reconcileInterval: parseInt(env.SPACES_RECONCILE_INTERVAL || '') || parsed.spaces.reconcileInterval || 300,
+          serviceDid: env.SPACES_SERVICE_DID || parsed.spaces.serviceDid || undefined,
+          serviceFragment: parsed.spaces.serviceFragment || 'atproto_space_syncer',
         }
       : null,
   }

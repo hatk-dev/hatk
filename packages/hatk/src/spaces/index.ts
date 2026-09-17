@@ -11,6 +11,7 @@ import { emit } from '../logger.ts'
 import { log } from '../logger.ts'
 import { configureSpaceEngine, reconcileAll, unwatchSpace, watchSpace } from './engine.ts'
 import { configureSpaceIdentity } from './identity.ts'
+import { clearPendingNotices } from './notify.ts'
 
 export {
   collectionsForSpaceType,
@@ -23,9 +24,50 @@ export {
 export { getSpaceCredential, mintSpaceCredential, isNotAuthorized, isSpaceGone } from './credential.ts'
 export { listSpaceRepos, listSpaceWatches, type SpaceWatch } from './store.ts'
 export { isSpaceReadable, readableSpaces, withReadableSpaces } from './visibility.ts'
+export { handleWriteNotice } from './engine.ts'
+export {
+  clearPendingNotices,
+  NoticeError,
+  parseWriteNotice,
+  scheduleNoticeSync,
+  verifyNotice,
+  type WriteNotice,
+} from './notify.ts'
 export * from './uri.ts'
 
 let sweepTimer: ReturnType<typeof setInterval> | null = null
+
+/**
+ * What a notice must be addressed to for this instance to act on it, and what
+ * every registration names. Null when no service DID is configured, which is
+ * also what makes the inbound routes refuse everything.
+ */
+let serviceId: string | null = null
+
+export function spaceServiceId(): string | null {
+  return serviceId
+}
+
+/**
+ * The DID document an authority resolves to find where to deliver notices.
+ *
+ * It publishes a service entry and nothing else. A syncer signs nothing — it
+ * verifies inbound notices and presents credentials bound to an ephemeral key
+ * — so there is no verification method to publish and no key here to steal.
+ */
+export function spaceDidDocument(did: string, endpoint: string, fragment: string): Record<string, unknown> {
+  return {
+    '@context': ['https://www.w3.org/ns/did/v1'],
+    id: did,
+    service: [
+      {
+        id: `#${fragment}`,
+        type: 'AtprotoSpaceService',
+        serviceEndpoint: endpoint,
+      },
+    ],
+  }
+}
 
 export interface StartSpacesOptions {
   spaces: SpacesConfig
@@ -55,7 +97,13 @@ export function startSpaces(opts: StartSpacesOptions): void {
   }
 
   configureSpaceIdentity(plc)
-  configureSpaceEngine({ oauth, types: new Set(spaces.types), collections })
+  serviceId = spaces.serviceDid ? `${spaces.serviceDid}#${spaces.serviceFragment ?? 'atproto_space_syncer'}` : null
+  configureSpaceEngine({
+    oauth,
+    types: new Set(spaces.types),
+    collections,
+    ...(serviceId ? { serviceId } : {}),
+  })
 
   const intervalMs = Math.max(30, spaces.reconcileInterval ?? 300) * 1000
 
@@ -87,6 +135,8 @@ export function startSpaces(opts: StartSpacesOptions): void {
 export function stopSpaces(): void {
   if (sweepTimer) clearInterval(sweepTimer)
   sweepTimer = null
+  serviceId = null
+  clearPendingNotices()
 }
 
 /** Re-exported so an app's on-login hook can start following a space it just learned about. */
