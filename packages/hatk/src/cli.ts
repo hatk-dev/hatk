@@ -625,7 +625,11 @@ if (command === 'new') {
     }
     clientOut += `  const params = new URLSearchParams()\n`
     clientOut += `  for (const [k, v] of Object.entries(arg || {})) {\n`
-    clientOut += `    if (v != null) params.set(k, String(v))\n`
+    // An array goes out as a repeated key, the XRPC form: `?dids=a&dids=b`.
+    // Joined with commas it reaches the handler as one string.
+    clientOut += `    if (v == null) continue\n`
+    clientOut += `    if (Array.isArray(v)) for (const item of v) params.append(k, String(item))\n`
+    clientOut += `    else params.set(k, String(v))\n`
     clientOut += `  }\n`
     clientOut += `  const qs = params.toString()\n`
     clientOut += `  if (qs) path += \`?\${qs}\`\n`
