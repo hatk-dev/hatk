@@ -1,0 +1,53 @@
+# The gate: typecheck, lint, format and the full test suite with its coverage
+# threshold, on every push. `npm test` fails the build if coverage drops below
+# the floor in packages/hatk/vitest.config.ts, so a change that guts a tested
+# path cannot land quietly.
+#
+# A push constraint needs `branch` or `tag`: with neither, spindle matches
+# nothing and the workflow silently never fires. `manual` is how to exercise
+# this without pushing.
+when:
+  - event: ['push', 'manual']
+    branch: ['**']
+
+# NixOS gives a Node project nothing directly, so run the checks inside an
+# official node image, the same shape pds.js uses.
+engine: microvm
+image: nixos
+
+virtualisation:
+  docker: true
+
+steps:
+  - name: 'Check and test'
+    command: |
+      set -eo pipefail
+
+      # The checkout is the current directory; bind-mount it into a node
+      # container. node_modules lands back in the workspace, but the microvm is
+      # torn down after the run, so nothing leaks between builds.
+      #
+      # node:26, because package.json requires node >=25.
+      #
+      # Debian trixie (glibc 2.41), not bookworm (2.36): better-sqlite3's
+      # prebuilt native binary needs glibc >= 2.38, so on bookworm every
+      # sqlite-backed test dies with a GLIBC version error.
+      #
+      # `npm ci` rather than `npm install`: it installs exactly the lockfile,
+      # which is the only record of the Linux binaries for better-sqlite3 and
+      # @duckdb/node-bindings. Never regenerate that lockfile on macOS — doing
+      # so over an existing node_modules drops every non-darwin platform
+      # package and breaks this build.
+      docker run --rm \
+        -v "$PWD":/workspace \
+        -w /workspace \
+        node:26-trixie \
+        bash -c '
+          set -eo pipefail
+          echo "==> npm ci"
+          npm ci
+          echo "==> check (tsc + oxlint + oxfmt)"
+          npm run check
+          echo "==> test (vitest + coverage gate)"
+          npm test
+        '
