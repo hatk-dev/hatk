@@ -31,7 +31,8 @@
     "clean": "rm -rf dist",
     "build": "npm run clean && tsc -p tsconfig.build.json && cp -r src/templates dist/templates && cp -r src/lexicons dist/lexicons",
     "prepublishOnly": "npm run build",
-    "test": "vitest run"
+    "test": "vitest run --coverage",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@bigmoves/lexicon": "^0.2.2",
@@ -46,6 +47,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.2.14",
+    "@vitest/coverage-v8": "^4.1.11",
     "vite": "^8.0.0"
   },
   "peerDependencies": {
