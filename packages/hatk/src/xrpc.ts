@@ -136,7 +136,7 @@ export interface XrpcContext<
 interface XrpcHandler {
   name: string
   execute: (
-    params: Record<string, string>,
+    params: XrpcParams,
     cursor: string | undefined,
     limit: number,
     viewer: { did: string; handle?: string } | null,
@@ -209,7 +209,7 @@ export function blobUrl(did: string, ref: unknown, preset: string = 'avatar'): s
 
 /** Build a full XrpcContext from request parameters. Reuses buildBaseContext for shared fields. */
 export function buildXrpcContext(
-  params: Record<string, string>,
+  params: XrpcParams,
   cursor: string | undefined,
   limit: number,
   viewer: { did: string; handle?: string } | null,
@@ -304,20 +304,7 @@ export async function initXrpc(xrpcDir: string): Promise<void> {
     handlers.set(name, {
       name,
       execute: async (params, cursor, limit, viewer, input) => {
-        // Apply defaults and coerce types from lexicon
-        for (const [key, def] of Object.entries(paramProperties)) {
-          if (params[key] == null && def.default != null) {
-            params[key] = String(def.default)
-          }
-          if (params[key] != null && def.type === 'integer') {
-            params[key] = Number(params[key]) as any
-          }
-        }
-        for (const param of requiredParams) {
-          if (!params[param]) {
-            throw new InvalidRequestError(`Missing required parameter: ${param}`, 'InvalidRequest')
-          }
-        }
+        coerceParams(params, paramProperties, requiredParams)
 
         const ctx = buildXrpcContext(params, cursor, limit, viewer, input)
         return handler.handler(ctx)
@@ -337,19 +324,7 @@ export function registerXrpcHandler(nsid: string, handlerModule: { handler: (ctx
   handlers.set(nsid, {
     name: nsid,
     execute: async (params, cursor, limit, viewer, input) => {
-      for (const [key, def] of Object.entries(paramProperties)) {
-        if (params[key] == null && def.default != null) {
-          params[key] = String(def.default)
-        }
-        if (params[key] != null && def.type === 'integer') {
-          params[key] = Number(params[key]) as any
-        }
-      }
-      for (const param of requiredParams) {
-        if (!params[param]) {
-          throw new InvalidRequestError(`Missing required parameter: ${param}`, 'InvalidRequest')
-        }
-      }
+      coerceParams(params, paramProperties, requiredParams)
 
       const ctx = buildXrpcContext(params, cursor, limit, viewer, input)
       return handlerModule.handler(ctx)
@@ -357,10 +332,65 @@ export function registerXrpcHandler(nsid: string, handlerModule: { handler: (ctx
   })
 }
 
+/**
+ * What the query string gives a handler: one value per key, or every value
+ * when the key was repeated (`?dids=a&dids=b`).
+ */
+export type XrpcParams = Record<string, any>
+
+/** Collect a query string into params, keeping every value of a repeated key. */
+export function paramsFromSearch(search: URLSearchParams): XrpcParams {
+  const params: XrpcParams = {}
+  for (const [key, value] of search) {
+    const prior = params[key]
+    if (prior === undefined) params[key] = value
+    else if (Array.isArray(prior)) prior.push(value)
+    else params[key] = [prior, value]
+  }
+  return params
+}
+
+function coerceScalar(value: unknown, def: any): unknown {
+  // Only integers, as before: a boolean still reaches the handler as the
+  // string it was sent as, and handlers written against that keep working.
+  return def?.type === 'integer' ? Number(value) : value
+}
+
+/**
+ * Apply the lexicon's parameter schema before a handler runs: defaults,
+ * integer coercion, and arrays. A query string cannot say whether
+ * `dids=x` is one string or a one-element list, so the schema decides: a
+ * parameter declared `array` always reaches the handler as one, or a handler
+ * that spreads it would spread the characters of a DID instead.
+ */
+export function coerceParams(params: XrpcParams, properties: Record<string, any>, required: string[]): void {
+  for (const [key, def] of Object.entries(properties)) {
+    if (params[key] == null && def.default != null) {
+      params[key] = def.type === 'array' ? [...def.default] : def.type === 'string' ? String(def.default) : def.default
+    }
+    if (params[key] == null) continue
+    if (def.type === 'array') {
+      const list = Array.isArray(params[key]) ? params[key] : [params[key]]
+      params[key] = list.map((v: unknown) => coerceScalar(v, def.items))
+    } else if (Array.isArray(params[key])) {
+      // A scalar given twice: the last one wins, as a form submission would.
+      params[key] = coerceScalar(params[key][params[key].length - 1], def)
+    } else {
+      params[key] = coerceScalar(params[key], def)
+    }
+  }
+  for (const param of required) {
+    const v = params[param]
+    if (v == null || v === '' || (Array.isArray(v) && v.length === 0)) {
+      throw new InvalidRequestError(`Missing required parameter: ${param}`, 'InvalidRequest')
+    }
+  }
+}
+
 /** Execute a registered XRPC handler by name. Returns null if no handler matches. */
 export async function executeXrpc(
   name: string,
-  params: Record<string, string>,
+  params: XrpcParams,
   cursor: string | undefined,
   limit: number,
   viewer?: { did: string } | null,
@@ -387,9 +417,11 @@ export async function callXrpc(nsid: string, params: Record<string, any> = {}, i
   if (handlers.size === 0 && (globalThis as any).__hatk_callXrpc) {
     return (globalThis as any).__hatk_callXrpc(nsid, params, input)
   }
-  const stringParams: Record<string, string> = {}
+  const stringParams: XrpcParams = {}
   for (const [k, v] of Object.entries(params)) {
-    if (v != null) stringParams[k] = String(v)
+    if (v == null) continue
+    // A list stays a list, as the query string would have carried it.
+    stringParams[k] = Array.isArray(v) ? v.map(String) : String(v)
   }
   const limit = params.limit ? Number(params.limit) : 20
   const cursor = params.cursor ?? undefined
@@ -405,7 +437,7 @@ export async function callXrpc(nsid: string, params: Record<string, any> = {}, i
 export function registerCoreXrpcHandler(
   nsid: string,
   fn: (
-    params: Record<string, string>,
+    params: XrpcParams,
     cursor: string | undefined,
     limit: number,
     viewer: { did: string; handle?: string } | null,

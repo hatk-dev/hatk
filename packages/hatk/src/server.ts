@@ -32,7 +32,7 @@ import {
   getOpenReportCount,
 } from './database/db.ts'
 import { executeFeed, listFeeds } from './feeds.ts'
-import { executeXrpc, InvalidRequestError, NotFoundError, registerCoreXrpcHandler, isLocalRelay } from './xrpc.ts'
+import { executeXrpc, InvalidRequestError, NotFoundError, registerCoreXrpcHandler, isLocalRelay, paramsFromSearch } from './xrpc.ts'
 import { pdsFor } from './backfill.ts'
 import { resolveRecords } from './hydrate.ts'
 import { handleOpengraphRequest, buildOgMeta } from './opengraph.ts'
@@ -318,7 +318,11 @@ export function registerCoreHandlers(collections: string[], oauth: OAuthConfig |
         if (!match) throw new InvalidRequestError('Invalid subject URI')
         subjectDid = match[1]
       } else if (body.subject.did) {
-        subjectUri = `at://${body.subject.did}`
+        // The bare DID, not `at://<did>`: resolving this report labels
+        // `subjectUri`, and an account label is keyed by DID alone. Ozone
+        // writes it that way and every appview reads it that way, so the
+        // `at://` form would apply a label nothing ever looks up.
+        subjectUri = body.subject.did
         subjectDid = body.subject.did
       } else {
         throw new InvalidRequestError('Subject must have uri or did')
@@ -573,10 +577,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         const limit = parseInt(url.searchParams.get('limit') || '30')
         const cursor = url.searchParams.get('cursor') || undefined
 
-        const params: Record<string, string> = {}
-        for (const [key, value] of url.searchParams) {
-          params[key] = value
-        }
+        const params = paramsFromSearch(url.searchParams)
 
         const result = await executeFeed(feedName, params, cursor, limit, viewer)
         if (!result) return withCors(jsonError(404, `Unknown feed: ${feedName}`, acceptEncoding))
@@ -1467,10 +1468,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         const limit = parseInt(url.searchParams.get('limit') || '20')
         const cursor = url.searchParams.get('cursor') || undefined
 
-        const params: Record<string, string> = {}
-        for (const [key, value] of url.searchParams) {
-          params[key] = value
-        }
+        const params = paramsFromSearch(url.searchParams)
 
         // Parse request body for POST (procedures)
         let input: unknown

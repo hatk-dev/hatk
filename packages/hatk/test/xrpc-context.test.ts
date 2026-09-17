@@ -17,6 +17,7 @@ import {
   isLocalRelay,
   listXrpc,
   registerCoreXrpcHandler,
+  paramsFromSearch,
   registerXrpcHandler,
 } from '../src/xrpc.ts'
 import { storeLexicons } from '../src/database/schema.ts'
@@ -246,6 +247,50 @@ test('a handler registered against a lexicon has defaults applied, integers coer
     message: 'Missing required parameter: actor',
     errorName: 'InvalidRequest',
   })
+})
+
+test('an array parameter reaches the handler as a list however many values were sent', async () => {
+  // A query string cannot say whether `dids=x` is one string or a list of
+  // one; the lexicon does. A handler that spread the string got the characters
+  // of a DID.
+  storeLexicons(
+    new Map([
+      [
+        'xyz.test.getActors',
+        {
+          lexicon: 1,
+          id: 'xyz.test.getActors',
+          defs: {
+            main: {
+              type: 'query',
+              parameters: {
+                type: 'params',
+                required: ['dids'],
+                properties: {
+                  dids: { type: 'array', items: { type: 'string' } },
+                  pages: { type: 'array', items: { type: 'integer' } },
+                  tag: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+      ],
+    ]),
+  )
+  registerXrpcHandler('xyz.test.getActors', { handler: async (ctx) => ctx.params })
+
+  const one = paramsFromSearch(new URLSearchParams('dids=did:plc:a'))
+  expect(await executeXrpc('xyz.test.getActors', one, undefined, 10)).toEqual({ dids: ['did:plc:a'] })
+
+  const many = paramsFromSearch(new URLSearchParams('dids=did:plc:a&dids=did:plc:b&pages=1&pages=2&tag=x&tag=y'))
+  expect(await executeXrpc('xyz.test.getActors', many, undefined, 10)).toEqual({
+    dids: ['did:plc:a', 'did:plc:b'],
+    pages: [1, 2],
+    tag: 'y', // a scalar sent twice: the last one wins
+  })
+
+  await expect(executeXrpc('xyz.test.getActors', {}, undefined, 10)).rejects.toThrow('Missing required parameter: dids')
 })
 
 test('a handler without a lexicon still runs with its params untouched', async () => {
