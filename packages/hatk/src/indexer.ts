@@ -1,4 +1,7 @@
 import type { RepoReference } from './config.ts'
+import { reshapeRow } from './database/db.ts'
+import { unfilteredQuerySQL } from './spaces/guard.ts'
+import { rkeyOf } from './spaces/uri.ts'
 import { cborDecode } from './cbor.ts'
 import { parseCarFrame } from './car.ts'
 import { isPrivateCollection } from './private-collections.ts'
@@ -359,6 +362,37 @@ export function noteReferencedRepos(collection: string, rkey: string, record: Re
     const did = referencedDid(record, rkey, ref.field)
     if (did) trackRepo(did)
   }
+}
+
+/**
+ * Apply the references to what is already indexed.
+ *
+ * A reference fires as a record comes in. Rows indexed before the reference
+ * was configured — or before this instance had it — would otherwise never
+ * name their repos until the record was written again. Run once at boot;
+ * a table of a few thousand rows is a moment, and the roster is what these
+ * point at, not the firehose.
+ */
+export async function sweepReferences(): Promise<number> {
+  let named = 0
+  for (const ref of indexerReferences) {
+    let rows: unknown[]
+    try {
+      rows = await unfilteredQuerySQL(`SELECT * FROM "${ref.collection}"`)
+    } catch {
+      continue // no table for this collection on this instance
+    }
+    for (const raw of rows) {
+      const row = reshapeRow(raw)
+      if (!row) continue
+      const did = referencedDid(row.value as Record<string, unknown>, rkeyOf(row.uri), ref.field)
+      if (!did) continue
+      named++
+      trackRepo(did)
+    }
+  }
+  if (named > 0) emit('indexer', 'references_swept', { named })
+  return named
 }
 
 export function trackRepo(did: string): void {

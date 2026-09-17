@@ -20,7 +20,7 @@ import { initFeeds, listFeeds } from './feeds.ts'
 import { initXrpc, listXrpc, configureRelay, configureCdn, configureOAuth, callXrpc } from './xrpc.ts'
 import { initOpengraph } from './opengraph.ts'
 import { initLabels, getLabelDefinitions } from './labels.ts'
-import { auxCursorKey, startAuxIndexer, startIndexer } from './indexer.ts'
+import { auxCursorKey, startAuxIndexer, startIndexer, sweepReferences } from './indexer.ts'
 import { startJetstreamIndexer } from './jetstream.ts'
 import { rebuildAllIndexes } from './database/fts.ts'
 import { createHandler, registerCoreHandlers } from './server.ts'
@@ -281,6 +281,10 @@ if (config.jetstream) {
     startAuxIndexer({ relayUrl, collections: collectionSet, cursor: auxCursor })
   }
 }
+
+// What is already indexed may name repos too; a reference configured after
+// the fact reaches them here rather than on their next write.
+void sweepReferences()
 
 // 7. Run backfill in background
 runBackfillAndRestart()

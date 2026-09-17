@@ -17,6 +17,7 @@ import {
   awaitBackfill,
   configureIndexer,
   isIndexableCollection,
+  sweepReferences,
   type CommitOp,
   type IndexerCoreOpts,
 } from '../src/indexer.ts'
@@ -179,6 +180,22 @@ test('a reference to the record key brings in a repo keyed by its DID', async ()
   applyCommit(TRACKED, [create(named)])
   await awaitBackfill(named)
   await _flushForTests()
+
+  expect(backfillRepo).toHaveBeenCalledWith(named, COLLECTIONS, 1)
+})
+
+test('a sweep applies the references to rows already indexed', async () => {
+  // A reference configured after the roster was indexed still reaches its
+  // members, without waiting for the roster to be written again.
+  const named = 'did:plc:alreadyindexed'
+  await insertRecord(PUBLIC_COLLECTION, `at://${TRACKED}/${PUBLIC_COLLECTION}/old-roster`, 'cid-old', TRACKED, {
+    $type: PUBLIC_COLLECTION,
+    text: named,
+  })
+  await configure({ references: [{ collection: PUBLIC_COLLECTION, field: 'text' }] })
+
+  expect(await sweepReferences()).toBeGreaterThanOrEqual(1)
+  await awaitBackfill(named)
 
   expect(backfillRepo).toHaveBeenCalledWith(named, COLLECTIONS, 1)
 })

@@ -20,7 +20,7 @@ import { initOAuth } from './oauth/server.ts'
 import { initServer } from './server-init.ts'
 import { createHandler, registerCoreHandlers } from './server.ts'
 import { setPrivateCollections } from './private-collections.ts'
-import { auxCursorKey, startAuxIndexer, startIndexer } from './indexer.ts'
+import { auxCursorKey, startAuxIndexer, startIndexer, sweepReferences } from './indexer.ts'
 import { getCursor } from './database/db.ts'
 import { runBackfill, configurePlc } from './backfill.ts'
 import { rebuildAllIndexes } from './database/fts.ts'
@@ -109,6 +109,7 @@ startIndexer({
   parallelism: config.backfill.parallelism,
   ftsRebuildInterval: config.ftsRebuildInterval,
 })
+void sweepReferences()
 for (const relayUrl of config.relays) {
   const auxCursor = ignoreSavedCursor ? null : await getCursor(auxCursorKey(relayUrl))
   startAuxIndexer({ relayUrl, collections: collectionSet, cursor: auxCursor })
