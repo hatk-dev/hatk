@@ -222,11 +222,13 @@ describe('insertRecord and getRecordByUri round trip', () => {
     expect(value.pinned).toBeTruthy()
   })
 
-  test('a strongRef is flattened to the referenced uri, with the cid alongside', async () => {
+  test('a strongRef reads back as the { uri, cid } the lexicon declares', async () => {
+    // Stored as two columns so the uri can be joined on; read as one object,
+    // the shape the generated type for the field promises.
     const row = await getRecordByUri(uri)
     const { value } = reshapeRow(row)! as any
-    expect(value.subject).toBe('at://did:plc:bob/test.hatk.post/root')
-    expect(value.subject__cid).toBe('bafy-root')
+    expect(value.subject).toEqual({ uri: 'at://did:plc:bob/test.hatk.post/root', cid: 'bafy-root' })
+    expect(value.subject__cid).toBeUndefined()
   })
 
   test('a decomposed array is rebuilt from its child table, in insertion order', async () => {
@@ -626,8 +628,7 @@ describe('bulkInsertRecords', () => {
     expect(shaped.value.text).toBe('bulk one')
     expect(shaped.value.likeCount).toBe(7)
     expect(shaped.value.tags).toEqual(['x'])
-    expect(shaped.value.subject).toBe('at://s/u/b')
-    expect(shaped.value.subject__cid).toBe('bafy-s')
+    expect(shaped.value.subject).toEqual({ uri: 'at://s/u/b', cid: 'bafy-s' })
     expect(shaped.value.artists).toEqual([
       { name: 'A', role: null, links: null },
       { name: 'B', role: 'bass', links: null },

@@ -1822,6 +1822,25 @@ export function reshapeRow(
     }
   }
 
+  // A strongRef is stored as two columns so the uri can be joined on, and
+  // reads back as the object the lexicon declares: `{ uri, cid }`. The
+  // generated type for the field says so, and a handler written against it
+  // must find it.
+  if (schema) {
+    for (const col of schema.columns) {
+      if (!col.originalName.endsWith('__cid')) continue
+      const field = col.originalName.slice(0, -'__cid'.length)
+      const uri = value[field]
+      const cid = value[col.originalName]
+      delete value[col.originalName]
+      if (uri == null && cid == null) {
+        delete value[field]
+        continue
+      }
+      value[field] = { ...(uri != null ? { uri } : {}), ...(cid != null ? { cid } : {}) }
+    }
+  }
+
   // Only space rows carry a space, and an explicit null on every other row
   // would put a field on the wire that means nothing there.
   if (envelope.space == null) delete envelope.space
