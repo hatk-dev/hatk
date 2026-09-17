@@ -1,3 +1,5 @@
+import { resolveTxt } from 'node:dns/promises'
+
 // packages/hatk/src/oauth/discovery.ts
 
 export interface AuthServerMetadata {
@@ -61,10 +63,49 @@ export async function discoverAuthServer(
   return { pdsEndpoint, authServerEndpoint, authServerMetadata }
 }
 
+const HANDLE_RESOLVE_TIMEOUT_MS = 5000
+
+/** The DNS method: a `_atproto.<handle>` TXT record carrying `did=...`. */
+async function resolveHandleViaDns(handle: string): Promise<string | null> {
+  try {
+    for (const chunks of await resolveTxt(`_atproto.${handle}`)) {
+      const txt = chunks.join('')
+      if (txt.startsWith('did=')) return txt.slice('did='.length).trim()
+    }
+  } catch {
+    // No record, or not a resolvable name: not this method.
+  }
+  return null
+}
+
+/** The HTTPS method: `https://<handle>/.well-known/atproto-did`, the DID as plain text. */
+async function resolveHandleViaWellKnown(handle: string): Promise<string | null> {
+  try {
+    const res = await fetch(`https://${handle}/.well-known/atproto-did`, {
+      signal: AbortSignal.timeout(HANDLE_RESOLVE_TIMEOUT_MS),
+    })
+    if (!res.ok) return null
+    const did = (await res.text()).trim().split('\n')[0].trim()
+    return did.startsWith('did:') ? did : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * A handle to its DID.
+ *
+ * The protocol defines two ways, and both are asked first: the DNS TXT record
+ * and the well-known document. Either answers for a handle on any PDS, which
+ * is what lets somebody from another host sign in here. A handle neither
+ * method knows — a dev network's `.test` names, which have no DNS and no TLS
+ * — falls back to asking a PDS: the local one in dev, the one behind a
+ * self-hosted relay, or bsky.social.
+ */
 export async function resolveHandle(handle: string, relayUrl?: string): Promise<string> {
-  // Resolve against the configured network: the localhost PDS in dev, the public
-  // AppView in prod, or a self-hosted PDS (e.g. preview environments) derived
-  // from its relay/firehose URL — otherwise self-hosted handles 400 against bsky.
+  const direct = (await resolveHandleViaDns(handle)) ?? (await resolveHandleViaWellKnown(handle))
+  if (direct) return direct
+
   let baseUrl: string
   if (relayUrl?.includes('localhost:2583')) {
     baseUrl = 'http://localhost:2583'

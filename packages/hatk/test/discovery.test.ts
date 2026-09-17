@@ -1,4 +1,13 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
+
+// Handle resolution asks DNS first. Nothing resolves unless a test says so,
+// and no test reaches a real resolver.
+const dns = vi.hoisted(() => ({
+  resolveTxt: vi.fn(async (): Promise<string[][]> => {
+    throw new Error('ENOTFOUND')
+  }),
+}))
+vi.mock('node:dns/promises', () => dns)
 import {
   discoverAuthServer,
   fetchAuthServerMetadata,
@@ -166,42 +175,76 @@ describe('discoverAuthServer', () => {
 describe('resolveHandle', () => {
   const answer = () => json({ did: 'did:plc:resolved' })
   const path = '/xrpc/com.atproto.identity.resolveHandle?handle=alice.test'
+  const wellKnown = 'https://alice.test/.well-known/atproto-did'
 
-  test('resolves against the local dev PDS when the relay is the localhost one', async () => {
+  afterEach(() => {
+    dns.resolveTxt.mockReset()
+    dns.resolveTxt.mockImplementation(async () => {
+      throw new Error('ENOTFOUND')
+    })
+  })
+
+  test('a DNS TXT record answers first, and nothing else is asked', async () => {
+    dns.resolveTxt.mockResolvedValueOnce([['did=did:plc:fromdns']])
+    const seen = stubRoutes({})
+
+    expect(await resolveHandle('alice.test', 'wss://bsky.network')).toBe('did:plc:fromdns')
+    expect(dns.resolveTxt).toHaveBeenCalledWith('_atproto.alice.test')
+    expect(seen).toEqual([])
+  })
+
+  test('the well-known document answers when DNS has nothing', async () => {
+    // A handle on any PDS resolves this way — including one on another host
+    // than the relay this instance tails.
+    const seen = stubRoutes({ [wellKnown]: new Response('did:plc:fromwellknown\n', { status: 200 }) })
+
+    expect(await resolveHandle('alice.test', 'wss://host.example')).toBe('did:plc:fromwellknown')
+    expect(seen).toEqual([wellKnown])
+  })
+
+  test('a well-known body that is not a DID is ignored', async () => {
+    const seen = stubRoutes({
+      [wellKnown]: new Response('<html>parked</html>', { status: 200 }),
+      [`https://bsky.social${path}`]: answer,
+    })
+
+    expect(await resolveHandle('alice.test', 'wss://bsky.network')).toBe('did:plc:resolved')
+    expect(seen).toEqual([wellKnown, `https://bsky.social${path}`])
+  })
+
+  test('with neither, the local dev PDS is asked when the relay is the localhost one', async () => {
     const seen = stubRoutes({ [`http://localhost:2583${path}`]: answer })
 
     expect(await resolveHandle('alice.test', 'ws://localhost:2583')).toBe('did:plc:resolved')
-    expect(seen).toEqual([`http://localhost:2583${path}`])
+    expect(seen).toEqual([wellKnown, `http://localhost:2583${path}`])
   })
 
-  test('resolves against bsky.social for the public relay', async () => {
+  test('with neither, bsky.social is asked for the public relay', async () => {
     const seen = stubRoutes({ [`https://bsky.social${path}`]: answer })
 
     expect(await resolveHandle('alice.test', 'wss://bsky.network')).toBe('did:plc:resolved')
-    expect(seen).toEqual([`https://bsky.social${path}`])
+    expect(seen).toEqual([wellKnown, `https://bsky.social${path}`])
   })
 
-  test('with no relay configured, bsky.social is the default', async () => {
+  test('with neither and no relay configured, bsky.social is the default', async () => {
     const seen = stubRoutes({ [`https://bsky.social${path}`]: answer })
 
     expect(await resolveHandle('alice.test')).toBe('did:plc:resolved')
-    expect(seen).toEqual([`https://bsky.social${path}`])
+    expect(seen).toEqual([wellKnown, `https://bsky.social${path}`])
   })
 
-  test('a self-hosted relay is asked over HTTP at the same host', async () => {
-    // A preview environment's handles are unknown to bsky.social; asking there
-    // used to 400 every login on that PDS.
+  test('with neither, a self-hosted relay is asked over HTTP at the same host', async () => {
     const seen = stubRoutes({ [`https://pds.preview.example${path}`]: answer })
 
     expect(await resolveHandle('alice.test', 'wss://pds.preview.example')).toBe('did:plc:resolved')
-    expect(seen).toEqual([`https://pds.preview.example${path}`])
+    expect(seen).toEqual([wellKnown, `https://pds.preview.example${path}`])
   })
 
-  test('the handle is URL-encoded', async () => {
+  test('the handle is URL-encoded on the PDS fallback', async () => {
     const seen = stubRoutes({})
     await resolveHandle('a b&c', 'wss://bsky.network').catch(() => {})
 
-    expect(seen[0]).toContain('handle=a%20b%26c')
+    expect(seen.at(-1)).toContain('handle=a%20b%26c')
   })
 
   test('an unresolvable handle is an error naming the status', async () => {

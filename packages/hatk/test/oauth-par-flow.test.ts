@@ -1,4 +1,11 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
+
+// Handle resolution asks DNS before any PDS; no test here reaches a resolver.
+vi.mock('node:dns/promises', () => ({
+  resolveTxt: async () => {
+    throw new Error('ENOTFOUND')
+  },
+}))
 import {
   buildAuthorizeRedirect,
   getAuthServerMetadata,
@@ -173,7 +180,8 @@ describe('handlePar', () => {
     expect(result.expires_in).toBe(600)
 
     const urls = calls.map((c) => c.url)
-    expect(urls[0]).toContain('com.atproto.identity.resolveHandle?handle=alice.test')
+    // The well-known lookup comes first and finds nothing for a .test name.
+    expect(urls.some((u) => u.includes('com.atproto.identity.resolveHandle?handle=alice.test'))).toBe(true)
     expect(urls).toContain(`${PLC}/${DID}`)
     expect(urls).toContain(PDS_PAR)
 
