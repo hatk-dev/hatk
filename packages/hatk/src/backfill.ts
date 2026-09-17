@@ -266,20 +266,25 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
     const entries = walkMst(blocks, commit.data.$link)
 
     // Delete existing records for this DID before re-importing so deletions are reflected
-    // Only on full imports (no since) — diff CARs only contain changes
+    // Only on full imports (no since) — diff CARs only contain changes.
+    //
+    // Only the rows this repo holds. A record the same account wrote into a
+    // permissioned space is not in its repo: it lives with the space, is read
+    // through the space sync, and stays put across a re-import of the repo.
     if (!lastRev) {
       for (const col of purgeableCollections(collections)) {
         const schema = getSchema(col)
         if (!schema) continue
-        await runSQL(`DELETE FROM ${schema.tableName} WHERE did = $1`, [did])
+        const ownRows = `SELECT uri FROM ${schema.tableName} WHERE did = $1 AND space IS NULL`
         for (const child of schema.children) {
-          await runSQL(`DELETE FROM ${child.tableName} WHERE parent_did = $1`, [did])
+          await runSQL(`DELETE FROM ${child.tableName} WHERE parent_uri IN (${ownRows})`, [did])
         }
         for (const union of schema.unions) {
           for (const branch of union.branches) {
-            await runSQL(`DELETE FROM ${branch.tableName} WHERE parent_did = $1`, [did])
+            await runSQL(`DELETE FROM ${branch.tableName} WHERE parent_uri IN (${ownRows})`, [did])
           }
         }
+        await runSQL(`DELETE FROM ${schema.tableName} WHERE did = $1 AND space IS NULL`, [did])
       }
     }
 

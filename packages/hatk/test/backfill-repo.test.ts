@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import { backfillRepo, configurePlc, pdsFor, purgeableCollections, runBackfill } from '../src/backfill.ts'
+import { unfilteredQuerySQL } from '../src/spaces/guard.ts'
 import { getRepoRetryInfo, getRepoStatus, insertRecord, querySQL, runSQL, setRepoStatus } from '../src/database/db.ts'
 import { storeLexicons } from '../src/database/schema.ts'
 import { setPrivateCollections } from '../src/private-collections.ts'
@@ -239,6 +240,27 @@ describe('backfillRepo', () => {
 
     const rows = (await querySQL(`SELECT text FROM "${PRIVATE_COLLECTION}" WHERE did = $1`, [DID])) as any[]
     expect(rows.map((r) => r.text)).toEqual(['server-side activity'])
+  })
+
+  test('a full import leaves the rows this account wrote into a space alone', async () => {
+    // Those rows are not in the repo — they live with the space and come in
+    // through the space sync, whose revision does not move when the repo is
+    // re-read. Purging them here left them gone until the space was re-synced
+    // by hand.
+    const inSpace = `at://did:plc:club/space/xyz.test.space/self/${DID}/${PUBLIC_COLLECTION}/s1`
+    await insertRecord(PUBLIC_COLLECTION, inSpace, 'cid-s1', DID, profile('in the space'))
+    await insertRecord(PUBLIC_COLLECTION, `at://${DID}/${PUBLIC_COLLECTION}/stale`, 'cid-stale', DID, profile('stale'))
+    stubNetwork({
+      [DID]: buildRepoCar(DID, 'rev-1', [{ collection: PUBLIC_COLLECTION, rkey: 'self', record: profile('alice') }]),
+    })
+
+    expect(await backfillRepo(DID, COLLECTIONS, 30)).toBe(1)
+
+    const rows = (await unfilteredQuerySQL(`SELECT uri, space FROM "${PUBLIC_COLLECTION}" WHERE did = $1 ORDER BY uri`, [
+      DID,
+    ])) as { uri: string; space: string | null }[]
+    expect(rows.map((r) => r.uri)).toEqual([`at://${DID}/${PUBLIC_COLLECTION}/self`, inSpace])
+    expect(rows[1].space).toBe('at://did:plc:club/space/xyz.test.space/self')
   })
 
   test('a repo with a known rev is fetched as a diff and merged, not replaced', async () => {
