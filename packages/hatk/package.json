@@ -36,7 +36,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@bigmoves/lexicon": "^0.2.2",
+    "@bigmoves/lexicon": "^0.2.4",
     "@duckdb/node-api": "^1.4.4-r.1",
     "@hatk/oauth-client": "*",
     "@noble/curves": "^2.4.0",

@@ -4,7 +4,7 @@ import type { OAuthConfig } from './config.ts'
 import { getSession, getServerKey, deleteSession } from './oauth/db.ts'
 import { createDpopProof } from './oauth/dpop.ts'
 import { refreshPdsSession } from './oauth/server.ts'
-import { validateRecordWithSpaces } from './database/validate.ts'
+import { validateRecord } from '@bigmoves/lexicon'
 import { getLexiconArray } from './database/schema.ts'
 import { insertRecord, deleteRecord as dbDeleteRecord } from './database/db.ts'
 import { emit } from './logger.ts'
@@ -242,7 +242,7 @@ export async function pdsCreateRecord(
   viewer: { did: string },
   input: { collection: string; repo?: string; rkey?: string; record: Record<string, unknown> },
 ): Promise<{ uri?: string; cid?: string }> {
-  const validationError = validateRecordWithSpaces(getLexiconArray(), input.collection, input.record)
+  const validationError = validateRecord(getLexiconArray(), input.collection, input.record)
   if (validationError) {
     throw new ProxyError(
       400,
@@ -319,7 +319,7 @@ export async function pdsPutRecord(
   viewer: { did: string },
   input: { collection: string; rkey: string; record: Record<string, unknown>; repo?: string },
 ): Promise<{ uri?: string; cid?: string }> {
-  const validationError = validateRecordWithSpaces(getLexiconArray(), input.collection, input.record)
+  const validationError = validateRecord(getLexiconArray(), input.collection, input.record)
   if (validationError) {
     throw new ProxyError(
       400,
@@ -388,7 +388,7 @@ export async function pdsApplyWrites(
   // Validate all create/update records before sending
   for (const write of input.writes) {
     if (isCreateOrUpdate(write.$type) && write.value) {
-      const validationError = validateRecordWithSpaces(getLexiconArray(), write.collection, write.value)
+      const validationError = validateRecord(getLexiconArray(), write.collection, write.value)
       if (validationError) {
         throw new ProxyError(
           400,

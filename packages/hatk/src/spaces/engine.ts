@@ -31,7 +31,7 @@
 import type { OAuthConfig } from '../config.ts'
 import { getLexicon, getLexiconArray } from '../database/schema.ts'
 import { bulkInsertRecords, deleteRecord, insertRecord, purgeSpaceRecords } from '../database/db.ts'
-import { validateRecordWithSpaces } from '../database/validate.ts'
+import { validateRecord } from '@bigmoves/lexicon'
 import { emit, timer } from '../logger.ts'
 import { isPrivateCollection } from '../private-collections.ts'
 import { listSessionDids } from '../oauth/db.ts'
@@ -221,7 +221,7 @@ function indexable(uri: string, collection: string, record: unknown): record is 
     emit('spaces', 'validation_skip', { uri, collection, error: `$type is ${typed.$type}` })
     return false
   }
-  const problem = validateRecordWithSpaces(getLexiconArray(), collection, { $type: collection, ...typed })
+  const problem = validateRecord(getLexiconArray(), collection, { $type: collection, ...typed })
   if (problem) {
     emit('spaces', 'validation_skip', { uri, collection, path: problem.path, error: problem.message })
     return false

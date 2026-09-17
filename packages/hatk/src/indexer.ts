@@ -17,7 +17,7 @@ import { log, emit, timer } from './logger.ts'
 import { runLabelRules } from './labels.ts'
 import { fireOnCommitHooks } from './hooks.ts'
 import { getLexiconArray } from './database/schema.ts'
-import { validateRecordWithSpaces } from './database/validate.ts'
+import { validateRecord } from '@bigmoves/lexicon'
 
 /**
  * One pending write, buffered to enable batched writes.
@@ -710,7 +710,7 @@ export function applyCommit(did: string, ops: CommitOp[]): void {
     if (!op.cid || !record) continue
     if (record.$type !== op.collection) continue
 
-    const validationError = validateRecordWithSpaces(getLexiconArray(), op.collection, record)
+    const validationError = validateRecord(getLexiconArray(), op.collection, record)
     if (validationError) {
       emit('indexer', 'validation_skip', {
         uri,
