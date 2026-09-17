@@ -86,6 +86,7 @@ Both `defineQuery` and `defineProcedure` handlers receive the same context objec
 | `params`              | object                                     | Typed parameters from the lexicon schema                              |
 | `input`               | object                                     | Request body (procedures only), typed from the lexicon's input schema |
 | `db.query`            | function                                   | Run SQL queries against your SQLite database                          |
+| `spaceFilter`         | function                                   | Permissioned-space gate for hand-written SQL                          |
 | `db.run`              | function                                   | Execute SQL statements (INSERT, UPDATE, DELETE)                       |
 | `viewer`              | `{ did: string; handle?: string }` \| null | The authenticated user, or null                                       |
 | `limit`               | number                                     | Requested page size                                                   |
@@ -113,6 +114,10 @@ Every handler must return `ctx.ok(data)`. This wraps your response with type che
 ### `ctx.db.query()` and `ctx.db.run()`
 
 Run SQL against your SQLite database. Use `db.query()` for SELECT statements that return rows, and `db.run()` for INSERT/UPDATE/DELETE:
+
+::: warning Hand-written SQL and permissioned spaces
+If your instance indexes [permissioned spaces](/guides/spaces), SQL you write yourself has to carry `ctx.spaceFilter` — nothing can inject a predicate into a string you wrote, so this is the one read path that stays open. The typed helpers below apply it already.
+:::
 
 ```typescript
 // Query — returns rows

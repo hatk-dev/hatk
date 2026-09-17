@@ -10,6 +10,7 @@ import {
   resolveHandleToDid,
 } from './database/db.ts'
 import { resolveRecords, buildBaseContext } from './hydrate.ts'
+import { spaceFilterSql } from './spaces/visibility.ts'
 import type { BaseContext, Row } from './hydrate.ts'
 import type { Checked } from './lex-types.ts'
 
@@ -42,6 +43,14 @@ export interface FeedContext {
   isTakendown: (did: string) => Promise<boolean>
   filterTakendownDids: (dids: string[]) => Promise<Set<string>>
   paginate: <T extends { uri: string }>(sql: string, opts?: PaginateOpts) => Promise<PaginateResult<T>>
+  /**
+   * The permissioned-space gate, for SQL this feed builds without `paginate`.
+   *
+   * `paginate` applies it already. This is for a feed that runs its own query
+   * — a raw `ctx.db.query` over a record table has to carry it, or it serves
+   * space rows to whoever asks. See `spaceFilterSql`.
+   */
+  spaceFilter: (alias: string, startIdx: number) => { sql: string; params: string[]; nextIdx: number }
 }
 
 interface FeedHandler {
@@ -103,6 +112,17 @@ export function createPaginate(deps: {
     let paramIdx = userParams.length + 1
     const sqlParams = [...userParams]
 
+    // The permissioned-space gate, applied to whatever table the ordering
+    // names — the same table `cid` is read from. Feed SQL is hand-written and
+    // nothing can inject a predicate into a string somebody else wrote, so
+    // building it here is the only way every feed gets it without every feed
+    // author remembering to. Outside a viewer's scope it is `space IS NULL`
+    // and binds nothing, which is what it compiles to on an instance that
+    // indexes no space.
+    const gate = spaceFilterSql(prefix.replace(/\.$/, ''), paramIdx)
+    sqlParams.push(...gate.params)
+    paramIdx = gate.nextIdx
+
     // Build cursor condition
     let cursorCondition = ''
     if (cursor) {
@@ -114,14 +134,12 @@ export function createPaginate(deps: {
       }
     }
 
-    // Detect existing WHERE and append cursor condition
+    // Detect existing WHERE and append the gate and the cursor condition
     let fullSql = sql
-    if (cursorCondition) {
-      if (/\bWHERE\b/i.test(sql)) {
-        fullSql += ` AND ${cursorCondition}`
-      } else {
-        fullSql += ` WHERE ${cursorCondition}`
-      }
+    const appended = [gate.sql, ...(cursorCondition ? [cursorCondition] : [])]
+    if (appended.length) {
+      const joiner = /\bWHERE\b/i.test(sql) ? 'AND' : 'WHERE'
+      fullSql += ` ${joiner} ${appended.join(' AND ')}`
     }
 
     fullSql += ` ORDER BY ${orderBy} ${order}, ${cidCol} ${order} LIMIT $${paramIdx}`
@@ -170,6 +188,7 @@ export function registerFeed(name: string, generator: ReturnType<typeof defineFe
         isTakendown: isTakendownDid,
         filterTakendownDids,
         paginate: createPaginate(paginateDeps),
+        spaceFilter: spaceFilterSql,
       }
       const result = await generator.generate(ctx)
       if (Array.isArray(result)) {
@@ -228,6 +247,7 @@ export async function initFeeds(feedsDir: string): Promise<void> {
           isTakendown: isTakendownDid,
           filterTakendownDids,
           paginate: createPaginate(paginateDeps),
+          spaceFilter: spaceFilterSql,
         }
         const result = await generator.generate(ctx)
 

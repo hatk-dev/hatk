@@ -44,7 +44,10 @@ function paginate(rows: any[], cursor?: string, limit = 2) {
 test('the first page orders by indexed_at desc with cid as tiebreaker and reads one extra row', async () => {
   const { calls, run } = paginate([])
   await run('SELECT * FROM t')
-  expect(calls[0].sql).toBe('SELECT * FROM t ORDER BY indexed_at DESC, cid DESC LIMIT $1')
+  // The space gate rides along on every page. Outside a viewer's scope it is
+  // `space IS NULL`, which binds nothing and selects exactly the public repo
+  // rows a feed has always returned.
+  expect(calls[0].sql).toBe('SELECT * FROM t WHERE space IS NULL ORDER BY indexed_at DESC, cid DESC LIMIT $1')
   expect(calls[0].params).toEqual([3])
 })
 
@@ -71,7 +74,7 @@ test('a cursor becomes a keyset condition appended to an existing WHERE', async 
   const { calls, run } = paginate([], packCursor('2', 'c2'))
   await run('SELECT * FROM t WHERE did = $1', { params: [ALICE] })
   expect(calls[0].sql).toBe(
-    'SELECT * FROM t WHERE did = $1 AND (indexed_at < $2 OR (indexed_at = $3 AND cid < $4)) ORDER BY indexed_at DESC, cid DESC LIMIT $5',
+    'SELECT * FROM t WHERE did = $1 AND space IS NULL AND (indexed_at < $2 OR (indexed_at = $3 AND cid < $4)) ORDER BY indexed_at DESC, cid DESC LIMIT $5',
   )
   // User params come first so their placeholders stay valid.
   expect(calls[0].params).toEqual([ALICE, '2', '2', 'c2', 3])
@@ -80,20 +83,22 @@ test('a cursor becomes a keyset condition appended to an existing WHERE', async 
 test('a cursor on a query without WHERE introduces one', async () => {
   const { calls, run } = paginate([], packCursor('2', 'c2'))
   await run('SELECT * FROM t')
-  expect(calls[0].sql).toContain('SELECT * FROM t WHERE (indexed_at < $1')
+  expect(calls[0].sql).toContain('SELECT * FROM t WHERE space IS NULL AND (indexed_at < $1')
 })
 
 test('a WHERE inside an identifier does not count as a WHERE clause', async () => {
   // `nowhere_col` contains the letters but not the keyword.
   const { calls, run } = paginate([], packCursor('2', 'c2'))
   await run('SELECT nowhere_col FROM t')
-  expect(calls[0].sql).toContain('FROM t WHERE (')
+  expect(calls[0].sql).toContain('FROM t WHERE space IS NULL AND (')
 })
 
 test('a cursor that cannot be decoded is ignored rather than failing the page', async () => {
   const { calls, run } = paginate([], 'not-a-cursor')
   await run('SELECT * FROM t')
-  expect(calls[0].sql).not.toContain('WHERE')
+  // The cursor contributes nothing, so the only condition left is the gate.
+  expect(calls[0].sql).not.toContain('indexed_at <')
+  expect(calls[0].sql).toContain('WHERE space IS NULL')
   expect(calls[0].params).toEqual([3])
 })
 

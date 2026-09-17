@@ -56,6 +56,7 @@ This feed queries every status record, sorted newest-first, with automatic curso
 | `viewer`              | `{ did: string; handle?: string }` \| null | The authenticated user, or null                             |
 | `ok`                  | function                                   | Wraps your return value with type checking                  |
 | `paginate`            | function                                   | Run a paginated query (handles cursor, ORDER BY, LIMIT)     |
+| `spaceFilter`         | function                                   | Permissioned-space gate for SQL built without `paginate`    |
 | `packCursor`          | function                                   | Encode a `(primary, cid)` pair into an opaque cursor string |
 | `unpackCursor`        | function                                   | Decode a cursor back into `{ primary, cid }` or null        |
 | `isTakendown`         | function                                   | Check if a DID has been taken down                          |
@@ -88,6 +89,8 @@ const { rows, cursor } = await ctx.paginate<{ uri: string }>(
 ```
 
 `paginate` appends cursor conditions, `ORDER BY`, and `LIMIT` to your query. You provide the base `SELECT` and any `WHERE` clauses for filtering; `paginate` adds the rest.
+
+It also applies the [permissioned-space](/guides/spaces) gate, so a feed shows each viewer the spaces they may read and everyone else the public rows alone. A feed that builds SQL without `paginate` has to carry `ctx.spaceFilter` itself.
 
 ### Using the viewer
 

@@ -33,6 +33,7 @@ export default defineConfig({
           { text: 'Labels', link: '/guides/labels' },
           { text: 'OpenGraph', link: '/guides/opengraph' },
           { text: 'Hooks', link: '/guides/hooks' },
+          { text: 'Permissioned Spaces', link: '/guides/spaces' },
         ],
       },
       {

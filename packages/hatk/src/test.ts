@@ -22,6 +22,7 @@ import { validateLexicons } from '@bigmoves/lexicon'
 import { packCursor, unpackCursor, isTakendownDid, filterTakendownDids } from './database/db.ts'
 import { seed as createSeedHelpers, type SeedOpts } from './seed.ts'
 import { setPrivateCollections } from './private-collections.ts'
+import { spaceFilterSql } from './spaces/visibility.ts'
 import type { FeedContext } from './feeds.ts'
 
 export interface TestContext {
@@ -249,6 +250,7 @@ export async function createTestContext(): Promise<TestContext> {
         isTakendown: isTakendownDid,
         filterTakendownDids,
         paginate: createPaginate(paginateDeps),
+        spaceFilter: spaceFilterSql,
       }
     },
     close: async () => {

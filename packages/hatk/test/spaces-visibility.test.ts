@@ -138,3 +138,37 @@ test('reshaping a space row finds its schema despite the longer uri', () => {
   })
   expect(shaped?.value).toEqual({ text: 'hello' })
 })
+
+// --- The gate reaches hand-written SQL through the helpers that build it ---
+
+test('feed pagination applies the gate without the feed asking', async () => {
+  // Feed SQL is hand-written and nothing can inject a predicate into a string
+  // somebody else wrote, so paginate builds it in — otherwise every feed author
+  // would have to remember, and one who forgot would serve a private space.
+  const { createPaginate } = await import('../src/feeds.ts')
+  const { packCursor, unpackCursor, querySQL } = await import('../src/database/db.ts')
+  const paginate = createPaginate({ db: { query: querySQL }, limit: 10, packCursor, unpackCursor })
+
+  const unscoped = await paginate<{ uri: string }>(`SELECT uri, cid, indexed_at FROM "${PUBLIC_COLLECTION}"`)
+  expect(unscoped.rows.map((r) => r.uri)).toEqual([repoUri])
+
+  const scoped = await withReadableSpaces([SPACE_URI], () =>
+    paginate<{ uri: string }>(`SELECT uri, cid, indexed_at FROM "${PUBLIC_COLLECTION}"`),
+  )
+  expect(scoped.rows.map((r) => r.uri).sort()).toEqual([repoUri, spaceUri].sort())
+})
+
+test('feed pagination gates the table its ordering names', async () => {
+  // An aliased query orders by `p.indexed_at`, and the gate has to land on the
+  // same table `cid` is read from or the SQL does not compile.
+  const { createPaginate } = await import('../src/feeds.ts')
+  const { packCursor, unpackCursor, querySQL } = await import('../src/database/db.ts')
+  const paginate = createPaginate({ db: { query: querySQL }, limit: 10, packCursor, unpackCursor })
+
+  const page = await withReadableSpaces([SPACE_URI], () =>
+    paginate<{ uri: string }>(`SELECT p.uri, p.cid, p.indexed_at FROM "${PUBLIC_COLLECTION}" p`, {
+      orderBy: 'p.indexed_at',
+    }),
+  )
+  expect(page.rows.map((r) => r.uri).sort()).toEqual([repoUri, spaceUri].sort())
+})
