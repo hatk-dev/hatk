@@ -1,5 +1,7 @@
 import { beforeEach, expect, test, vi } from 'vitest'
 
+vi.mock('../src/logger.ts', { spy: true })
+
 const verifyNotice = vi.fn()
 const handleWriteNotice = vi.fn()
 const unwatchSpace = vi.fn()
@@ -24,6 +26,7 @@ vi.mock('../src/spaces/viewer.ts', () => ({
   resetViewerSpaces: vi.fn(),
 }))
 
+const { emit } = await import('../src/logger.ts')
 const { createHandler } = await import('../src/server.ts')
 const { clearPendingNotices, NoticeError } = await import('../src/spaces/notify.ts')
 const { setupFixtureDatabase, PUBLIC_COLLECTION } = await import('./fixture.ts')
@@ -98,6 +101,23 @@ test('an unverified notice changes nothing', async () => {
   expect(res.status).toBe(403)
   await vi.advanceTimersByTimeAsync(1000)
   expect(handleWriteNotice).not.toHaveBeenCalled()
+})
+
+test('a refused notice says so in this instance\'s own log', async () => {
+  // Otherwise the refusal is recorded only by the authority, whose log belongs
+  // to somebody else, and an appview that never syncs on a notice looks merely
+  // slow rather than broken. Found exactly that way, on a live deployment.
+  verifyNotice.mockRejectedValue(new NoticeError(403, 'Notice signature does not verify'))
+  await handler({ serviceDid: 'did:web:appview.test' })(
+    post('/xrpc/com.atproto.space.notifyWrite', { space: SPACE, repo: WRITER, rev: '3a' }),
+  )
+
+  expect(emit).toHaveBeenCalledWith('spaces', 'notice_refused', {
+    space: SPACE,
+    repo: WRITER,
+    status: 403,
+    reason: 'Notice signature does not verify',
+  })
 })
 
 test('a malformed notice is refused before it is verified', async () => {

@@ -1431,7 +1431,19 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
             lxm: 'com.atproto.space.notifyWrite',
           })
         } catch (err: any) {
-          if (err instanceof NoticeError) return withCors(jsonError(err.status, err.message, acceptEncoding))
+          if (err instanceof NoticeError) {
+            // Loud on this side too. A refused notice is otherwise visible
+            // only in the authority's log, which belongs to somebody else —
+            // so an appview silently falls back to the sweep and looks merely
+            // slow rather than broken.
+            emit('spaces', 'notice_refused', {
+              space: notice.space,
+              repo: notice.repo,
+              status: err.status,
+              reason: err.message,
+            })
+            return withCors(jsonError(err.status, err.message, acceptEncoding))
+          }
           throw err
         }
         // Debounced per repo: one member writing a gallery sends a notice per
