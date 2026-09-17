@@ -1,3 +1,4 @@
+import { noteReferencedRepos } from './indexer.ts'
 import { parseCarStream } from './car.ts'
 import { cborDecode } from './cbor.ts'
 import { walkMst } from './mst.ts'
@@ -307,6 +308,7 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
           continue
         }
 
+        noteReferencedRepos(collection, rkey, record)
         chunk.push({ collection, uri, cid: entry.cid, did, record })
 
         if (chunk.length >= CHUNK_SIZE) {

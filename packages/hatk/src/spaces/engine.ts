@@ -32,7 +32,7 @@ import type { OAuthConfig } from '../config.ts'
 import { getLexicon, getLexiconArray } from '../database/schema.ts'
 import { bulkInsertRecords, deleteRecord, insertRecord, purgeSpaceRecords } from '../database/db.ts'
 import { validateRecord } from '@bigmoves/lexicon'
-import { trackRepo } from '../indexer.ts'
+import { noteReferencedRepos, trackRepo } from '../indexer.ts'
 import { emit, timer } from '../logger.ts'
 import { isPrivateCollection } from '../private-collections.ts'
 import { listSessionDids } from '../oauth/db.ts'
@@ -293,6 +293,7 @@ async function applyOps(
       skipped++
       continue
     }
+    noteReferencedRepos(op.collection, op.rkey, value)
     await insertRecord(op.collection, uri, op.cid, writer, { $type: op.collection, ...value })
     inserted++
   }
@@ -409,6 +410,7 @@ async function syncFull(
           skipped++
           continue
         }
+        noteReferencedRepos(collection, rec.rkey, rec.value)
         records.push({
           collection,
           uri: spaceRecordUri(watch.space, writer, collection, rec.rkey),

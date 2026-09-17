@@ -45,9 +45,27 @@ export interface ConditionalScopeConfig {
   scopes: string[]
 }
 
+/**
+ * A record that names another repo worth tracking.
+ *
+ * Backfill and the stream find repos by what they write into the signal
+ * collections. Some repos matter because a record points at them instead: a
+ * community's roster names its members, and a member's own repo — their
+ * profile first of all — is what puts a name and a face on everything they
+ * write. Each reference says which collection carries such a record and which
+ * field holds the DID.
+ */
+export interface RepoReference {
+  collection: string
+  /** Dot path to the DID inside the record, or `$rkey` when the record key is the DID. */
+  field: string
+}
+
 export interface BackfillConfig {
   signalCollections?: string[] // defaults to top-level collections
   repos?: string[] // pin specific DIDs to backfill
+  /** Records that name repos to track; see {@link RepoReference}. */
+  references?: RepoReference[]
   fullNetwork: boolean
   parallelism: number
   fetchTimeout: number // seconds
@@ -235,6 +253,7 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
     privateCollections: parsed.privateCollections || [],
     backfill: {
       signalCollections: backfillRaw.signalCollections || undefined,
+      references: backfillRaw.references || undefined,
       repos: env.BACKFILL_REPOS ? env.BACKFILL_REPOS.split(',').map((s) => s.trim()) : backfillRaw.repos || undefined,
       fullNetwork: env.BACKFILL_FULL_NETWORK ? env.BACKFILL_FULL_NETWORK === 'true' : backfillRaw.fullNetwork || false,
       parallelism: parseInt(env.BACKFILL_PARALLELISM || '') || backfillRaw.parallelism || 3,

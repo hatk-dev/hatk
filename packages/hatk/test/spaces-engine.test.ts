@@ -12,7 +12,7 @@ vi.mock('../src/spaces/credential.ts', async () => {
     forgetSpaceCredential: (...args: unknown[]) => forgetSpaceCredential(...args),
   }
 })
-const indexer = vi.hoisted(() => ({ trackRepo: vi.fn() }))
+const indexer = vi.hoisted(() => ({ trackRepo: vi.fn(), noteReferencedRepos: vi.fn() }))
 vi.mock('../src/indexer.ts', () => indexer)
 
 vi.mock('../src/spaces/identity.ts', () => ({

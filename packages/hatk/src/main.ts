@@ -262,6 +262,7 @@ const indexerCore = {
   plcUrl: config.plc,
   collections: collectionSet,
   signalCollections: config.backfill.signalCollections ? new Set(config.backfill.signalCollections) : undefined,
+  references: config.backfill.references,
   pinnedRepos: config.backfill.repos ? new Set(config.backfill.repos) : undefined,
   fetchTimeout: config.backfill.fetchTimeout,
   maxRetries: config.backfill.maxRetries,

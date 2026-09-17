@@ -157,6 +157,41 @@ test('activity in a signal collection backfills an unseen repo', async () => {
   expect(backfillRepo).toHaveBeenCalledWith(did, COLLECTIONS, 1)
 })
 
+// --- references -------------------------------------------------------------
+
+test('a record that names another repo, per the references, brings that repo in', async () => {
+  // A roster's member record names a person whose own repo writes nothing
+  // into a signal collection; the reference is what makes it tracked.
+  const named = 'did:plc:namedbyrecord'
+  await configure({ references: [{ collection: PUBLIC_COLLECTION, field: 'text' }] })
+
+  applyCommit(TRACKED, [create('roster1', { $type: PUBLIC_COLLECTION, text: named })])
+  await awaitBackfill(named)
+  await _flushForTests()
+
+  expect(backfillRepo).toHaveBeenCalledWith(named, COLLECTIONS, 1)
+})
+
+test('a reference to the record key brings in a repo keyed by its DID', async () => {
+  const named = 'did:plc:keyedbydid'
+  await configure({ references: [{ collection: PUBLIC_COLLECTION, field: '$rkey' }] })
+
+  applyCommit(TRACKED, [create(named)])
+  await awaitBackfill(named)
+  await _flushForTests()
+
+  expect(backfillRepo).toHaveBeenCalledWith(named, COLLECTIONS, 1)
+})
+
+test('a referenced field that is not a DID tracks nothing', async () => {
+  await configure({ references: [{ collection: PUBLIC_COLLECTION, field: 'text' }] })
+
+  applyCommit(TRACKED, [create('plain', { $type: PUBLIC_COLLECTION, text: 'just words' })])
+  await _flushForTests()
+
+  expect(backfillRepo).not.toHaveBeenCalled()
+})
+
 test('events arriving during a backfill are replayed rather than dropped', async () => {
   // The repo export is a snapshot; anything the firehose delivers while it is
   // downloading would otherwise fall in the gap between snapshot and live tail.

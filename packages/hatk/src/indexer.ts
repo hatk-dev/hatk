@@ -1,3 +1,4 @@
+import type { RepoReference } from './config.ts'
 import { cborDecode } from './cbor.ts'
 import { parseCarFrame } from './car.ts'
 import { isPrivateCollection } from './private-collections.ts'
@@ -332,6 +333,34 @@ export function awaitBackfill(did: string): Promise<void> {
  * and an unknown one is backfilled like a repo the stream just surfaced.
  * Idempotent and cheap: a repo already known is a map lookup.
  */
+let indexerReferences: RepoReference[] = []
+
+/** Follow a dot path into a record; `$rkey` names the record key itself. */
+function referencedDid(record: Record<string, unknown>, rkey: string, field: string): string | null {
+  if (field === '$rkey') return rkey.startsWith('did:') ? rkey : null
+  let cur: unknown = record
+  for (const part of field.split('.')) {
+    if (!cur || typeof cur !== 'object') return null
+    cur = (cur as Record<string, unknown>)[part]
+  }
+  return typeof cur === 'string' && cur.startsWith('did:') ? cur : null
+}
+
+/**
+ * Track every repo a record names, per the configured references.
+ *
+ * Called wherever a record enters the index — the stream, a backfill, a
+ * space sync — so a roster read any of those ways brings its members' repos
+ * with it.
+ */
+export function noteReferencedRepos(collection: string, rkey: string, record: Record<string, unknown>): void {
+  for (const ref of indexerReferences) {
+    if (ref.collection !== collection) continue
+    const did = referencedDid(record, rkey, ref.field)
+    if (did) trackRepo(did)
+  }
+}
+
 export function trackRepo(did: string): void {
   if (indexerPinnedRepos && !indexerPinnedRepos.has(did)) return
   const status = repoStatusCache.get(did)
@@ -432,6 +461,8 @@ export async function triggerAutoBackfill(did: string, attempt = 0): Promise<voi
  * cursor machinery — only the wire differs.
  */
 export interface IndexerCoreOpts {
+  /** Records that name repos to track; see {@link RepoReference}. */
+  references?: RepoReference[]
   plcUrl: string
   collections: Set<string>
   signalCollections?: Set<string>
@@ -462,6 +493,7 @@ export async function configureIndexer(opts: IndexerCoreOpts): Promise<void> {
   if (opts.ftsRebuildInterval != null) ftsRebuildInterval = opts.ftsRebuildInterval
   indexerCollections = opts.collections
   indexerSignalCollections = opts.signalCollections || opts.collections
+  indexerReferences = opts.references ?? []
   indexerPinnedRepos = opts.pinnedRepos || null
   indexerFetchTimeout = opts.fetchTimeout
   indexerMaxRetries = opts.maxRetries
@@ -740,6 +772,7 @@ export function applyCommit(did: string, ops: CommitOp[]): void {
       continue
     }
 
+    noteReferencedRepos(op.collection, op.rkey, record)
     enqueue({ action: 'put', collection: op.collection, uri, cid: op.cid, authorDid: did, record })
   }
 }
