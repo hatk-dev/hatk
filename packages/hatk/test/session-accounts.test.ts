@@ -107,9 +107,7 @@ test('signing out drops only that account', async () => {
 
 test('the list is capped so the cookie cannot grow without bound', async () => {
   const many = Array.from({ length: 15 }, (_, i) => ({ did: `did:plc:user${i}`, handle: `user${i}.test` }))
-  const parsed = await parseAccountsCookie(
-    request({ [getAccountsCookieName()]: await createAccountsCookie(many) }),
-  )
+  const parsed = await parseAccountsCookie(request({ [getAccountsCookieName()]: await createAccountsCookie(many) }))
   expect(parsed).toHaveLength(10)
   // The most recent survive.
   expect(parsed.at(-1)?.did).toBe('did:plc:user14')

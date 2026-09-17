@@ -56,7 +56,15 @@ beforeAll(async () => {
 test('an FTS index builds and updates for a collection whose columns are SQL keywords', async () => {
   await runSQL(
     `INSERT INTO "${NSID}" (uri, cid, did, indexed_at, "group", "order", created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    ['at://did:plc:a/test.fts.submission/1', 'cid1', 'did:plc:a', '2026-01-01T00:00:00Z', 'did:plc:g', 'first', '2026-01-01T00:00:00Z'],
+    [
+      'at://did:plc:a/test.fts.submission/1',
+      'cid1',
+      'did:plc:a',
+      '2026-01-01T00:00:00Z',
+      'did:plc:g',
+      'first',
+      '2026-01-01T00:00:00Z',
+    ],
   )
   await expect(buildFtsIndex(NSID)).resolves.toBeUndefined()
   await expect(updateFtsRecord(NSID, 'at://did:plc:a/test.fts.submission/1')).resolves.toBeUndefined()

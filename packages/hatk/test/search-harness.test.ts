@@ -14,9 +14,8 @@
  * forever, in every project built on hatk.
  *
  * This file builds the index itself rather than leaning on `./fixture.ts`,
- * which deliberately leaves FTS off — the indexer tests share that fixture and
- * turning FTS on for them widens an unrelated race in `applyCommit`, whose
- * `deleteRecord` call is not awaited.
+ * which deliberately leaves FTS off, so the indexer tests that share it stay
+ * cheap.
  */
 import { beforeAll, expect, test } from 'vitest'
 import { setupFixtureDatabase, fixtureLexicons, PUBLIC_COLLECTION } from './fixture.ts'

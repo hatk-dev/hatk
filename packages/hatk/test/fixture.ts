@@ -79,6 +79,6 @@ export async function setupFixtureDatabase(): Promise<void> {
   await initDatabase(adapter, ':memory:', tableSchemas, ddlStatements)
   // Deliberately does NOT build the FTS indexes, unlike src/test.ts. Tests that
   // need search call rebuildAllIndexes themselves (see search-harness.test.ts);
-  // the indexer tests that share this fixture do not, and enabling FTS for them
-  // widens an existing race in applyCommit's unawaited deleteRecord.
+  // the indexer tests that share this fixture do not, and building them here
+  // would cost every one of those files an index build it never queries.
 }

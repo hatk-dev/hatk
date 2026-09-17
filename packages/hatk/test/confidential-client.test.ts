@@ -77,9 +77,7 @@ test('client assertions verify against the advertised key and claim what a PDS c
   // Drive a real PAR so the assertion is built exactly as it is in production.
   const captured = await captureParBody()
 
-  expect(captured.get('client_assertion_type')).toBe(
-    'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-  )
+  expect(captured.get('client_assertion_type')).toBe('urn:ietf:params:oauth:client-assertion-type:jwt-bearer')
   const assertion = captured.get('client_assertion')!
   expect(assertion).toBeTruthy()
 

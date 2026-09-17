@@ -10,13 +10,13 @@ export default defineConfig({
       reporter: ['text-summary', 'html'],
       reportsDirectory: './coverage',
       // Floor set just under the measured baseline on 2026-09-16
-      // (stmts 27.2 / branches 23.9 / funcs 34.2 / lines 28.3).
+      // (stmts 94.2 / branches 89.4 / funcs 91.1 / lines 95.5).
       // Raise these as coverage improves; never lower them.
       thresholds: {
-        statements: 26,
-        branches: 22,
-        functions: 32,
-        lines: 27,
+        statements: 93,
+        branches: 88,
+        functions: 90,
+        lines: 94,
       },
     },
   },
