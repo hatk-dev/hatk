@@ -150,7 +150,9 @@ let _cdn: { url: string; key: Buffer; salt: Buffer } | null = null
 export function isLocalRelay(): boolean {
   try {
     const host = new URL(_relayUrl).hostname
-    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1' || host.endsWith('.localhost')
+    return (
+      host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1' || host.endsWith('.localhost')
+    )
   } catch {
     return false
   }

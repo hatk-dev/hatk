@@ -171,7 +171,11 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
   const database = env.DATABASE || parsed.database
   const config: HatkConfig = {
     relay: env.RELAY || parsed.relay || 'ws://localhost:2583',
-    relays: env.RELAYS ? env.RELAYS.split(',').map((s) => s.trim()).filter(Boolean) : parsed.relays || [],
+    relays: env.RELAYS
+      ? env.RELAYS.split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : parsed.relays || [],
     jetstream: env.JETSTREAM_URL ? { url: env.JETSTREAM_URL } : parsed.jetstream || null,
     plc: env.DID_PLC_URL || parsed.plc || 'https://plc.directory',
     port: parseInt(env.PORT || '') || parsed.port || 3000,
