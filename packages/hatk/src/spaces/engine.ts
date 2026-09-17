@@ -32,6 +32,7 @@ import type { OAuthConfig } from '../config.ts'
 import { getLexicon, getLexiconArray } from '../database/schema.ts'
 import { bulkInsertRecords, deleteRecord, insertRecord, purgeSpaceRecords } from '../database/db.ts'
 import { validateRecord } from '@bigmoves/lexicon'
+import { trackRepo } from '../indexer.ts'
 import { emit, timer } from '../logger.ts'
 import { isPrivateCollection } from '../private-collections.ts'
 import { listSessionDids } from '../oauth/db.ts'
@@ -533,6 +534,10 @@ export async function reconcileSpace(watch: SpaceWatch): Promise<void> {
     await ensureRegistered(watch, credential)
     const writers = await listWriters(watch, credential)
     const remote = new Set(writers.map((w) => w.did))
+
+    // Whoever writes into the space is somebody the app will name, so their
+    // public repo — profile first of all — is indexed too.
+    for (const writer of writers) trackRepo(writer.did)
 
     let synced = 0
     for (const writer of writers) {

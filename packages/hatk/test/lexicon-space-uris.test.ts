@@ -6,7 +6,7 @@ import { expect, test } from 'vitest'
 // the space. The library has to accept that form or every reply, vote and
 // RSVP is skipped; this pins the version hatk depends on to one that does.
 
-const lexicons = [
+const lexicons: any[] = [
   {
     lexicon: 1,
     id: 'test.hatk.reply',

@@ -321,6 +321,25 @@ export function awaitBackfill(did: string): Promise<void> {
   return entry ? entry.promise : Promise.resolve()
 }
 
+/**
+ * Track a repo no signal collection will ever point at.
+ *
+ * Backfill and the stream find repos by what they write into the signal
+ * collections. A writer in a followed space is wanted for another reason:
+ * their public profile is what puts a name and a face on everything they
+ * wrote there, and an app that only indexes the community's own records
+ * would render every member as a DID. So the space engine names them here,
+ * and an unknown one is backfilled like a repo the stream just surfaced.
+ * Idempotent and cheap: a repo already known is a map lookup.
+ */
+export function trackRepo(did: string): void {
+  if (indexerPinnedRepos && !indexerPinnedRepos.has(did)) return
+  const status = repoStatusCache.get(did)
+  if (status && status !== 'unknown') return
+  repoStatusCache.set(did, 'pending')
+  void triggerAutoBackfill(did)
+}
+
 export async function triggerAutoBackfill(did: string, attempt = 0): Promise<void> {
   if (backfillInFlight.has(did)) return
   if (backfillInFlight.size >= maxConcurrentBackfills) {

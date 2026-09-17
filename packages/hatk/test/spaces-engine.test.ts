@@ -12,6 +12,9 @@ vi.mock('../src/spaces/credential.ts', async () => {
     forgetSpaceCredential: (...args: unknown[]) => forgetSpaceCredential(...args),
   }
 })
+const indexer = vi.hoisted(() => ({ trackRepo: vi.fn() }))
+vi.mock('../src/indexer.ts', () => indexer)
+
 vi.mock('../src/spaces/identity.ts', () => ({
   spaceHostEndpoint: async () => AUTHORITY_HOST,
   repoEndpoint: async (did: string) => `https://${did.replace(/[^a-z0-9]/gi, '')}.test`,
@@ -236,6 +239,19 @@ test('a full read pages until the cursor runs out', async () => {
     spaceRecord(ALICE, PUBLIC_COLLECTION, 'one'),
     spaceRecord(ALICE, PUBLIC_COLLECTION, 'two'),
   ])
+})
+
+test('every writer the space names is handed to the indexer as a repo to track', async () => {
+  // A member's public profile is what names them on everything they wrote
+  // into the space, and nothing they write there is a signal collection.
+  indexer.trackRepo.mockClear()
+  routes = {
+    listRepos: () => ({ repos: [{ did: ALICE, rev: '1' }, { did: BOB, rev: '1' }] }),
+    getLatestCommit: () => ({ commit: { rev: '1' } }),
+    listRecords: () => ({ records: [] }),
+  }
+  await reconcileSpace(watch)
+  expect(indexer.trackRepo.mock.calls.map((c) => c[0]).sort()).toEqual([ALICE, BOB].sort())
 })
 
 // --- Incremental ---
