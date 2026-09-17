@@ -19,14 +19,27 @@ import { fireOnCommitHooks } from './hooks.ts'
 import { getLexiconArray } from './database/schema.ts'
 import { validateRecord } from '@bigmoves/lexicon'
 
-/** A record pending insertion, buffered to enable batched writes. */
-interface WriteBuffer {
-  collection: string
-  uri: string
-  cid: string
-  authorDid: string
-  record: Record<string, any>
-}
+/**
+ * One pending write, buffered to enable batched writes.
+ *
+ * Deletes ride the same buffer as puts rather than going straight to the
+ * database, because the buffer *is* the indexer's ordering guarantee. A put is
+ * deferred to the next flush; a delete applied outside the buffer would
+ * therefore run before puts that arrived earlier (resurrecting the record when
+ * the flush lands) and after puts that arrived later (erasing a newer record).
+ * One queue, drained in arrival order, is what makes either sequence resolve
+ * the way the firehose ordered it.
+ */
+type WriteBuffer =
+  | {
+      action: 'put'
+      collection: string
+      uri: string
+      cid: string
+      authorDid: string
+      record: Record<string, any>
+    }
+  | { action: 'delete'; collection: string; uri: string; authorDid: string }
 
 /** A single normalized repo operation, independent of the wire it arrived on. */
 export interface CommitOp {
@@ -82,24 +95,48 @@ let indexerPlcUrl: string
 let maxConcurrentBackfills = 3
 
 /**
- * Flush the write buffer — insert all buffered records, update the relay cursor,
- * run label rules on inserted records, and trigger FTS rebuilds when the write
- * threshold is reached. Emits a wide event with batch stats.
+ * Flush the write buffer — apply all buffered puts and deletes in arrival
+ * order, update the relay cursor, run label rules on inserted records, and
+ * trigger FTS rebuilds when the write threshold is reached. Emits a wide event
+ * with batch stats.
  */
 async function flushBuffer(): Promise<void> {
   if (buffer.length === 0) return
   const elapsed = timer()
   const batch = buffer.splice(0)
   let insertedCount = 0
+  let deletedCount = 0
   const errors: string[] = []
   let cursorError: string | undefined
 
-  const inserted: WriteBuffer[] = []
+  const inserted: Extract<WriteBuffer, { action: 'put' }>[] = []
+  const applied: Parameters<typeof fireOnCommitHooks>[0] = []
+  // Strictly sequential: two writes to the same URI in one batch must land in
+  // the order they arrived, so nothing here may run concurrently.
   for (const item of batch) {
     try {
-      await insertRecord(item.collection, item.uri, item.cid, item.authorDid, item.record)
-      insertedCount++
-      inserted.push(item)
+      if (item.action === 'delete') {
+        await deleteRecord(item.collection, item.uri)
+        deletedCount++
+        applied.push({
+          action: 'delete',
+          collection: item.collection,
+          uri: item.uri,
+          authorDid: item.authorDid,
+          record: null,
+        })
+      } else {
+        await insertRecord(item.collection, item.uri, item.cid, item.authorDid, item.record)
+        insertedCount++
+        inserted.push(item)
+        applied.push({
+          action: 'create',
+          collection: item.collection,
+          uri: item.uri,
+          authorDid: item.authorDid,
+          record: item.record,
+        })
+      }
     } catch (err: any) {
       errors.push(err.message)
     }
@@ -125,16 +162,9 @@ async function flushBuffer(): Promise<void> {
     }).catch(() => {})
   }
 
-  // Fire on-commit hooks for inserted records (async, non-blocking)
-  fireOnCommitHooks(
-    inserted.map((item) => ({
-      action: 'create' as const,
-      collection: item.collection,
-      uri: item.uri,
-      authorDid: item.authorDid,
-      record: item.record,
-    })),
-  )
+  // Fire on-commit hooks for everything the batch applied, in the order it was
+  // applied (async, non-blocking)
+  fireOnCommitHooks(applied)
 
   // Aggregate collection counts and unique DIDs for wide event
   const collections: Record<string, number> = {}
@@ -147,6 +177,7 @@ async function flushBuffer(): Promise<void> {
   emit('indexer', 'flush', {
     batch_size: batch.length,
     inserted_count: insertedCount,
+    deleted_count: deletedCount,
     error_count: errors.length,
     cursor_seq: lastSeq,
     duration_ms: elapsed(),
@@ -168,16 +199,36 @@ async function flushBuffer(): Promise<void> {
   }
 }
 
+/**
+ * Run a flush once every flush already queued has finished.
+ *
+ * Nothing awaits the flush a full batch triggers, and the interval timer can
+ * fire while that flush is still waiting on the database. Two flushes in flight
+ * hold disjoint batches but interleave their awaits, so a write in the later
+ * batch can reach the database before one in the earlier batch — which would
+ * give back exactly the cross-batch reordering the single buffer removes.
+ * Chaining them costs nothing on an idle indexer and keeps the queue global.
+ */
+let flushChain: Promise<void> = Promise.resolve()
+function enqueueFlush(): Promise<void> {
+  const next = flushChain.then(
+    () => flushBuffer(),
+    () => flushBuffer(),
+  )
+  flushChain = next
+  return next
+}
+
 /** Schedule a flush after FLUSH_INTERVAL_MS if one isn't already pending. */
 function scheduleFlush(): void {
   if (flushTimer) return
-  flushTimer = setTimeout(async () => {
+  flushTimer = setTimeout(() => {
     flushTimer = null
-    await flushBuffer()
+    void enqueueFlush().catch(() => {})
   }, FLUSH_INTERVAL_MS)
 }
 
-/** Add a record to the write buffer. Flushes immediately if BATCH_SIZE is reached. */
+/** Add a write to the buffer. Flushes immediately if BATCH_SIZE is reached. */
 function bufferWrite(item: WriteBuffer): void {
   buffer.push(item)
   if (buffer.length >= BATCH_SIZE) {
@@ -185,7 +236,7 @@ function bufferWrite(item: WriteBuffer): void {
       clearTimeout(flushTimer)
       flushTimer = null
     }
-    flushBuffer()
+    void enqueueFlush().catch(() => {})
   } else {
     scheduleFlush()
   }
@@ -243,16 +294,17 @@ export function _resetCursorStateForTests(): void {
 }
 
 /**
- * Drain the write buffer synchronously instead of waiting out
- * FLUSH_INTERVAL_MS. Lets end-to-end tests assert on rows immediately after
- * feeding a frame.
+ * Drain the write buffer instead of waiting out FLUSH_INTERVAL_MS. Lets
+ * end-to-end tests assert on rows immediately after feeding a frame — deletes
+ * included, since they are buffered alongside puts and so are covered by the
+ * same await.
  */
 export async function _flushForTests(): Promise<void> {
   if (flushTimer) {
     clearTimeout(flushTimer)
     flushTimer = null
   }
-  await flushBuffer()
+  await enqueueFlush()
 }
 
 /**
@@ -312,7 +364,13 @@ export async function triggerAutoBackfill(did: string, attempt = 0): Promise<voi
 
   for (const item of buffered) {
     try {
-      await insertRecord(item.collection, item.uri, item.cid, item.authorDid, item.record)
+      if (item.action === 'delete') {
+        // A delete that arrived mid-backfill has to be replayed after the CAR
+        // export lands, or the export's snapshot of the record outlives it.
+        await deleteRecord(item.collection, item.uri)
+      } else {
+        await insertRecord(item.collection, item.uri, item.cid, item.authorDid, item.record)
+      }
     } catch {
       replayErrors++
     }
@@ -371,29 +429,6 @@ interface IndexerOpts extends IndexerCoreOpts {
   cursor?: string | null
 }
 
-/** Emit a memory diagnostics wide event every 30s for observability. */
-function startMemoryDiagnostics(): void {
-  setInterval(() => {
-    const mem = process.memoryUsage()
-    let pendingBufferItems = 0
-    for (const [, items] of pendingBuffers) {
-      pendingBufferItems += items.length
-    }
-    emit('diagnostics', 'memory', {
-      heap_used_mb: Math.round(mem.heapUsed / 1024 / 1024),
-      heap_total_mb: Math.round(mem.heapTotal / 1024 / 1024),
-      rss_mb: Math.round(mem.rss / 1024 / 1024),
-      external_mb: Math.round(mem.external / 1024 / 1024),
-      array_buffers_mb: Math.round(mem.arrayBuffers / 1024 / 1024),
-      write_buffer_len: buffer.length,
-      pending_buffer_dids: pendingBuffers.size,
-      pending_buffer_items: pendingBufferItems,
-      backfill_in_flight: backfillInFlight.size,
-      repo_status_cache_size: repoStatusCache.size,
-    })
-  }, 30_000)
-}
-
 /**
  * Connect to the AT Protocol relay firehose and begin indexing.
  *
@@ -423,8 +458,6 @@ export async function configureIndexer(opts: IndexerCoreOpts): Promise<void> {
     }
     log(`[indexer] Warmed repo status cache with ${statuses.length} entries`)
   }
-
-  // startMemoryDiagnostics()
 
   // Checkpoint the cursor on a timer regardless of write activity (see
   // checkpointCursor). Guarded so reconnects don't stack intervals; unref'd so
@@ -655,20 +688,21 @@ export function applyCommit(did: string, ops: CommitOp[]): void {
   // For non-signal ops (e.g. profile updates), only process if this DID is already tracked
   if (!hasSignalOp && repoStatus === null) return
 
+  /** Queue a write behind anything already queued for this DID. */
+  const enqueue = (item: WriteBuffer) => {
+    // If DID is mid-backfill, buffer instead of writing directly
+    if (pendingBuffers.has(did)) pendingBuffers.get(did)!.push(item)
+    else bufferWrite(item)
+  }
+
   for (const op of ops) {
     const uri = `at://${did}/${op.collection}/${op.rkey}`
 
     if (op.action === 'delete') {
-      deleteRecord(op.collection, uri)
-      fireOnCommitHooks([
-        {
-          action: 'delete',
-          collection: op.collection,
-          uri,
-          authorDid: did,
-          record: null,
-        },
-      ])
+      // Buffered, not applied here: see {@link WriteBuffer}. The on-commit hook
+      // fires from the flush too, so a handler never sees a delete announced
+      // before the row is actually gone.
+      enqueue({ action: 'delete', collection: op.collection, uri, authorDid: did })
       continue
     }
 
@@ -687,14 +721,7 @@ export function applyCommit(did: string, ops: CommitOp[]): void {
       continue
     }
 
-    const item = { collection: op.collection, uri, cid: op.cid, authorDid: did, record }
-
-    // If DID is mid-backfill, buffer instead of writing directly
-    if (pendingBuffers.has(did)) {
-      pendingBuffers.get(did)!.push(item)
-    } else {
-      bufferWrite(item)
-    }
+    enqueue({ action: 'put', collection: op.collection, uri, cid: op.cid, authorDid: did, record })
   }
 }
 

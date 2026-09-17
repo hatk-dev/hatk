@@ -127,12 +127,17 @@ function computeFtsSchema(collection: string): { searchColNames: string[]; sourc
   const searchColNames: string[] = []
 
   for (const col of schema.columns) {
+    // A blob column holds {ref, mimeType, size} metadata — no searchable text.
+    // This has to be decided on isJson, not on sqlType: SQLite's jsonType is
+    // TEXT, so a blob column would otherwise fall into the plain-TEXT branch
+    // below and be indexed as raw JSON.
+    if (col.isJson && record?.properties?.[col.originalName]?.type === 'blob') continue
+
     if (col.sqlType === 'TEXT') {
       selectExprs.push(`t.${q(col.name)}`)
       searchColNames.push(col.name)
     } else if (col.isJson && record?.properties) {
       const prop = record.properties[col.originalName]
-      if (prop?.type === 'blob') continue // skip blobs
       if (prop && lexicon) {
         const derived = jsonSearchColumns(`t.${q(col.name)}`, prop, lexicon, dialect)
         if (derived.length > 0) {

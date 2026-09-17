@@ -69,6 +69,21 @@ const cache = new Map<string, { png: Buffer; meta?: { title?: string; descriptio
 const CACHE_TTL = 5 * 60 * 1000
 const CACHE_MAX = 200
 
+/**
+ * Read a font file as an ArrayBuffer holding *only* that font's bytes.
+ *
+ * `readFileSync` returns a Buffer that, for small files, is a view into Node's
+ * shared 64 KB allocation pool — so `buffer.buffer` is the whole pool, not the
+ * font, and the font generally starts at a nonzero `byteOffset`. Handing that
+ * to satori makes it read whatever happened to be pooled before the font and
+ * reject the result with "Unsupported OpenType signature". Slice out the
+ * view's own range instead.
+ */
+function readFontData(fontPath: string): ArrayBuffer {
+  const fontData = readFileSync(fontPath)
+  return fontData.buffer.slice(fontData.byteOffset, fontData.byteOffset + fontData.byteLength) as ArrayBuffer
+}
+
 function compilePath(path: string): { pattern: RegExp; paramNames: string[] } {
   const paramNames: string[] = []
   const re = path.replace(/:([^/]+)/g, (_, name) => {
@@ -82,8 +97,7 @@ export async function initOpengraph(ogDir: string): Promise<void> {
   // Load default font
   try {
     const fontPath = resolve(import.meta.dirname, '..', 'fonts', 'Inter-Regular.woff')
-    const fontData = readFileSync(fontPath)
-    defaultFont = { name: 'Inter', data: fontData.buffer as ArrayBuffer, weight: 400, style: 'normal' }
+    defaultFont = { name: 'Inter', data: readFontData(fontPath), weight: 400, style: 'normal' }
     log('[opengraph] loaded default font: Inter')
   } catch {
     console.warn('[opengraph] no default font found at fonts/Inter-Regular.woff — scripts must provide fonts')
@@ -166,8 +180,7 @@ export function registerOgHandler(ogMod: {
   if (!defaultFont) {
     try {
       const fontPath = resolve(import.meta.dirname, '..', 'fonts', 'Inter-Regular.woff')
-      const fontData = readFileSync(fontPath)
-      defaultFont = { name: 'Inter', data: fontData.buffer as ArrayBuffer, weight: 400, style: 'normal' }
+      defaultFont = { name: 'Inter', data: readFontData(fontPath), weight: 400, style: 'normal' }
     } catch {}
   }
 

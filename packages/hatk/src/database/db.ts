@@ -369,6 +369,15 @@ async function applyMigrationChanges(changes: MigrationChange[]): Promise<void> 
   for (const change of changes) {
     const quotedTable = `"${change.table}"`
     const quotedColumn = `"${change.column}"`
+    // Index naming mirrors generateCreateTableSQL and the 'add' branch below:
+    // the table name with dots replaced by underscores, then the column name.
+    const indexName = `idx_${change.table.replace(/\./g, '_')}_${change.column}`
+    // SQLite refuses to drop a column an index still references ("error in
+    // index ... after drop column"), so any DROP COLUMN has to clear it first.
+    const dropColumn = async () => {
+      await run(`DROP INDEX IF EXISTS "${indexName}"`)
+      await run(`ALTER TABLE ${quotedTable} DROP COLUMN ${quotedColumn}`)
+    }
     try {
       switch (change.action) {
         case 'add': {
@@ -376,17 +385,18 @@ async function applyMigrationChanges(changes: MigrationChange[]): Promise<void> 
           emit('migration', 'add_column', { table: change.table, column: change.column, type: change.type })
           const schema = schemas.get(change.table)
           if (schema?.refColumns.includes(change.column)) {
-            const prefix = change.table.replace(/\./g, '_')
-            await run(`CREATE INDEX IF NOT EXISTS idx_${prefix}_${change.column} ON ${quotedTable}(${quotedColumn})`)
+            await run(`CREATE INDEX IF NOT EXISTS ${indexName} ON ${quotedTable}(${quotedColumn})`)
           }
           break
         }
         case 'drop':
-          await run(`ALTER TABLE ${quotedTable} DROP COLUMN ${quotedColumn}`)
+          await dropColumn()
           emit('migration', 'drop_column', { table: change.table, column: change.column })
           break
         case 'retype':
-          await run(`ALTER TABLE ${quotedTable} DROP COLUMN ${quotedColumn}`)
+          // A ref column is always TEXT, so a type change means it stopped
+          // being one — the index goes with the old column and is not rebuilt.
+          await dropColumn()
           await run(`ALTER TABLE ${quotedTable} ADD COLUMN ${quotedColumn} ${change.type}`)
           emit('migration', 'retype_column', { table: change.table, column: change.column, type: change.type })
           break
@@ -879,6 +889,13 @@ export interface BulkRecord {
   record: Record<string, any>
 }
 
+/** Per-process token + counter, so concurrent calls never share a staging table. */
+const STAGING_TOKEN = Math.floor(Math.random() * 0xffffff).toString(36)
+let stagingCounter = 0
+function nextStagingId(): string {
+  return `${STAGING_TOKEN}_${(stagingCounter++).toString(36)}`
+}
+
 export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> {
   if (records.length === 0) return 0
 
@@ -895,198 +912,216 @@ export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> 
     const schema = schemas.get(collection)
     if (!schema) continue
 
-    const stagingTable = `_staging_${collection.replace(/\./g, '_')}`
-    const allCols = ['uri', 'cid', 'did', 'indexed_at', ...schema.columns.map((c) => q(c.name))]
-    const colDefs = [
-      'uri TEXT',
-      'cid TEXT',
-      'did TEXT',
-      'indexed_at TEXT',
-      ...schema.columns.map((c) => {
-        const t = c.sqlType
-        // Use TEXT for timestamp columns in staging (will cast on merge)
-        return `${q(c.name)} ${t === 'TIMESTAMP' || t === 'TIMESTAMPTZ' ? 'TEXT' : t}`
-      }),
-    ]
-
-    await port.execute(`DROP TABLE IF EXISTS ${stagingTable}`, [])
-    await port.execute(`CREATE TABLE ${stagingTable} (${colDefs.join(', ')})`, [])
-
-    const inserter = await port.createBulkInserter(stagingTable, allCols)
-    const now = new Date().toISOString()
-
-    for (const rec of recs) {
-      try {
-        const values: unknown[] = [rec.uri, rec.cid, rec.did, now]
-
-        for (const col of schema.columns) {
-          values.push(resolveColumnValue(col, rec.record))
-        }
-        inserter.append(values)
-        inserted++
-      } catch {
-        // Skip bad records
-      }
-    }
-
-    await inserter.close()
-
-    // Merge into target, filtering rows that would violate NOT NULL
-    const selectCols = allCols.map((name) => {
-      const col = schema.columns.find((c) => q(c.name) === name)
-      if (name === 'indexed_at' || (col && (col.sqlType === 'TIMESTAMP' || col.sqlType === 'TIMESTAMPTZ'))) {
-        return `${dialect.tryCastTimestamp(name)} AS ${name}`
-      }
+    // Staging tables are named per call, not per collection: runBackfill
+    // imports repos in parallel, so two workers on the same collection would
+    // otherwise drop and recreate each other's staging table mid-insert.
+    const stagingTables: string[] = []
+    const stagingName = (suffix: string): string => {
+      const name = `_staging_${collection.replace(/\./g, '_')}${suffix}_${nextStagingId()}`
+      stagingTables.push(name)
       return name
-    })
-    const notNullChecks: string[] = ['uri IS NOT NULL', 'did IS NOT NULL']
-    for (const col of schema.columns) {
-      if (col.notNull) {
-        if (col.sqlType === 'TIMESTAMP' || col.sqlType === 'TIMESTAMPTZ') {
-          notNullChecks.push(`${dialect.tryCastTimestamp(q(col.name))} IS NOT NULL`)
-        } else {
-          notNullChecks.push(`${q(col.name)} IS NOT NULL`)
-        }
-      }
     }
-    const whereClause = notNullChecks.length ? ` WHERE ${notNullChecks.join(' AND ')}` : ''
-    await port.execute(
-      `INSERT OR REPLACE INTO ${schema.tableName} (${allCols.join(', ')}) SELECT ${selectCols.join(', ')} FROM ${stagingTable}${whereClause}`,
-      [],
-    )
-    await port.execute(`DROP TABLE ${stagingTable}`, [])
-
-    // Populate child tables
-    for (const child of schema.children) {
-      const childStagingTable = `_staging_${collection.replace(/\./g, '_')}__${child.fieldName}`
-      const childColDefs = [
-        'parent_uri TEXT',
-        'parent_did TEXT',
-        ...child.columns.map((c) => {
+    try {
+      const stagingTable = stagingName('')
+      const allCols = ['uri', 'cid', 'did', 'indexed_at', ...schema.columns.map((c) => q(c.name))]
+      const colDefs = [
+        'uri TEXT',
+        'cid TEXT',
+        'did TEXT',
+        'indexed_at TEXT',
+        ...schema.columns.map((c) => {
           const t = c.sqlType
+          // Use TEXT for timestamp columns in staging (will cast on merge)
           return `${q(c.name)} ${t === 'TIMESTAMP' || t === 'TIMESTAMPTZ' ? 'TEXT' : t}`
         }),
       ]
-      const childAllCols = ['parent_uri', 'parent_did', ...child.columns.map((c) => q(c.name))]
 
-      await port.execute(`DROP TABLE IF EXISTS ${childStagingTable}`, [])
-      await port.execute(`CREATE TABLE ${childStagingTable} (${childColDefs.join(', ')})`, [])
+      await port.execute(`DROP TABLE IF EXISTS ${stagingTable}`, [])
+      await port.execute(`CREATE TABLE ${stagingTable} (${colDefs.join(', ')})`, [])
 
-      const childInserter = await port.createBulkInserter(childStagingTable, childAllCols)
+      const inserter = await port.createBulkInserter(stagingTable, allCols)
+      const now = new Date().toISOString()
 
       for (const rec of recs) {
-        const items = rec.record[child.fieldName]
-        if (!Array.isArray(items)) continue
+        try {
+          const values: unknown[] = [rec.uri, rec.cid, rec.did, now]
 
-        for (const item of items) {
-          try {
-            const values: unknown[] = [rec.uri, rec.did]
-            for (const col of child.columns) {
-              values.push(resolveRawColumnValue(col, item))
-            }
-            childInserter.append(values)
-          } catch {
-            // Skip bad items
+          for (const col of schema.columns) {
+            values.push(resolveColumnValue(col, rec.record))
           }
+          inserter.append(values)
+          inserted++
+        } catch {
+          // Skip bad records
         }
       }
 
-      await childInserter.close()
+      await inserter.close()
 
-      // Delete existing child rows for these URIs, then merge staging
-      const uriPlaceholders = recs.map((_, i) => `$${i + 1}`).join(',')
-      await port.execute(
-        `DELETE FROM ${child.tableName} WHERE parent_uri IN (${uriPlaceholders})`,
-        recs.map((r) => r.uri),
-      )
-
-      const childSelectCols = childAllCols.map((name) => {
-        const col = child.columns.find((c) => q(c.name) === name)
-        if (col && (col.sqlType === 'TIMESTAMP' || col.sqlType === 'TIMESTAMPTZ')) {
+      // Merge into target, filtering rows that would violate NOT NULL
+      const selectCols = allCols.map((name) => {
+        const col = schema.columns.find((c) => q(c.name) === name)
+        if (name === 'indexed_at' || (col && (col.sqlType === 'TIMESTAMP' || col.sqlType === 'TIMESTAMPTZ'))) {
           return `${dialect.tryCastTimestamp(name)} AS ${name}`
         }
         return name
       })
+      const notNullChecks: string[] = ['uri IS NOT NULL', 'did IS NOT NULL']
+      for (const col of schema.columns) {
+        if (col.notNull) {
+          if (col.sqlType === 'TIMESTAMP' || col.sqlType === 'TIMESTAMPTZ') {
+            notNullChecks.push(`${dialect.tryCastTimestamp(q(col.name))} IS NOT NULL`)
+          } else {
+            notNullChecks.push(`${q(col.name)} IS NOT NULL`)
+          }
+        }
+      }
+      const whereClause = notNullChecks.length ? ` WHERE ${notNullChecks.join(' AND ')}` : ''
       await port.execute(
-        `INSERT INTO ${child.tableName} (${childAllCols.join(', ')}) SELECT ${childSelectCols.join(', ')} FROM ${childStagingTable} WHERE parent_uri IS NOT NULL`,
+        `INSERT OR REPLACE INTO ${schema.tableName} (${allCols.join(', ')}) SELECT ${selectCols.join(', ')} FROM ${stagingTable}${whereClause}`,
         [],
       )
-      await port.execute(`DROP TABLE ${childStagingTable}`, [])
-    }
+      await port.execute(`DROP TABLE ${stagingTable}`, [])
 
-    // Populate union branch tables
-    for (const union of schema.unions) {
-      for (const branch of union.branches) {
-        const branchStagingTable = `_staging_${collection.replace(/\./g, '_')}__${toSnakeCase(union.fieldName)}_${branch.branchName}`
-        const branchColDefs = [
+      // Populate child tables
+      for (const child of schema.children) {
+        const childStagingTable = stagingName(`__${child.fieldName}`)
+        const childColDefs = [
           'parent_uri TEXT',
           'parent_did TEXT',
-          ...branch.columns.map((c) => {
+          ...child.columns.map((c) => {
             const t = c.sqlType
             return `${q(c.name)} ${t === 'TIMESTAMP' || t === 'TIMESTAMPTZ' ? 'TEXT' : t}`
           }),
         ]
-        const branchAllCols = ['parent_uri', 'parent_did', ...branch.columns.map((c) => q(c.name))]
+        const childAllCols = ['parent_uri', 'parent_did', ...child.columns.map((c) => q(c.name))]
 
-        await port.execute(`DROP TABLE IF EXISTS ${branchStagingTable}`, [])
-        await port.execute(`CREATE TABLE ${branchStagingTable} (${branchColDefs.join(', ')})`, [])
+        await port.execute(`DROP TABLE IF EXISTS ${childStagingTable}`, [])
+        await port.execute(`CREATE TABLE ${childStagingTable} (${childColDefs.join(', ')})`, [])
 
-        const branchInserter = await port.createBulkInserter(branchStagingTable, branchAllCols)
+        const childInserter = await port.createBulkInserter(childStagingTable, childAllCols)
 
         for (const rec of recs) {
-          const unionValue = rec.record[union.fieldName]
-          if (!unionValue || typeof unionValue !== 'object') continue
-          if (unionValue.$type !== branch.type) continue
+          const items = rec.record[child.fieldName]
+          if (!Array.isArray(items)) continue
 
-          if (branch.isArray && branch.arrayField) {
-            const items = resolveBranchData(unionValue, branch)[branch.arrayField]
-            if (!Array.isArray(items)) continue
-            for (const item of items) {
-              try {
-                const values: unknown[] = [rec.uri, rec.did]
-                for (const col of branch.columns) {
-                  values.push(resolveRawColumnValue(col, item))
-                }
-                branchInserter.append(values)
-              } catch {
-                // Skip bad items
-              }
-            }
-          } else {
+          for (const item of items) {
             try {
-              const branchData = resolveBranchData(unionValue, branch)
               const values: unknown[] = [rec.uri, rec.did]
-              for (const col of branch.columns) {
-                values.push(resolveRawColumnValue(col, branchData))
+              for (const col of child.columns) {
+                values.push(resolveRawColumnValue(col, item))
               }
-              branchInserter.append(values)
+              childInserter.append(values)
             } catch {
-              // Skip bad records
+              // Skip bad items
             }
           }
         }
 
-        await branchInserter.close()
+        await childInserter.close()
 
-        // Delete existing branch rows for these URIs, then merge staging
+        // Delete existing child rows for these URIs, then merge staging
         const uriPlaceholders = recs.map((_, i) => `$${i + 1}`).join(',')
         await port.execute(
-          `DELETE FROM ${branch.tableName} WHERE parent_uri IN (${uriPlaceholders})`,
+          `DELETE FROM ${child.tableName} WHERE parent_uri IN (${uriPlaceholders})`,
           recs.map((r) => r.uri),
         )
 
-        const branchSelectCols = branchAllCols.map((name) => {
-          const col = branch.columns.find((c) => q(c.name) === name)
+        const childSelectCols = childAllCols.map((name) => {
+          const col = child.columns.find((c) => q(c.name) === name)
           if (col && (col.sqlType === 'TIMESTAMP' || col.sqlType === 'TIMESTAMPTZ')) {
             return `${dialect.tryCastTimestamp(name)} AS ${name}`
           }
           return name
         })
         await port.execute(
-          `INSERT INTO ${branch.tableName} (${branchAllCols.join(', ')}) SELECT ${branchSelectCols.join(', ')} FROM ${branchStagingTable} WHERE parent_uri IS NOT NULL`,
+          `INSERT INTO ${child.tableName} (${childAllCols.join(', ')}) SELECT ${childSelectCols.join(', ')} FROM ${childStagingTable} WHERE parent_uri IS NOT NULL`,
           [],
         )
-        await port.execute(`DROP TABLE ${branchStagingTable}`, [])
+        await port.execute(`DROP TABLE ${childStagingTable}`, [])
+      }
+
+      // Populate union branch tables
+      for (const union of schema.unions) {
+        for (const branch of union.branches) {
+          const branchStagingTable = stagingName(`__${toSnakeCase(union.fieldName)}_${branch.branchName}`)
+          const branchColDefs = [
+            'parent_uri TEXT',
+            'parent_did TEXT',
+            ...branch.columns.map((c) => {
+              const t = c.sqlType
+              return `${q(c.name)} ${t === 'TIMESTAMP' || t === 'TIMESTAMPTZ' ? 'TEXT' : t}`
+            }),
+          ]
+          const branchAllCols = ['parent_uri', 'parent_did', ...branch.columns.map((c) => q(c.name))]
+
+          await port.execute(`DROP TABLE IF EXISTS ${branchStagingTable}`, [])
+          await port.execute(`CREATE TABLE ${branchStagingTable} (${branchColDefs.join(', ')})`, [])
+
+          const branchInserter = await port.createBulkInserter(branchStagingTable, branchAllCols)
+
+          for (const rec of recs) {
+            const unionValue = rec.record[union.fieldName]
+            if (!unionValue || typeof unionValue !== 'object') continue
+            if (unionValue.$type !== branch.type) continue
+
+            if (branch.isArray && branch.arrayField) {
+              const items = resolveBranchData(unionValue, branch)[branch.arrayField]
+              if (!Array.isArray(items)) continue
+              for (const item of items) {
+                try {
+                  const values: unknown[] = [rec.uri, rec.did]
+                  for (const col of branch.columns) {
+                    values.push(resolveRawColumnValue(col, item))
+                  }
+                  branchInserter.append(values)
+                } catch {
+                  // Skip bad items
+                }
+              }
+            } else {
+              try {
+                const branchData = resolveBranchData(unionValue, branch)
+                const values: unknown[] = [rec.uri, rec.did]
+                for (const col of branch.columns) {
+                  values.push(resolveRawColumnValue(col, branchData))
+                }
+                branchInserter.append(values)
+              } catch {
+                // Skip bad records
+              }
+            }
+          }
+
+          await branchInserter.close()
+
+          // Delete existing branch rows for these URIs, then merge staging
+          const uriPlaceholders = recs.map((_, i) => `$${i + 1}`).join(',')
+          await port.execute(
+            `DELETE FROM ${branch.tableName} WHERE parent_uri IN (${uriPlaceholders})`,
+            recs.map((r) => r.uri),
+          )
+
+          const branchSelectCols = branchAllCols.map((name) => {
+            const col = branch.columns.find((c) => q(c.name) === name)
+            if (col && (col.sqlType === 'TIMESTAMP' || col.sqlType === 'TIMESTAMPTZ')) {
+              return `${dialect.tryCastTimestamp(name)} AS ${name}`
+            }
+            return name
+          })
+          await port.execute(
+            `INSERT INTO ${branch.tableName} (${branchAllCols.join(', ')}) SELECT ${branchSelectCols.join(', ')} FROM ${branchStagingTable} WHERE parent_uri IS NOT NULL`,
+            [],
+          )
+          await port.execute(`DROP TABLE ${branchStagingTable}`, [])
+        }
+      }
+    } finally {
+      // Drop on the error path too, so a failed batch leaves nothing behind.
+      for (const name of stagingTables) {
+        try {
+          await port.execute(`DROP TABLE IF EXISTS ${name}`, [])
+        } catch {}
       }
     }
   }
@@ -1148,6 +1183,16 @@ export async function queryRecords(
 
   const { limit = 20, cursor, filters, sort = 'indexed_at', order = 'desc' } = opts
 
+  // `order` is interpolated into the ORDER BY clause, not bound as a
+  // parameter, so it has to be an exact match rather than a trusted caller
+  // value — anything else is SQL reaching the engine verbatim.
+  const direction = String(order).toUpperCase()
+  if (direction !== 'ASC' && direction !== 'DESC') throw new Error(`Invalid sort order: ${order}`)
+
+  // SQLite (and DuckDB) read a negative LIMIT as unbounded, so an unchecked
+  // -1 returns the entire table.
+  if (!Number.isInteger(limit) || limit < 1) throw new Error(`Invalid limit: ${limit}`)
+
   // Validate sort field exists
   const sortCol =
     sort === 'indexed_at' ? 'indexed_at' : schema.columns.find((c) => c.originalName === sort || c.name === sort)
@@ -1162,7 +1207,7 @@ export async function queryRecords(
   if (cursor) {
     const parsed = unpackCursor(cursor)
     if (parsed) {
-      const op = order === 'desc' ? '<' : '>'
+      const op = direction === 'DESC' ? '<' : '>'
       const pSort1 = `$${paramIdx++}`
       const pSort2 = `$${paramIdx++}`
       const pCid = `$${paramIdx++}`
@@ -1185,7 +1230,7 @@ export async function queryRecords(
 
   let sql = `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE (r.status IS NULL OR r.status != 'takendown')`
   if (conditions.length) sql += ' AND ' + conditions.join(' AND ')
-  sql += ` ORDER BY t.${sortName} ${order.toUpperCase()}, t.cid ${order.toUpperCase()} LIMIT $${paramIdx++}`
+  sql += ` ORDER BY t.${sortName} ${direction}, t.cid ${direction} LIMIT $${paramIdx++}`
   params.push(limit + 1) // fetch one extra for cursor
 
   const rows = await all(sql, params)
@@ -1601,6 +1646,21 @@ export async function getChildRows(childTableName: string, parentUris: string[])
   return result
 }
 
+/**
+ * Normalize one stored column back to its record value. JSON columns are
+ * written with JSON.stringify on insert, so they have to be parsed on the way
+ * out — on child and union-branch rows just as much as on the main table.
+ */
+function decodeColumn(col: { isJson: boolean }, raw: unknown): unknown {
+  const val = normalizeValue(raw)
+  if (!col.isJson || typeof val !== 'string') return val
+  try {
+    return JSON.parse(val)
+  } catch {
+    return val
+  }
+}
+
 export function reshapeRow(
   row: any,
   childData?: Map<string, Map<string, any[]>>,
@@ -1650,8 +1710,7 @@ export function reshapeRow(
       value[child.fieldName] = childRows.map((cr) => {
         const item: Record<string, unknown> = {}
         for (const col of child.columns) {
-          const raw = cr[col.name]
-          item[col.originalName] = normalizeValue(raw)
+          item[col.originalName] = decodeColumn(col, cr[col.name])
         }
         return item
       })
@@ -1676,7 +1735,7 @@ export function reshapeRow(
           const items = branchRows.map((br: any) => {
             const item: Record<string, unknown> = {}
             for (const col of branch.columns) {
-              item[col.originalName] = normalizeValue(br[col.name])
+              item[col.originalName] = decodeColumn(col, br[col.name])
             }
             return item
           })
@@ -1687,7 +1746,7 @@ export function reshapeRow(
           const br = branchRows[0]
           const props: Record<string, unknown> = {}
           for (const col of branch.columns) {
-            props[col.originalName] = normalizeValue(br[col.name])
+            props[col.originalName] = decodeColumn(col, br[col.name])
           }
 
           if (branch.wrapperField) {

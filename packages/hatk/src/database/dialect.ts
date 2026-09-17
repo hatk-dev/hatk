@@ -77,7 +77,7 @@ export const DUCKDB_DIALECT: SqlDialect = {
   upsertPrefix: 'INSERT OR REPLACE INTO',
   jsonExtractString: (col, path) => `json_extract_string(${col}, '${path}')`,
   jsonArrayStringAgg: (col, path) => `list_string_agg(json_extract_string(${col}, '${path}'))`,
-  listTablesQuery: `SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_name NOT LIKE '\\_%' ESCAPE '\\\\'`,
+  listTablesQuery: `SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_name NOT LIKE '\\_%' ESCAPE '\\'`,
   checkpointSQL: 'CHECKPOINT',
   currentTimestamp: 'CURRENT_TIMESTAMP',
   ilike: 'ILIKE',
@@ -111,7 +111,7 @@ export const SQLITE_DIALECT: SqlDialect = {
   jsonArrayStringAgg: (col, path) => {
     return `(SELECT group_concat(je.value, ' ') FROM json_each(${col}, '${path}') je)`
   },
-  listTablesQuery: `SELECT name AS table_name FROM sqlite_master WHERE type='table' AND name NOT LIKE '\\_%' ESCAPE '\\\\'`,
+  listTablesQuery: `SELECT name AS table_name FROM sqlite_master WHERE type='table' AND name NOT LIKE '\\_%' ESCAPE '\\'`,
   checkpointSQL: null,
   currentTimestamp: 'CURRENT_TIMESTAMP',
   ilike: 'LIKE',

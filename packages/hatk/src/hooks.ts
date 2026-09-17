@@ -126,6 +126,14 @@ const onCommitHooks: OnCommitHookEntry[] = []
 /**
  * Discover and load the on-login hook from the project's `hooks/` directory.
  * Looks for `on-login.ts` or `on-login.js`. Safe to call if no hook exists.
+ *
+ * The documented contract is `export default defineHook('on-login', handler)`,
+ * which is an object carrying the handler — the same shape the `server/`
+ * scanner recognizes by its `__type` tag. A bare async function is still
+ * accepted, because that is what the legacy `hooks/` directory used before
+ * `defineHook` existed. Anything else is reported rather than installed: a
+ * non-callable hook would otherwise fail silently on every login, since
+ * `fireOnLoginHook` swallows what the hook throws.
  */
 export async function loadOnLoginHook(hooksDir: string): Promise<void> {
   const tsPath = resolve(hooksDir, 'on-login.ts')
@@ -133,8 +141,23 @@ export async function loadOnLoginHook(hooksDir: string): Promise<void> {
   const path = existsSync(tsPath) ? tsPath : existsSync(jsPath) ? jsPath : null
   if (!path) return
   const mod = await import(/* @vite-ignore */ `${path}?t=${Date.now()}`)
-  onLoginHook = mod.default
+  const handler = resolveHookHandler(mod.default)
+  if (!handler) {
+    emit('hooks', 'on_login_load_error', {
+      path,
+      error: 'default export is not a function or a defineHook("on-login", ...) result',
+    })
+    return
+  }
+  onLoginHook = handler
   log('[hooks] on-login hook loaded')
+}
+
+/** Unwrap a hook module's default export into the callable handler, if it has one. */
+function resolveHookHandler(exported: unknown): OnLoginHook | null {
+  if (typeof exported === 'function') return exported as OnLoginHook
+  const handler = (exported as { handler?: unknown } | null | undefined)?.handler
+  return typeof handler === 'function' ? (handler as OnLoginHook) : null
 }
 
 /** Mark a DID as pending, trigger auto-backfill, and wait for completion. */

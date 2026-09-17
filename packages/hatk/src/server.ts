@@ -83,6 +83,35 @@ import { collectionFromUri, isPrivateCollection } from './private-collections.ts
 import { serve } from './adapter.ts'
 import { renderPage } from './renderer.ts'
 
+/**
+ * Parse a client-supplied `limit`, or null if it is not a usable one.
+ *
+ * `parseInt` alone lets `limit=abc` through as NaN and `limit=-5` through as a
+ * negative bound, both of which reach the database driver: the first as a
+ * datatype error, the second as "no limit at all" on SQLite. Neither is a
+ * server fault, so the caller turns a null into a 400.
+ */
+function parseLimit(raw: string | null, fallback: number): number | null {
+  if (raw === null || raw === '') return fallback
+  if (!/^\d+$/.test(raw)) return null
+  const value = Number(raw)
+  return value >= 1 ? value : null
+}
+
+/** Whether `sort` names a column queryRecords can order this collection by. */
+function isSortableField(collection: string, sort: string): boolean {
+  if (sort === 'indexed_at') return true
+  const schema = getSchema(collection)
+  return !!schema?.columns.some((c: any) => c.originalName === sort || c.name === sort)
+}
+
+/** Narrow a client-supplied `order` to the two values that may reach ORDER BY. */
+function parseOrder(raw: string | null | undefined): 'asc' | 'desc' | null | undefined {
+  if (!raw) return undefined
+  const lowered = raw.toLowerCase()
+  return lowered === 'asc' || lowered === 'desc' ? lowered : null
+}
+
 function scopeMissingResponse(acceptEncoding: string | null, handle?: string): Response {
   const res = withCors(json({ error: 'ScopeMissingError', ...(handle ? { handle } : {}) }, 401, acceptEncoding))
   res.headers.append('Set-Cookie', clearSessionCookieHeader())
@@ -108,7 +137,9 @@ export function registerCoreHandlers(collections: string[], oauth: OAuthConfig |
     if (!getSchema(collection)) throw new NotFoundError(`Unknown collection: ${collection}`)
 
     const sort = params.sort || undefined
-    const order = (params.order || undefined) as 'asc' | 'desc' | undefined
+    if (sort && !isSortableField(collection, sort)) throw new InvalidRequestError(`Invalid sort field: ${sort}`)
+    const order = parseOrder(params.order)
+    if (order === null) throw new InvalidRequestError(`Invalid order: ${params.order}`)
     const reserved = new Set(['collection', 'limit', 'cursor', 'sort', 'order'])
     const filters: Record<string, string> = {}
     for (const [key, value] of Object.entries(params)) {
@@ -447,12 +478,23 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
           return withCors(jsonError(404, `Unknown collection: ${collection}`, acceptEncoding))
         if (!getSchema(collection)) return withCors(jsonError(404, `Unknown collection: ${collection}`, acceptEncoding))
 
-        const limit = parseInt(url.searchParams.get('limit') || '20')
+        // Every one of these is attacker-controlled, and queryRecords trusts
+        // what it is handed: `sort` and `order` reach the ORDER BY clause and a
+        // non-numeric `limit` reaches the driver. Rejecting them here keeps a
+        // bad query string a 400 instead of a 500 (or worse).
+        const limit = parseLimit(url.searchParams.get('limit'), 20)
+        if (limit === null) return withCors(jsonError(400, 'Invalid limit parameter', acceptEncoding))
         const cursor = url.searchParams.get('cursor') || undefined
         const sort = url.searchParams.get('sort') || undefined
-        const order = (url.searchParams.get('order') || undefined) as 'asc' | 'desc' | undefined
+        const order = parseOrder(url.searchParams.get('order'))
+        if (order === null)
+          return withCors(jsonError(400, `Invalid order: ${url.searchParams.get('order')}`, acceptEncoding))
+        if (sort && !isSortableField(collection, sort))
+          return withCors(jsonError(400, `Invalid sort field: ${sort}`, acceptEncoding))
 
-        // Collect field filters (everything except reserved params)
+        // Collect field filters (everything except reserved params). An
+        // unknown field is ignored rather than rejected — queryRecords does
+        // the same, and clients rely on passing through extra params.
         const reserved = new Set(['collection', 'limit', 'cursor', 'sort', 'order'])
         const filters: Record<string, string> = {}
         for (const [key, value] of url.searchParams) {
@@ -1035,7 +1077,23 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
             })
           }
           if (!code) return withCors(jsonError(400, 'Missing code', acceptEncoding))
-          const result = await handleCallback(oauth, code, state, iss)
+          let result: Awaited<ReturnType<typeof handleCallback>>
+          try {
+            result = await handleCallback(oauth, code, state, iss)
+          } catch (err: unknown) {
+            // Same convention as the token endpoint below: an error that names
+            // its own status keeps it, anything else is a genuine failure and
+            // falls through to the 500.
+            if (err instanceof OAuthError)
+              return withCors(json({ error: err.code, error_description: err.description }, err.status, acceptEncoding))
+            // A callback matching no pending authorization request is a stale
+            // redirect, not a server fault — the request expired while a login
+            // tab sat open, or the user came back to a login they already
+            // finished. Answer like the other client errors on this route.
+            if (err instanceof Error && err.message === 'No matching authorization request found')
+              return withCors(jsonError(400, err.message, acceptEncoding))
+            throw err
+          }
           const isSecure = requestOrigin.startsWith('https')
           const handle = (await getRepoHandle(result.did)) ?? result.did
           const session: SessionData = { did: result.did, handle }
@@ -1346,7 +1404,9 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         if (!did || !cid) return withCors(jsonError(400, 'Expected /blob/:did/:cid', acceptEncoding))
         try {
           const pds = await pdsFor(did)
-          const upstream = await fetch(`${pds}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(did)}&cid=${encodeURIComponent(cid)}`)
+          const upstream = await fetch(
+            `${pds}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(did)}&cid=${encodeURIComponent(cid)}`,
+          )
           if (!upstream.ok) return withCors(jsonError(upstream.status, 'Blob not found', acceptEncoding))
           return withCors(
             new Response(upstream.body, {

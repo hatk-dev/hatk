@@ -216,7 +216,10 @@ function resolveUnionBranch(
   let arrayField: string | undefined
   let wrapperField: string | undefined
   let propSource: Record<string, any> = branchDef.properties
-  const branchRequired = new Set(branchDef.required || [])
+  // `required` has to travel with propSource: once the columns come from the
+  // item (or wrapper target) def, the outer branch's `required` describes the
+  // wrapper property, not these columns.
+  let branchRequired = new Set<string>(branchDef.required || [])
 
   // Check for single-property wrapper patterns
   const propEntries = Object.entries(branchDef.properties as Record<string, any>)
@@ -230,6 +233,7 @@ function resolveUnionBranch(
         isArray = true
         arrayField = onlyField
         propSource = itemDef.properties
+        branchRequired = new Set<string>(itemDef.required || [])
       }
     } else if ((onlyProp as any).type === 'ref' && (onlyProp as any).ref) {
       // Single ref property (like embed.external wrapping external{})
@@ -237,6 +241,7 @@ function resolveUnionBranch(
       if (refDef?.type === 'object' && refDef.properties) {
         wrapperField = onlyField
         propSource = refDef.properties
+        branchRequired = new Set<string>(refDef.required || [])
       }
     }
   }
