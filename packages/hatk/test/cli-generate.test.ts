@@ -266,6 +266,36 @@ describe('generate types', () => {
     expect(client).not.toContain('defineSetup')
   })
 
+  test('the client sends an array parameter as a repeated key', async () => {
+    // XRPC carries a list as `?dids=a&dids=b`. Joined with commas by
+    // `String(v)` it arrives as one string, and a handler typed against the
+    // lexicon's `string[]` spreads the characters of a DID.
+    writeLexicon('com.example.getActors', {
+      lexicon: 1,
+      id: 'com.example.getActors',
+      defs: {
+        main: {
+          type: 'query',
+          parameters: {
+            type: 'params',
+            required: ['dids'],
+            properties: { dids: { type: 'array', items: { type: 'string' } }, limit: { type: 'integer' } },
+          },
+          output: { encoding: 'application/json', schema: { type: 'object', properties: {} } },
+        },
+      },
+    })
+
+    const run = await runCli(['generate', 'types'])
+    expect(run.exit).toBeNull()
+
+    const client = readFileSync('hatk.generated.client.ts', 'utf-8')
+    expect(client).toContain('if (Array.isArray(v)) for (const item of v) params.append(k, String(item))')
+    // A scalar still takes the last value rather than repeating.
+    expect(client).toContain('else params.set(k, String(v))')
+    expect(client).not.toContain('if (v != null) params.set(k, String(v))')
+  })
+
   test('reports what it generated', async () => {
     writeLexicon('com.example.widget', recordLexicon('com.example.widget'))
     const run = await runCli(['generate', 'types'])

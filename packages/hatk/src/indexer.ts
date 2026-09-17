@@ -298,6 +298,24 @@ export function _resetCursorStateForTests(): void {
 }
 
 /**
+ * Forget which repos this process is tracking.
+ *
+ * The status cache is deliberately process-global — it is what keeps the
+ * commit hot path off the database — and it outlives any table a test
+ * truncates. A suite that clears `_repos` between cases and does not clear
+ * this sees the second case behave as though the first one's repos were
+ * still known, which is how the seam between tracking and backfill went
+ * untested.
+ */
+export function _resetRepoTrackingForTests(): void {
+  repoStatusCache.clear()
+  backfillInFlight.clear()
+  backfillPromises.clear()
+  pendingReschedule.clear()
+  pendingBuffers.clear()
+}
+
+/**
  * Drain the write buffer instead of waiting out FLUSH_INTERVAL_MS. Lets
  * end-to-end tests assert on rows immediately after feeding a frame — deletes
  * included, since they are buffered alongside puts and so are covered by the

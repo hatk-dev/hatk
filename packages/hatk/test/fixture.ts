@@ -91,9 +91,10 @@ export function fixtureLexicons(): Map<string, any> {
   return map
 }
 
-export async function setupFixtureDatabase(): Promise<void> {
-  const nsids = [PRIVATE_COLLECTION, PUBLIC_COLLECTION]
-  const lexicons = fixtureLexicons()
+export async function setupFixtureDatabase(lexicons: Map<string, any> = fixtureLexicons()): Promise<void> {
+  // Every record lexicon in the map gets a table; a space lexicon declares
+  // collections rather than being one, and has none.
+  const nsids = [...lexicons.entries()].filter(([, lex]) => lex.defs?.main?.type === 'record').map(([nsid]) => nsid)
 
   const tableSchemas = []
   const ddlStatements = []

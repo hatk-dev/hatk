@@ -6,7 +6,8 @@ import { storeLexicons } from '../src/database/schema.ts'
 import { setPrivateCollections } from '../src/private-collections.ts'
 import { cidToString } from '../src/cid.ts'
 import { PRIVATE_COLLECTION, PUBLIC_COLLECTION, fixtureLexicons, setupFixtureDatabase } from './fixture.ts'
-import { CidLink, buildCar, cborEncode, cidFor } from './firehose-frame.ts'
+import { cborEncode } from './firehose-frame.ts'
+import { buildRepoCar, carResponse, cidOf } from './repo-car.ts'
 
 // A backfill is a whole repo pulled as a CAR and walked into rows. What these
 // tests hold is the contract with the database: which rows a full import
@@ -21,39 +22,6 @@ const OTHER = 'did:plc:bob'
 const enc = new TextEncoder()
 const now = () => Math.floor(Date.now() / 1000)
 
-interface RepoRecord {
-  collection: string
-  rkey: string
-  record?: Record<string, unknown>
-  /** Raw block bytes in place of an encoded record, for corrupt-block cases. */
-  raw?: Uint8Array
-}
-
-/**
- * A minimal but real repo CAR: a signed-commit stand-in whose `data` points
- * at a one-node MST listing every record. `omitRoot` produces the shape of a
- * diff CAR compacted past the requested rev — blocks but no commit.
- */
-function buildRepoCar(did: string, rev: string, records: RepoRecord[], opts: { omitRoot?: boolean } = {}): Uint8Array {
-  const blocks: Array<{ cid: CidLink; bytes: Uint8Array }> = []
-  const entries = records.map((r) => {
-    const bytes = r.raw ?? cborEncode(r.record)
-    const cid = cidFor(bytes)
-    blocks.push({ cid, bytes })
-    return { p: 0, k: enc.encode(`${r.collection}/${r.rkey}`), v: cid, t: null }
-  })
-  const mstBytes = cborEncode({ l: null, e: entries })
-  const mstCid = cidFor(mstBytes)
-  blocks.push({ cid: mstCid, bytes: mstBytes })
-  const commitBytes = cborEncode({ did, version: 3, data: mstCid, rev, prev: null })
-  const commitCid = cidFor(commitBytes)
-  if (!opts.omitRoot) blocks.push({ cid: commitCid, bytes: commitBytes })
-  return buildCar(commitCid, blocks)
-}
-
-/** The CID string hatk stores for a record, as the CAR parser spells it. */
-const cidOf = (record: Record<string, unknown>) => cidToString(cidFor(cborEncode(record)).bytes)
-
 const profile = (text: string) => ({ $type: PUBLIC_COLLECTION, text })
 
 interface Call {
@@ -65,11 +33,6 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 }
 
-const carResponse = (car: Uint8Array) =>
-  new Response(car.slice().buffer as ArrayBuffer, {
-    status: 200,
-    headers: { 'content-type': 'application/vnd.ipld.car' },
-  })
 
 /**
  * A network where every DID in `repos` resolves to PDS with the handle
