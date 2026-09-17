@@ -9,6 +9,8 @@ import {
   reshapeRow,
 } from './database/db.ts'
 import { blobUrl } from './xrpc.ts'
+import { collectionFromRecordUri } from './spaces/uri.ts'
+import { spaceFilterSql } from './spaces/visibility.ts'
 import type { Row } from './lex-types.ts'
 
 export type { Row }
@@ -23,6 +25,27 @@ export interface BaseContext {
   count: (collection: string, field: string, values: string[]) => Promise<Map<string, number>>
   labels: (uris: string[]) => Promise<Map<string, unknown[]>>
   blobUrl: (did: string, ref: unknown, preset?: string) => string | undefined
+  /**
+   * The permissioned-space gate, for hand-written SQL.
+   *
+   * Every helper on this context applies it already. Raw SQL through
+   * `ctx.db.query` cannot — nothing can inject a predicate into a string
+   * somebody else wrote — so a query that selects from a collection a space
+   * writes into has to apply it itself:
+   *
+   * ```ts
+   * const gate = ctx.spaceFilter('t', 2)
+   * ctx.db.query(
+   *   `SELECT t.* FROM "app.example.post" t WHERE t.did = $1 AND ${gate.sql}`,
+   *   ['did:plc:someone', ...gate.params],
+   * )
+   * ```
+   *
+   * Outside a viewer's scope this is `t.space IS NULL` and binds nothing, so on
+   * an instance that indexes no space it costs one predicate on an indexed
+   * column and changes no result.
+   */
+  spaceFilter: (alias: string, startIdx: number) => { sql: string; params: string[]; nextIdx: number }
 }
 
 // --- Record Resolution ---
@@ -31,11 +54,13 @@ export interface BaseContext {
 export async function resolveRecords(uris: string[]): Promise<Row<unknown>[]> {
   if (uris.length === 0) return []
 
-  // Group URIs by collection for batch fetching
+  // Group URIs by collection for batch fetching. A space record's collection
+  // sits in a different segment than a repo record's, so the position is read
+  // by a parser that knows both shapes rather than inline.
   const byCollection = new Map<string, string[]>()
   for (const uri of uris) {
-    const parts = uri.replace('at://', '').split('/')
-    const col = parts[1]
+    const col = collectionFromRecordUri(uri)
+    if (!col) continue
     if (!byCollection.has(col)) byCollection.set(col, [])
     byCollection.get(col)!.push(uri)
   }
@@ -86,5 +111,6 @@ export function buildBaseContext(viewer: { did: string; handle?: string } | null
     },
     labels: queryLabelsForUris,
     blobUrl,
+    spaceFilter: spaceFilterSql,
   }
 }

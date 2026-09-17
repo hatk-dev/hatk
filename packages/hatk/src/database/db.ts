@@ -5,6 +5,8 @@ import { emit, timer } from '../logger.ts'
 import { OAUTH_DDL } from '../oauth/db.ts'
 import type { DatabasePort } from './ports.ts'
 import { getDialect, type SqlDialect } from './dialect.ts'
+import { collectionFromRecordUri, spaceFromUri } from '../spaces/uri.ts'
+import { spaceFilterSql } from '../spaces/visibility.ts'
 
 let port: DatabasePort
 let dialect: SqlDialect
@@ -99,6 +101,35 @@ export async function initDatabase(
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   )`)
+
+  // Permissioned-space sync state. `_space_watch` is one row per space this
+  // instance follows; `_space_repos` is the writer set, which is the sync
+  // boundary — a space is the aggregation of one repo per writer, each on that
+  // writer's own PDS, so progress is tracked per (space, writer) rather than
+  // per space.
+  //
+  // `reader_did` is the account whose session last minted a credential for the
+  // space. hatk is not itself a member of anything: it reads as somebody who
+  // is, so which somebody worked last is worth remembering.
+  await run(`CREATE TABLE IF NOT EXISTS _space_watch (
+    space TEXT PRIMARY KEY,
+    authority TEXT NOT NULL,
+    space_type TEXT NOT NULL,
+    reader_did TEXT,
+    registered_until TEXT,
+    last_error TEXT,
+    updated_at TEXT NOT NULL
+  )`)
+
+  await run(`CREATE TABLE IF NOT EXISTS _space_repos (
+    space TEXT NOT NULL,
+    did TEXT NOT NULL,
+    pds TEXT,
+    rev TEXT,
+    synced_at TEXT,
+    PRIMARY KEY (space, did)
+  )`)
+  await run(`CREATE INDEX IF NOT EXISTS idx_space_repos_space ON _space_repos(space)`)
 
   // Labels table (atproto-compatible)
   if (dialect.supportsSequences) {
@@ -289,6 +320,7 @@ export async function migrateSchema(tableSchemas: TableSchema[]): Promise<Migrat
     expectedCols.set('uri', 'TEXT')
     expectedCols.set('cid', 'TEXT')
     expectedCols.set('did', 'TEXT')
+    expectedCols.set('space', 'TEXT')
     expectedCols.set('indexed_at', normalizeType(dialect.timestampType))
     for (const col of schema.columns) {
       expectedCols.set(col.name, normalizeType(col.sqlType))
@@ -384,7 +416,10 @@ async function applyMigrationChanges(changes: MigrationChange[]): Promise<void> 
           await run(`ALTER TABLE ${quotedTable} ADD COLUMN ${quotedColumn} ${change.type}`)
           emit('migration', 'add_column', { table: change.table, column: change.column, type: change.type })
           const schema = schemas.get(change.table)
-          if (schema?.refColumns.includes(change.column)) {
+          // `space` is indexed like a ref column but is not one: it is in the
+          // base row rather than the lexicon, so refColumns never names it, and
+          // an existing table that gains it would otherwise scan on every read.
+          if (change.column === 'space' || schema?.refColumns.includes(change.column)) {
             await run(`CREATE INDEX IF NOT EXISTS ${indexName} ON ${quotedTable}(${quotedColumn})`)
           }
           break
@@ -614,9 +649,10 @@ export async function deleteLabels(val: string): Promise<number> {
 export async function getRecentRecords(collection: string, limit: number): Promise<any[]> {
   const schema = schemas.get(collection)
   if (!schema) return []
+  const gate = spaceFilterSql('t', 2)
   const rows = await all(
-    `SELECT t.* FROM ${schema.tableName} t JOIN _repos r ON t.did = r.did WHERE t.indexed_at > r.backfilled_at ORDER BY t.indexed_at DESC LIMIT $1`,
-    [limit],
+    `SELECT t.* FROM ${schema.tableName} t JOIN _repos r ON t.did = r.did WHERE t.indexed_at > r.backfilled_at AND ${gate.sql} ORDER BY t.indexed_at DESC LIMIT $1`,
+    [limit, ...gate.params],
   )
   return rows
 }
@@ -666,11 +702,14 @@ export function buildInsertOp(
   const schema = schemas.get(collection)
   if (!schema) throw new Error(`Unknown collection: ${collection}`)
 
-  const colNames = ['uri', 'cid', 'did', 'indexed_at']
-  const placeholders = ['$1', '$2', '$3', '$4']
-  const values: any[] = [uri, cid, authorDid, new Date().toISOString()]
+  // Derived from the URI rather than passed in. A space record's URI already
+  // names its space, so reading it here means no write path can land a space
+  // row with the column left NULL — which would publish it to every reader.
+  const colNames = ['uri', 'cid', 'did', 'space', 'indexed_at']
+  const placeholders = ['$1', '$2', '$3', '$4', '$5']
+  const values: any[] = [uri, cid, authorDid, spaceFromUri(uri) ?? null, new Date().toISOString()]
 
-  let paramIdx = 5
+  let paramIdx = 6
   for (const col of schema.columns) {
     let rawValue = record[col.originalName]
     // Handle strongRef expansion: subject_uri reads record.subject.uri, subject__cid reads record.subject.cid
@@ -831,6 +870,56 @@ export async function deleteRecord(collection: string, uri: string): Promise<voi
   await run(`DELETE FROM ${schema.tableName} WHERE uri = $1`, [uri])
 }
 
+/**
+ * Remove every row a writer holds in one space.
+ *
+ * Scoped by `(space, did)` rather than by DID alone: the same account can hold
+ * public repo records in the same collections, and a full re-read of one space
+ * must not take those with it. Child and union rows are cleared by parent URI
+ * for the same reason — `parent_did` does not say which space a row came from.
+ */
+export async function purgeSpaceRecords(space: string, did: string, collections: Iterable<string>): Promise<void> {
+  const CHUNK = 500
+  for (const collection of collections) {
+    const schema = schemas.get(collection)
+    if (!schema) continue
+    const rows = await all<{ uri: string }>(`SELECT uri FROM ${schema.tableName} WHERE space = $1 AND did = $2`, [
+      space,
+      did,
+    ])
+    const uris = rows.map((r) => r.uri)
+    if (uris.length === 0) continue
+
+    for (const uri of uris) await deleteFtsRecord(collection, uri)
+
+    for (let i = 0; i < uris.length; i += CHUNK) {
+      const batch = uris.slice(i, i + CHUNK)
+      const placeholders = batch.map((_, j) => `$${j + 1}`).join(',')
+      for (const child of schema.children) {
+        await run(`DELETE FROM ${child.tableName} WHERE parent_uri IN (${placeholders})`, batch)
+      }
+      for (const union of schema.unions) {
+        for (const branch of union.branches) {
+          await run(`DELETE FROM ${branch.tableName} WHERE parent_uri IN (${placeholders})`, batch)
+        }
+      }
+    }
+    await run(`DELETE FROM ${schema.tableName} WHERE space = $1 AND did = $2`, [space, did])
+  }
+}
+
+/** Every writer holding rows for a space, as the index currently has it. */
+export async function listSpaceRecordDids(space: string, collections: Iterable<string>): Promise<string[]> {
+  const dids = new Set<string>()
+  for (const collection of collections) {
+    const schema = schemas.get(collection)
+    if (!schema) continue
+    const rows = await all<{ did: string }>(`SELECT DISTINCT did FROM ${schema.tableName} WHERE space = $1`, [space])
+    for (const row of rows) dids.add(row.did)
+  }
+  return [...dids]
+}
+
 export async function insertLabels(
   labels: Array<{ src: string; uri: string; val: string; neg?: boolean; cts?: string; exp?: string }>,
 ): Promise<void> {
@@ -923,11 +1012,12 @@ export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> 
     }
     try {
       const stagingTable = stagingName('')
-      const allCols = ['uri', 'cid', 'did', 'indexed_at', ...schema.columns.map((c) => q(c.name))]
+      const allCols = ['uri', 'cid', 'did', 'space', 'indexed_at', ...schema.columns.map((c) => q(c.name))]
       const colDefs = [
         'uri TEXT',
         'cid TEXT',
         'did TEXT',
+        'space TEXT',
         'indexed_at TEXT',
         ...schema.columns.map((c) => {
           const t = c.sqlType
@@ -944,7 +1034,7 @@ export async function bulkInsertRecords(records: BulkRecord[]): Promise<number> 
 
       for (const rec of recs) {
         try {
-          const values: unknown[] = [rec.uri, rec.cid, rec.did, now]
+          const values: unknown[] = [rec.uri, rec.cid, rec.did, spaceFromUri(rec.uri) ?? null, now]
 
           for (const col of schema.columns) {
             values.push(resolveColumnValue(col, rec.record))
@@ -1228,6 +1318,12 @@ export async function queryRecords(
     }
   }
 
+  // Space rows are served only to a read scoped to that space; see spaces/visibility.ts.
+  const gate = spaceFilterSql('t', paramIdx)
+  conditions.push(gate.sql)
+  params.push(...gate.params)
+  paramIdx = gate.nextIdx
+
   let sql = `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE (r.status IS NULL OR r.status != 'takendown')`
   if (conditions.length) sql += ' AND ' + conditions.join(' AND ')
   sql += ` ORDER BY t.${sortName} ${direction}, t.cid ${direction} LIMIT $${paramIdx++}`
@@ -1275,9 +1371,10 @@ export async function queryRecords(
 
 export async function getRecordByUri(uri: string): Promise<any | null> {
   for (const [_collection, schema] of schemas) {
+    const gate = spaceFilterSql('t', 2)
     const rows = await all(
-      `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE t.uri = $1 AND (r.status IS NULL OR r.status != 'takendown')`,
-      [uri],
+      `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE t.uri = $1 AND ${gate.sql} AND (r.status IS NULL OR r.status != 'takendown')`,
+      [uri, ...gate.params],
     )
     if (rows.length > 0) {
       const row = rows[0]
@@ -1312,9 +1409,10 @@ export async function getRecordsByUris(collection: string, uris: string[]): Prom
   const schema = schemas.get(collection)
   if (!schema) return []
   const placeholders = uris.map((_, i) => `$${i + 1}`).join(',')
+  const gate = spaceFilterSql('t', uris.length + 1)
   const rows = await all(
-    `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE t.uri IN (${placeholders}) AND (r.status IS NULL OR r.status != 'takendown')`,
-    uris,
+    `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE t.uri IN (${placeholders}) AND ${gate.sql} AND (r.status IS NULL OR r.status != 'takendown')`,
+    [...uris, ...gate.params],
   )
 
   // Batch-fetch child rows for all URIs
@@ -1413,12 +1511,14 @@ export async function searchRecords(
 
         // Fetch full records for matched URIs
         const placeholders = uriList.map((_, i) => `$${i + 1}`).join(', ')
+        const gate = spaceFilterSql('m', uriList.length + 1)
         const rows = await all(
           `SELECT m.* FROM ${schema.tableName} m
           LEFT JOIN _repos r ON m.did = r.did
           WHERE m.uri IN (${placeholders})
+          AND ${gate.sql}
           AND (r.status IS NULL OR r.status != 'takendown')`,
-          uriList,
+          [...uriList, ...gate.params],
         )
 
         // Re-attach scores and sort
@@ -1458,14 +1558,20 @@ export async function searchRecords(
       }
     }
     const greatestExpr = dialect.greatest(simExprs)
+    const fuzzyGate = spaceFilterSql('t', 3)
     const fuzzySQL = `SELECT t.*, ${greatestExpr} AS fuzzy_score
       FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did
       WHERE ${greatestExpr} >= 0.8
+      AND ${fuzzyGate.sql}
       ORDER BY fuzzy_score DESC
       LIMIT $2`
 
     try {
-      const fuzzyRows = await all<Record<string, unknown>>(fuzzySQL, [query, remaining + existingUris.size])
+      const fuzzyRows = await all<Record<string, unknown>>(fuzzySQL, [
+        query,
+        remaining + existingUris.size,
+        ...fuzzyGate.params,
+      ])
       phasesUsed.push('fuzzy')
       for (const row of fuzzyRows) {
         if (bm25Results.length >= limit) break
@@ -1526,9 +1632,11 @@ export function getSchema(collection: string): TableSchema | undefined {
 export async function countByField(collection: string, field: string, value: string): Promise<number> {
   const schema = schemas.get(collection)
   if (!schema) return 0
-  const rows = await all<{ count: number }>(`SELECT COUNT(*) as count FROM ${schema.tableName} WHERE ${field} = $1`, [
-    value,
-  ])
+  const gate = spaceFilterSql('', 2)
+  const rows = await all<{ count: number }>(
+    `SELECT COUNT(*) as count FROM ${schema.tableName} WHERE ${field} = $1 AND ${gate.sql}`,
+    [value, ...gate.params],
+  )
   return Number(rows[0]?.count || 0)
 }
 
@@ -1541,9 +1649,10 @@ export async function countByFieldBatch(
   const schema = schemas.get(collection)
   if (!schema) return new Map()
   const placeholders = values.map((_, i) => `$${i + 1}`).join(',')
+  const gate = spaceFilterSql('', values.length + 1)
   const rows = await all<Record<string, unknown>>(
-    `SELECT ${field}, COUNT(*) as count FROM ${schema.tableName} WHERE ${field} IN (${placeholders}) GROUP BY ${field}`,
-    values,
+    `SELECT ${field}, COUNT(*) as count FROM ${schema.tableName} WHERE ${field} IN (${placeholders}) AND ${gate.sql} GROUP BY ${field}`,
+    [...values, ...gate.params],
   )
   const result = new Map<string, number>()
   for (const row of rows) {
@@ -1555,7 +1664,11 @@ export async function countByFieldBatch(
 export async function findByField(collection: string, field: string, value: string): Promise<any | null> {
   const schema = schemas.get(collection)
   if (!schema) return null
-  const rows = await all(`SELECT * FROM ${schema.tableName} WHERE ${field} = $1 LIMIT 1`, [value])
+  const gate = spaceFilterSql('', 2)
+  const rows = await all(`SELECT * FROM ${schema.tableName} WHERE ${field} = $1 AND ${gate.sql} LIMIT 1`, [
+    value,
+    ...gate.params,
+  ])
   return rows[0] || null
 }
 
@@ -1568,9 +1681,10 @@ export async function findByFieldBatch(
   const schema = schemas.get(collection)
   if (!schema) return new Map()
   const placeholders = values.map((_, i) => `$${i + 1}`).join(',')
+  const gate = spaceFilterSql('t', values.length + 1)
   const rows = await all<Record<string, any>>(
-    `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE t.${field} IN (${placeholders})`,
-    values,
+    `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE t.${field} IN (${placeholders}) AND ${gate.sql}`,
+    [...values, ...gate.params],
   )
   // Attach child data if this collection has decomposed arrays
   if (schema.children.length > 0 && rows.length > 0) {
@@ -1617,11 +1731,15 @@ export async function findUriByFields(
   if (!schema) return null
   const where = conditions.map((c, i) => `${c.field} = $${i + 1}`).join(' AND ')
   const params = conditions.map((c) => c.value)
-  const rows = await all<{ uri: string }>(`SELECT uri FROM ${schema.tableName} WHERE ${where} LIMIT 1`, params)
+  const gate = spaceFilterSql('', conditions.length + 1)
+  const rows = await all<{ uri: string }>(
+    `SELECT uri FROM ${schema.tableName} WHERE ${where} AND ${gate.sql} LIMIT 1`,
+    [...params, ...gate.params],
+  )
   return rows[0]?.uri || null
 }
 
-const ENVELOPE_KEYS = new Set(['uri', 'cid', 'did', 'handle', 'indexed_at'])
+const ENVELOPE_KEYS = new Set(['uri', 'cid', 'did', 'space', 'handle', 'indexed_at'])
 const INTERNAL_KEYS = new Set(['__childData', '__unionData'])
 
 export function normalizeValue(v: any): any {
@@ -1667,8 +1785,10 @@ export function reshapeRow(
   unionData?: Map<string, Map<string, Map<string, any[]>>>,
 ): Row<unknown> | null {
   if (!row) return null
-  // Derive collection from URI (at://did/collection/rkey)
-  const collection = row.uri?.split('/')?.[3]
+  // A space record's URI puts the collection in a different segment than a
+  // repo record's. Reading it positionally found no schema for space rows,
+  // which left their columns snake_cased and their JSON columns unparsed.
+  const collection = row.uri ? collectionFromRecordUri(row.uri) : undefined
   const schema = collection ? schemas.get(collection) : null
   // Build snake→camel map and JSON column set from schema
   const nameMap = new Map<string, string>()
@@ -1701,6 +1821,10 @@ export function reshapeRow(
       }
     }
   }
+
+  // Only space rows carry a space, and an explicit null on every other row
+  // would put a field on the wire that means nothing there.
+  if (envelope.space == null) delete envelope.space
 
   // Reconstruct decomposed array fields from child data
   if (schema && childData) {

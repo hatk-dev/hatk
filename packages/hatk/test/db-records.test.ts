@@ -149,10 +149,14 @@ describe('buildInsertOp', () => {
       text: 'hi',
       createdAt: '2026-01-01T00:00:00.000Z',
     })
-    expect(sql).toMatch(/^INSERT OR REPLACE INTO "test\.hatk\.post" \(uri, cid, did, indexed_at, "text", "created_at"/)
-    expect(params.slice(0, 3)).toEqual([postUri(ALICE, 'op'), 'cid-op', ALICE])
-    expect(params[3]).toMatch(/^\d{4}-/) // indexed_at stamped now
-    expect(params[4]).toBe('hi')
+    expect(sql).toMatch(
+      /^INSERT OR REPLACE INTO "test\.hatk\.post" \(uri, cid, did, space, indexed_at, "text", "created_at"/,
+    )
+    // space is null: a repo URI names no space, and it is read off the URI
+    // rather than passed, so no caller can leave it unset by accident.
+    expect(params.slice(0, 4)).toEqual([postUri(ALICE, 'op'), 'cid-op', ALICE, null])
+    expect(params[4]).toMatch(/^\d{4}-/) // indexed_at stamped now
+    expect(params[5]).toBe('hi')
   })
 
   test('expands a strongRef into its uri and cid, and JSON-encodes structured values', () => {

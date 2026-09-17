@@ -1,3 +1,5 @@
+import { collectionFromRecordUri } from './spaces/uri.ts'
+
 /**
  * Collections that are indexed and queryable in-process but must never be
  * served by the built-in dev.hatk.* record endpoints.
@@ -16,10 +18,14 @@ export function isPrivateCollection(nsid: string | null | undefined): boolean {
 }
 
 /**
- * The collection segment of an AT-URI: at://{did}/{collection}/{rkey}.
- * Splitting yields ['at:', '', did, collection, rkey].
+ * The collection segment of a record AT-URI, in either shape.
+ *
+ * A repo record is `at://{did}/{collection}/{rkey}`; a space record is
+ * `at://{authority}/space/{type}/{skey}/{writer}/{collection}/{rkey}`, where
+ * the position a collection used to occupy holds the literal 'space'. Reading
+ * it positionally without that distinction reports every space record as
+ * belonging to a collection named 'space', which no guard would match.
  */
 export function collectionFromUri(uri: string): string | undefined {
-  const parts = uri.split('/')
-  return parts.length > 4 ? parts[3] : undefined
+  return collectionFromRecordUri(uri)
 }

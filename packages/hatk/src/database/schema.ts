@@ -388,10 +388,16 @@ export function generateTableSchema(
 
 // Generate CREATE TABLE SQL from a TableSchema
 export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect = DUCKDB_DIALECT): string {
+  // `space` is the permissioned space a row came from, and NULL for everything
+  // off the firehose. It is the only per-row visibility marker in the schema:
+  // a space record is readable by whoever the space's authority admits, so no
+  // read may serve one without knowing who is asking. NULL means "public repo
+  // data", which is what every existing row is.
   const lines: string[] = [
     '  uri TEXT PRIMARY KEY',
     '  cid TEXT',
     '  did TEXT NOT NULL',
+    '  space TEXT',
     `  indexed_at ${dialect.timestampType} NOT NULL`,
   ]
 
@@ -406,6 +412,9 @@ export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect 
   const indexes = [
     `CREATE INDEX IF NOT EXISTS idx_${prefix}_indexed ON ${schema.tableName}(indexed_at DESC);`,
     `CREATE INDEX IF NOT EXISTS idx_${prefix}_author ON ${schema.tableName}(did);`,
+    // Every read that serves space rows filters on this column, and every read
+    // that does not still tests it for NULL.
+    `CREATE INDEX IF NOT EXISTS idx_${prefix}_space ON ${schema.tableName}(space);`,
   ]
 
   // Index ref columns for hydration lookups
@@ -478,11 +487,13 @@ export function buildSchemas(
       uri TEXT PRIMARY KEY,
       cid TEXT,
       did TEXT NOT NULL,
+      space TEXT,
       indexed_at ${dialect.timestampType} NOT NULL,
       data ${dialect.jsonType}
     );
     CREATE INDEX IF NOT EXISTS idx_${nsid.replace(/\./g, '_')}_indexed ON "${nsid}"(indexed_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_${nsid.replace(/\./g, '_')}_author ON "${nsid}"(did);`
+    CREATE INDEX IF NOT EXISTS idx_${nsid.replace(/\./g, '_')}_author ON "${nsid}"(did);
+    CREATE INDEX IF NOT EXISTS idx_${nsid.replace(/\./g, '_')}_space ON "${nsid}"(space);`
       schemas.push({ collection: nsid, tableName: `"${nsid}"`, columns: [], refColumns: [], children: [], unions: [] })
       ddlStatements.push(genericDDL)
       continue

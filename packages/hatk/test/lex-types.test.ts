@@ -311,6 +311,9 @@ test('Row wraps a record value with its repo metadata', () => {
     uri: string
     cid: string
     did: string
+    // Present only on a record read out of a permissioned space; public repo
+    // data carries no space and the field is left off the wire entirely.
+    space?: string
     handle?: string
     indexed_at?: string
     value: { text: string }

@@ -86,6 +86,35 @@ export interface CdnConfig {
   salt: string // hex-encoded HMAC salt for imgproxy URL signing
 }
 
+/**
+ * Indexing permissioned spaces (proposal 0016).
+ *
+ * A space's records never reach a firehose, so they are read from the
+ * authority and each writer's own host instead. Doing that at all requires
+ * `oauth`: hatk is a member of nothing and borrows a signed-in member's
+ * delegation to get a credential, so with no sessions there is no way in.
+ *
+ * Absent by default. An instance that does not set this indexes nothing from a
+ * space and serves no space rows, which is what every existing deployment does
+ * today.
+ */
+export interface SpacesConfig {
+  /**
+   * Space type NSIDs to follow. A space of any other type is refused rather
+   * than indexed, so a lexicon vendored for reference cannot quietly become a
+   * subscription.
+   */
+  types: string[]
+  /** Space refs to follow at boot, for the spaces an instance always wants. */
+  watch?: string[]
+  /**
+   * Seconds between reconcile sweeps. Write notices are best-effort — the
+   * reference host forwards each once and logs the failure — so the sweep is
+   * what makes sync correct rather than merely prompt.
+   */
+  reconcileInterval?: number
+}
+
 export interface JetstreamConfig {
   /** Instance base URL, e.g. `wss://jetstream.us-east.bsky.network`. */
   url: string
@@ -123,15 +152,19 @@ export interface HatkConfig {
   oauth: OAuthConfig | null
   push: PushConfig | null // push notification delivery (null to disable)
   admins: string[] // DIDs allowed to access /admin/* endpoints
+  spaces: SpacesConfig | null // permissioned-space indexing (null to disable)
 }
 
 /** Input type for defineConfig — fields that have defaults are optional. */
-export type HatkConfigInput = Partial<Omit<HatkConfig, 'oauth' | 'backfill' | 'push' | 'cdn' | 'jetstream'>> & {
+export type HatkConfigInput = Partial<
+  Omit<HatkConfig, 'oauth' | 'backfill' | 'push' | 'cdn' | 'jetstream' | 'spaces'>
+> & {
   cdn?: CdnConfig | null
   oauth?: (Partial<OAuthConfig> & { clients: OAuthClientConfig[] }) | null
   backfill?: Partial<BackfillConfig>
   push?: PushConfig | null
   jetstream?: JetstreamConfig | null
+  spaces?: SpacesConfig | null
 }
 
 /** Identity function that provides type inference for hatk config files. */
@@ -200,6 +233,17 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
     oauth: null,
     push: parsed.push || null,
     admins: env.ADMINS ? env.ADMINS.split(',').map((s) => s.trim()) : parsed.admins || [],
+    spaces: parsed.spaces
+      ? {
+          types: parsed.spaces.types || [],
+          watch: env.SPACES_WATCH
+            ? env.SPACES_WATCH.split(',')
+                .map((s) => s.trim())
+                .filter(Boolean)
+            : parsed.spaces.watch || [],
+          reconcileInterval: parseInt(env.SPACES_RECONCILE_INTERVAL || '') || parsed.spaces.reconcileInterval || 300,
+        }
+      : null,
   }
 
   const oauthRaw = parsed.oauth

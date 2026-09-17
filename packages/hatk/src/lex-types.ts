@@ -23,6 +23,8 @@ export type Row<T = unknown> = {
   uri: string
   cid: string
   did: string
+  /** The permissioned space this record came from. Absent for public repo data. */
+  space?: string
   handle?: string
   indexed_at?: string
   value: T

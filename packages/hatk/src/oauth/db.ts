@@ -208,6 +208,21 @@ export async function getSession(did: string): Promise<any | null> {
   return rows.length > 0 ? rows[0] : null
 }
 
+/**
+ * Every DID this instance holds a PDS session for, most recently refreshed
+ * first.
+ *
+ * Space indexing reads as a member rather than as itself, so this is the set of
+ * people it could borrow a delegation from. Ordered by recency because a
+ * session refreshed lately is the one most likely to still work.
+ */
+export async function listSessionDids(): Promise<string[]> {
+  const rows = (await querySQL('SELECT did FROM _oauth_sessions ORDER BY updated_at DESC, created_at DESC')) as {
+    did: string
+  }[]
+  return rows.map((r) => r.did)
+}
+
 export async function deleteSession(did: string): Promise<void> {
   await runSQL('DELETE FROM _oauth_sessions WHERE did = $1', [did])
 }

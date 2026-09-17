@@ -29,6 +29,7 @@ import { loadOnLoginHook } from './hooks.ts'
 import { enabledPushTransports, initPush, isPushEnabled } from './push.ts'
 import { initSetup } from './setup.ts'
 import { initServer } from './server-init.ts'
+import { startSpaces } from './spaces/index.ts'
 
 const configPath = process.argv[2] || 'hatk.config.ts'
 const configDir = dirname(resolve(configPath))
@@ -264,6 +265,18 @@ if (config.jetstream) {
 
 // 7. Run backfill in background
 runBackfillAndRestart()
+
+// 8. Follow permissioned spaces, if this instance indexes any. Started after
+// the firehose and backfill because it is neither: a space has no stream to
+// tail, so it is a sweep on a timer rather than a source to resume.
+if (config.spaces) {
+  startSpaces({
+    spaces: config.spaces,
+    oauth: config.oauth,
+    plc: config.plc,
+    collections: collectionSet,
+  })
+}
 
 // Graceful shutdown
 process.on('SIGTERM', () => {

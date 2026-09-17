@@ -25,6 +25,33 @@ import { setSearchPort } from '../src/database/fts.ts'
 export const PRIVATE_COLLECTION = 'social.switchback.activity'
 export const PUBLIC_COLLECTION = 'app.bsky.actor.profile'
 
+/**
+ * A space type, for the permissioned-space tests.
+ *
+ * A space lexicon is not a record lexicon: it declares which collections a
+ * space of that type holds, which is how a syncer learns what to read without
+ * being told. It creates no table of its own.
+ */
+export const SPACE_TYPE = 'test.hatk.board'
+export const SPACE_SKEY = 'self'
+export const SPACE_AUTHORITY = 'did:plc:authority'
+export const SPACE_URI = `at://${SPACE_AUTHORITY}/space/${SPACE_TYPE}/${SPACE_SKEY}`
+
+function spaceLexicon() {
+  return {
+    lexicon: 1,
+    id: SPACE_TYPE,
+    defs: {
+      main: {
+        type: 'space',
+        key: 'literal:self',
+        name: 'Test board',
+        collections: [PUBLIC_COLLECTION, PRIVATE_COLLECTION, 'app.bsky.feed.unindexed'],
+      },
+    },
+  }
+}
+
 /** Minimal record lexicon with one required, searchable (TEXT) field. */
 function minimalLexicon(nsid: string) {
   return {
@@ -59,7 +86,9 @@ function minimalLexicon(nsid: string) {
  * it has no lexicon for, so without them every record is skipped as invalid.
  */
 export function fixtureLexicons(): Map<string, any> {
-  return new Map<string, any>([PRIVATE_COLLECTION, PUBLIC_COLLECTION].map((nsid) => [nsid, minimalLexicon(nsid)]))
+  const map = new Map<string, any>([PRIVATE_COLLECTION, PUBLIC_COLLECTION].map((nsid) => [nsid, minimalLexicon(nsid)]))
+  map.set(SPACE_TYPE, spaceLexicon())
+  return map
 }
 
 export async function setupFixtureDatabase(): Promise<void> {
