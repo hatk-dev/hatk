@@ -79,13 +79,20 @@ export function parseMultibaseKey(multibase: string): PublicKey {
  * Low-S is required — atproto mandates it and a malleable signature would let
  * the same assertion be presented twice with different bytes — and is what
  * @noble enforces by default.
+ *
+ * `prehash: false` says the second argument is already a digest, and is not
+ * optional: @noble/curves hashes it again without it, so every signature from
+ * a real counterparty is rejected while one this module both makes and checks
+ * still matches. A test that signs through the same call cannot see that, so
+ * the vectors in the suite are fixed bytes from the library atproto signs
+ * with rather than a round trip through this one.
  */
 export function verifySignature(key: PublicKey, signature: Uint8Array, message: Uint8Array): boolean {
   if (signature.length !== 64) return false
   const digest = sha256(message)
   try {
     const curve = key.curve === 'secp256k1' ? secp256k1 : p256
-    return curve.verify(signature, digest, key.bytes)
+    return curve.verify(signature, digest, key.bytes, { prehash: false })
   } catch {
     // A malformed point or scalar is a failed verification, not a crash.
     return false

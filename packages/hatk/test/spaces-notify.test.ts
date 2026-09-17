@@ -37,7 +37,14 @@ function notice(payload: Record<string, unknown>, priv = signingKey): string {
       ...payload,
     }),
   )
-  const signature = secp256k1.sign(sha256(new TextEncoder().encode(`${header}.${body}`)), priv)
+  // Signed the way `@atproto/crypto` signs: prehash: false — the second argument is already a digest.
+  // Signing through the library's default would hash it again, and a test that
+  // both signs and verifies that way cannot tell a correct verifier from one
+  // that hashes twice. That is how a real host's notices came to be refused
+  // with this suite green.
+  const signature = secp256k1.sign(sha256(new TextEncoder().encode(`${header}.${body}`)), priv, {
+    prehash: false,
+  })
   return `Bearer ${header}.${body}.${b64url(signature)}`
 }
 

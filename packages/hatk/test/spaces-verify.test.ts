@@ -93,7 +93,12 @@ test('a curve atproto does not allow is refused rather than guessed', () => {
 function sign(curve: typeof secp256k1 | typeof p256, message: string) {
   const priv = curve.utils.randomSecretKey()
   const pub = curve.getPublicKey(priv, true)
-  const signature = curve.sign(sha256(new TextEncoder().encode(message)), priv)
+  // Signed the way `@atproto/crypto` signs: prehash: false — the second argument is already a digest.
+  // Signing through the library's default would hash it again, and a test that
+  // both signs and verifies that way cannot tell a correct verifier from one
+  // that hashes twice. That is how a real host's notices came to be refused
+  // with this suite green.
+  const signature = curve.sign(sha256(new TextEncoder().encode(message)), priv, { prehash: false })
   return { pub, signature }
 }
 
