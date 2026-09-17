@@ -49,6 +49,13 @@ export type OnLoginCtx = Omit<BaseContext, 'db'> & {
   db: {
     query: (sql: string, params?: unknown[]) => Promise<unknown[]>
     run: (sql: string, params?: unknown[]) => Promise<void>
+    /**
+     * Raw SQL with the permissioned-space guard off. A hook is not serving a
+     * viewer, and discovering what a space contains — which spaces a
+     * community lists, say — is exactly a read over space rows that no scope
+     * is open for. See `spaces/guard.ts`.
+     */
+    unfiltered: (sql: string, params?: unknown[]) => Promise<unknown[]>
   }
   /** Trigger a backfill for a DID and wait for it to complete. */
   ensureRepo: (did: string) => Promise<void>
@@ -84,6 +91,8 @@ export type OnCommitCtx = {
   db: {
     query: (sql: string, params?: unknown[]) => Promise<unknown[]>
     run: (sql: string, params?: unknown[]) => Promise<void>
+    /** Raw SQL with the permissioned-space guard off. See `spaces/guard.ts`. */
+    unfiltered: (sql: string, params?: unknown[]) => Promise<unknown[]>
   }
   /** Typed record lookup (same as BaseContext). */
   lookup: BaseContext['lookup']
@@ -188,7 +197,7 @@ export async function fireOnLoginHook(did: string, oauthConfig: OAuthConfig | nu
     const hookPromise = onLoginHook({
       ...base,
       did,
-      db: { query: base.db.query, run: runSQL },
+      db: { query: base.db.query, run: runSQL, unfiltered: base.db.unfiltered },
       ensureRepo,
       createRecord: async (collection, record, opts) => {
         if (!oauthConfig) throw new Error('No OAuth config — cannot write to PDS')
@@ -240,7 +249,7 @@ export function fireOnCommitHooks(
           record: item.record,
           repo: item.authorDid,
           uri: item.uri,
-          db: { query: base.db.query, run: runSQL },
+          db: { query: base.db.query, run: runSQL, unfiltered: base.db.unfiltered },
           lookup: base.lookup,
           push,
         })

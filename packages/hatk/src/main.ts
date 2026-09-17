@@ -4,7 +4,13 @@ import { dirname, resolve } from 'node:path'
 import { registerHatkResolveHook } from './resolve-hatk.ts'
 import { log } from './logger.ts'
 import { loadConfig } from './config.ts'
-import { loadLexicons, storeLexicons, discoverCollections, buildSchemas } from './database/schema.ts'
+import {
+  validatableLexicons,
+  loadLexicons,
+  storeLexicons,
+  discoverCollections,
+  buildSchemas,
+} from './database/schema.ts'
 import { discoverViews } from './views.ts'
 import { initDatabase, getCursor, querySQL, getSqlDialect, getSchemaDump, migrateSchema } from './database/db.ts'
 import { createAdapter } from './database/adapter-factory.ts'
@@ -44,7 +50,7 @@ configureCdn(config.cdn)
 
 // 2. Load lexicons, validate schemas, and discover collections
 const lexicons = loadLexicons(resolve(configDir, 'lexicons'))
-const lexiconErrors = validateLexicons([...lexicons.values()])
+const lexiconErrors = validateLexicons(validatableLexicons(lexicons))
 if (lexiconErrors) {
   for (const [nsid, errors] of Object.entries(lexiconErrors)) {
     for (const err of errors) {

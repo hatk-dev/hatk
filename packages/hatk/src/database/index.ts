@@ -36,4 +36,5 @@ export {
   getLexiconArray,
   getAllLexicons,
   storeLexicons,
+  columnName,
 } from './schema.ts'

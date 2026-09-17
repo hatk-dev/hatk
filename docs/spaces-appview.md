@@ -403,3 +403,26 @@ nothing, so there is no key to publish or to steal.
 - **Search pagination is approximate** over space rows: FTS ranks before the
   gate filters, so a page can come back short. No leak, and it costs nothing
   until spaces are configured.
+
+## The community app port (2026-09-17)
+
+`~/code/opensocial`, branch `community-hatk`. The React frontend stays; the data
+layer moved. Each `lib/*.ts` hook now makes one call to a `fyi.opensocial.site.*`
+endpoint served by a hatk appview inside `apps/community` (config, lexicons,
+`server/xrpc`, an on-login hook that follows the community's spaces from the
+first member's sign-in), and sign-in is hatk's server-side OAuth. Writes go
+through the appview with the session it holds, including acting as the
+community, for which hatk now exposes `serverDpopProof`.
+
+Two hatk changes fell out of doing it for real: a record property named like
+an envelope column (`fyi.opensocial.space` has a `uri`) is stored under a
+`record_` prefix instead of failing CREATE TABLE, and space-type and
+permission-set lexicons are kept without being handed to a validator that
+rejects them as unknown.
+
+Not yet verified against a live stack: the one running while this was built
+was six days stale from another worktree and answered "Repo not found" for
+every repo it listed. The appview booted against it, indexed the community
+handles it still exposed, served OAuth metadata through the Vite proxy, and
+refused nothing it should have served — but the pages have not been seen with
+real space data behind them.

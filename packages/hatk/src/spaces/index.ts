@@ -13,6 +13,8 @@ import { collectionsForSpaceType, configureSpaceEngine, reconcileAll, unwatchSpa
 import { setSpaceBackedCollections } from './guard.ts'
 import { configureSpaceIdentity } from './identity.ts'
 import { clearPendingNotices } from './notify.ts'
+import { getServerKey } from '../oauth/db.ts'
+import { createDpopProof } from '../oauth/dpop.ts'
 
 export {
   collectionsForSpaceType,
@@ -26,6 +28,23 @@ export { getSpaceCredential, mintSpaceCredential, isNotAuthorized, isSpaceGone }
 export { listSpaceRepos, listSpaceWatches, type SpaceWatch } from './store.ts'
 export { isSpaceReadable, readableSpaces, withReadableSpaces } from './visibility.ts'
 export { UngatedSpaceQueryError, spaceBackedCollections } from './guard.ts'
+export { forgetViewerSpaces, readableSpacesFor, viewerCredential } from './viewer.ts'
+
+/**
+ * A DPoP proof signed by this instance's own key, for an app that has to hold
+ * a DPoP-bound token itself — a community host minting one for a member to act
+ * as the community, say. The key is the one hatk already presents to PDSes.
+ */
+export async function serverDpopProof(
+  method: string,
+  url: string,
+  accessToken?: string,
+  nonce?: string,
+): Promise<string> {
+  const key = await getServerKey('appview-oauth-key')
+  if (!key) throw new Error('No server key: is OAuth configured?')
+  return createDpopProof(JSON.parse(key.privateKey), JSON.parse(key.publicKey), method, url, accessToken, nonce)
+}
 export { handleWriteNotice } from './engine.ts'
 export {
   clearPendingNotices,

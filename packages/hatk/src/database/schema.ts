@@ -48,6 +48,19 @@ export function toSnakeCase(str: string): string {
   return str.replace(/([A-Z])/g, '_$1').toLowerCase()
 }
 
+/**
+ * The columns every generated table carries before any lexicon field. A record
+ * property with one of these names — `fyi.opensocial.space` has a `uri` — would
+ * otherwise produce a CREATE TABLE with a duplicate column and fail at boot.
+ * It is stored under `record_<name>` instead; `originalName` still carries the
+ * lexicon's spelling, which is what every reshaped row is keyed by.
+ */
+const ENVELOPE_COLUMNS = new Set(['uri', 'cid', 'did', 'space', 'indexed_at', 'handle'])
+export function columnName(fieldName: string): string {
+  const snake = toSnakeCase(fieldName)
+  return ENVELOPE_COLUMNS.has(snake) ? `record_${snake}` : snake
+}
+
 // Quote a column name to avoid conflicts with SQL reserved words
 export function q(name: string): string {
   return `"${name}"`
@@ -107,6 +120,21 @@ export function loadLexicons(lexiconsDir: string): Map<string, any> {
     }
   }
   return lexicons
+}
+
+/**
+ * Lexicons the validator cannot model but hatk legitimately keeps.
+ *
+ * A space type is how the indexer learns which collections a space holds, and
+ * a permission set is what an OAuth scope resolves through; both are real
+ * lexicons an app vendors on purpose. `validateLexicons` reports each as an
+ * unknown definition type, which would read as a fatal schema error at boot.
+ * Only these two are set aside — anything else unknown is still a mistake the
+ * validator should refuse.
+ */
+const UNMODELLED_DEF_TYPES = new Set(['space', 'permission-set'])
+export function validatableLexicons(lexicons: Map<string, any>): any[] {
+  return [...lexicons.values()].filter((lex) => !UNMODELLED_DEF_TYPES.has(lex.defs?.main?.type))
 }
 
 /**
@@ -304,7 +332,7 @@ export function generateTableSchema(
       }
       // Still add the JSON column for the raw union value
       columns.push({
-        name: toSnakeCase(fieldName),
+        name: columnName(fieldName),
         originalName: fieldName,
         sqlType: dialect.jsonType,
         notNull: required.has(fieldName),
@@ -364,7 +392,7 @@ export function generateTableSchema(
       })
     } else {
       columns.push({
-        name: toSnakeCase(fieldName),
+        name: columnName(fieldName),
         originalName: fieldName,
         sqlType,
         notNull: required.has(fieldName),

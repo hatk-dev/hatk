@@ -25,7 +25,8 @@
     "./test": "./dist/test.js",
     "./config": "./dist/config.js",
     "./vite-plugin": "./dist/vite-plugin.js",
-    "./renderer": "./dist/renderer.js"
+    "./renderer": "./dist/renderer.js",
+    "./spaces": "./dist/spaces/index.js"
   },
   "scripts": {
     "clean": "rm -rf dist",

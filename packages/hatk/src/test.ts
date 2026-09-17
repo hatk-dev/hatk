@@ -4,6 +4,7 @@ import { registerHatkResolveHook } from './resolve-hatk.ts'
 import YAML from 'yaml'
 import { loadConfig, type HatkConfig } from './config.ts'
 import {
+  validatableLexicons,
   loadLexicons,
   storeLexicons,
   discoverCollections,
@@ -87,7 +88,7 @@ export async function createTestContext(): Promise<TestContext> {
 
   // Load and validate lexicons
   const lexicons = loadLexicons(resolve(configDir, 'lexicons'))
-  const lexiconErrors = validateLexicons([...lexicons.values()])
+  const lexiconErrors = validateLexicons(validatableLexicons(lexicons))
   if (lexiconErrors) {
     const messages = Object.entries(lexiconErrors).flatMap(([nsid, errs]) => errs.map((e) => `${nsid}: ${e}`))
     throw new Error(`Invalid lexicons:\n${messages.join('\n')}`)
