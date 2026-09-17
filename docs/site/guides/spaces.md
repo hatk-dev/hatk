@@ -52,17 +52,40 @@ A record indexed from a space carries the space it came from, and is served only
 
 **A signed-out visitor is never shown a space record.** `readableBy: ["public"]` in the spaces protocol means any _authenticated_ reader, not anyone, and there is no anonymous read path into a space.
 
-### Typed helpers apply the gate for you
+### The helpers built for it
 
-`ctx.lookup`, `ctx.getRecords`, `ctx.resolve`, `ctx.search` and `ctx.count` all filter by what the viewer may see. Write the endpoint as you would for public data:
+Three things every endpoint over a space does, on the context so nobody writes them wrong:
 
 ```typescript
+import type { Thread } from '$hatk'
+
 export default defineQuery('com.example.getBoard', async (ctx) => {
-  const { ok, lookup, params } = ctx
-  const threads = await lookup('com.atmoboards.forum.thread', 'space', [params.space])
-  return ok({ threads: [...threads.values()] })
+  const { ok, params, requireSpace, spaceRecords, spaceBlobUrl } = ctx
+  // Refuse the way the space itself would: NotAuthorized for anyone the
+  // authority does not admit, which is what their own browser would have seen.
+  requireSpace(params.space)
+  // Every writer's records of one collection in the space, shaped like any
+  // other read — camelCased, JSON columns parsed, takedowns applied.
+  const threads = await spaceRecords<Thread>('com.atmoboards.forum.thread', params.space)
+  return ok({
+    threads: threads.map((t) => ({
+      uri: t.uri,
+      author: t.did,
+      title: t.value.title,
+      // A blob in a space has no public URL; this is the one it has.
+      cover: t.value.cover ? spaceBlobUrl(params.space, t.did, blobCid(t.value.cover)!) : undefined,
+    })),
+  })
 })
 ```
+
+`spaceRecords` on a space outside the viewer's scope is empty rather than an error, so a page can show "nothing here" or "members only" as it prefers; `requireSpace` is the explicit refusal. `ctx.records(collection, field, values)` is the same read over a public repo — every row where a field matches, where `ctx.lookup` keeps one per key.
+
+`blobCid`, `rkeyOf` and `spaceUri` are exported from `@hatk/hatk/spaces` for the shapes these reads hand back.
+
+### Typed helpers apply the gate for you
+
+`ctx.lookup`, `ctx.getRecords`, `ctx.resolve`, `ctx.search` and `ctx.count` all filter by what the viewer may see too. Write the endpoint as you would for public data and space rows appear for members, vanish for everyone else.
 
 ### Feeds apply it too
 
@@ -110,7 +133,7 @@ The check is a guard rail, not the security boundary: it matches the quoted tabl
 
 A blob inside a space has no public URL by design: `com.atproto.space.getBlob` serves it only to a credential holder, so a public URL would become the capability the credential exists to replace. `ctx.blobUrl` is for public repo data.
 
-Point the client at hatk's own route instead, using the CID from the record:
+Build the URL with `ctx.spaceBlobUrl(space, writerDid, cid)` — it is hatk's route, and an app should not assemble it by hand:
 
 ```
 /space-blob?space=<space-ref>&repo=<writer-did>&cid=<blob-cid>

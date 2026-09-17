@@ -59,6 +59,16 @@ export function isSpaceUri(uri: string): boolean {
   return parts != null && parts.length >= 4 && parts[1] === SPACE_MARKER && parts[0].startsWith('did:')
 }
 
+/** `at://{authority}/space/{type}/{skey}` from its parts; `self` is the skey a singleton space uses. */
+export function spaceUri(authority: string, type: string, skey = 'self'): string {
+  return `${AT_PREFIX}${authority}/${SPACE_MARKER}/${type}/${skey}`
+}
+
+/** The record key: the last segment of either URI shape. */
+export function rkeyOf(uri: string): string {
+  return uri.slice(uri.lastIndexOf('/') + 1)
+}
+
 export function spaceRecordUri(space: string, writer: string, collection: string, rkey: string): string {
   return `${space}/${writer}/${collection}/${rkey}`
 }

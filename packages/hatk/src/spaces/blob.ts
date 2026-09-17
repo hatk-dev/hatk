@@ -28,6 +28,34 @@ import { viewerCredential } from './viewer.ts'
  */
 const SERVABLE = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif'])
 
+/**
+ * The URL this appview serves a space blob at, for whoever is asking.
+ *
+ * Built here rather than by the app, because the route is hatk's: a blob in a
+ * space has no public address by design, and this is the one address it does
+ * have — answered per viewer, with that viewer's credential, uncacheable.
+ */
+export function spaceBlobUrl(space: string, repo: string, cid: string): string {
+  const params = new URLSearchParams({ space, repo, cid })
+  return `/space-blob?${params}`
+}
+
+/**
+ * The CID a blob reference names, in whichever spelling the read used.
+ *
+ * A repo read gives the lexicon's `{ ref: { $link } }`; a space read comes
+ * back through a lex client that decodes the same field into a CID object
+ * whose `/` is the string. One blob, two spellings, and no caller should have
+ * to know which it got.
+ */
+export function blobCid(blob: unknown): string | undefined {
+  const ref = (blob as { ref?: { $link?: unknown; '/'?: unknown } } | undefined)?.ref
+  if (!ref || typeof ref !== 'object') return undefined
+  if (typeof ref.$link === 'string') return ref.$link
+  if (typeof ref['/'] === 'string') return ref['/']
+  return undefined
+}
+
 export interface SpaceBlobRequest {
   space: string
   /** The repo holding the blob — the writer's, not the authority's. */

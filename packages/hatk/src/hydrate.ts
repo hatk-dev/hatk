@@ -12,6 +12,8 @@ import { blobUrl } from './xrpc.ts'
 import { collectionFromRecordUri } from './spaces/uri.ts'
 import { spaceFilterSql } from './spaces/visibility.ts'
 import { guardedQuerySQL, unfilteredQuerySQL } from './spaces/guard.ts'
+import { records, requireSpace, spaceRecords } from './spaces/records.ts'
+import { spaceBlobUrl } from './spaces/blob.ts'
 import type { Row } from './lex-types.ts'
 
 export type { Row }
@@ -55,6 +57,17 @@ export interface BaseContext {
    * column and changes no result.
    */
   spaceFilter: (alias: string, startIdx: number) => { sql: string; params: string[]; nextIdx: number }
+  /**
+   * Every record of a collection in a space the viewer may read. Empty for a
+   * space outside their scope; see `requireSpace` for the explicit refusal.
+   */
+  spaceRecords: <R = unknown>(collection: string, space: string) => Promise<Row<R>[]>
+  /** Every record where `field` is one of `values` — the many-rows counterpart of `lookup`. */
+  records: <R = unknown>(collection: string, field: string, values: string[]) => Promise<Row<R>[]>
+  /** Throw `NotAuthorized` unless the viewer may read this space. */
+  requireSpace: (space: string) => void
+  /** The URL this appview serves a space blob at, for the viewer asking. */
+  spaceBlobUrl: (space: string, repo: string, cid: string) => string
 }
 
 // --- Record Resolution ---
@@ -121,5 +134,9 @@ export function buildBaseContext(viewer: { did: string; handle?: string } | null
     labels: queryLabelsForUris,
     blobUrl,
     spaceFilter: spaceFilterSql,
+    spaceRecords,
+    records,
+    requireSpace,
+    spaceBlobUrl,
   }
 }
