@@ -23,12 +23,15 @@ import { packCursor, unpackCursor, isTakendownDid, filterTakendownDids } from '.
 import { seed as createSeedHelpers, type SeedOpts } from './seed.ts'
 import { setPrivateCollections } from './private-collections.ts'
 import { spaceFilterSql } from './spaces/visibility.ts'
+import { guardedQuerySQL, unfilteredQuerySQL } from './spaces/guard.ts'
 import type { FeedContext } from './feeds.ts'
 
 export interface TestContext {
   db: {
     query: (sql: string, params?: any[]) => Promise<any[]>
     run: (sql: string, params?: any[]) => Promise<void>
+    /** Raw SQL with the permissioned-space guard off, as the runtime contexts have it. */
+    unfiltered: (sql: string, params?: any[]) => Promise<any[]>
   }
   loadFixtures: (dir?: string) => Promise<void>
   loadFeed: (name: string) => { generate: (ctx: FeedContext) => Promise<any> }
@@ -130,7 +133,7 @@ export async function createTestContext(): Promise<TestContext> {
   await initServer(resolve(configDir, 'server'), { skipSetup: true })
 
   return {
-    db: { query: querySQL, run: runSQL },
+    db: { query: guardedQuerySQL, run: runSQL, unfiltered: unfilteredQuerySQL },
     _config: config,
     _collections: collections,
     loadFixtures: async (dir?: string) => {
@@ -233,14 +236,14 @@ export async function createTestContext(): Promise<TestContext> {
     },
     feedContext: (opts) => {
       const paginateDeps = {
-        db: { query: querySQL },
+        db: { query: guardedQuerySQL, unfiltered: unfilteredQuerySQL },
         cursor: opts?.cursor,
         limit: opts?.limit || 30,
         packCursor,
         unpackCursor,
       }
       return {
-        db: { query: querySQL },
+        db: { query: guardedQuerySQL, unfiltered: unfilteredQuerySQL },
         params: opts?.params || {},
         cursor: opts?.cursor,
         limit: opts?.limit || 30,

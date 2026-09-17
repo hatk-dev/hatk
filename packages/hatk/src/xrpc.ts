@@ -18,6 +18,7 @@
  * })
  * ```
  */
+import { guardedQuerySQL, unfilteredQuerySQL } from './spaces/guard.ts'
 import { resolve, relative } from 'node:path'
 import { readdirSync, statSync } from 'node:fs'
 import { log, emit, timer } from './logger.ts'
@@ -87,6 +88,7 @@ export interface XrpcContext<
   db: {
     query: (sql: string, params?: unknown[]) => Promise<unknown[]>
     run: (sql: string, params?: unknown[]) => Promise<void>
+    unfiltered: (sql: string, params?: unknown[]) => Promise<unknown[]>
   }
   params: P
   input: I
@@ -216,7 +218,7 @@ export function buildXrpcContext(
   const base = buildBaseContext(viewer)
   return {
     ...base,
-    db: { query: querySQL, run: runSQL },
+    db: { query: guardedQuerySQL, run: runSQL, unfiltered: unfilteredQuerySQL },
     params,
     input: input || {},
     cursor,

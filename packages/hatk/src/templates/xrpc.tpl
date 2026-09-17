@@ -11,8 +11,8 @@ export default defineQuery('{{name}}', async (ctx) => {
 
   // Which permissioned spaces this viewer may be shown. Typed helpers like
   // ctx.lookup and ctx.getRecords apply this already; hand-written SQL cannot,
-  // because nothing can inject a predicate into a string you wrote. Drop it and
-  // a collection any space writes into is served to whoever asks.
+  // because nothing can inject a predicate into a string you wrote. Drop it on
+  // a collection a space writes into and hatk refuses the query by name.
   //
   // Outside a viewer's scope it is `s.space IS NULL` and binds nothing, so on an
   // instance that indexes no space it costs one test on an indexed column.

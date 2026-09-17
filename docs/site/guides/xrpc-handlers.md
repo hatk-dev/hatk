@@ -116,7 +116,7 @@ Every handler must return `ctx.ok(data)`. This wraps your response with type che
 Run SQL against your SQLite database. Use `db.query()` for SELECT statements that return rows, and `db.run()` for INSERT/UPDATE/DELETE:
 
 ::: warning Hand-written SQL and permissioned spaces
-If your instance indexes [permissioned spaces](/guides/spaces), SQL you write yourself has to carry `ctx.spaceFilter` — nothing can inject a predicate into a string you wrote, so this is the one read path that stays open. The typed helpers below apply it already.
+If your instance indexes [permissioned spaces](/guides/spaces), a raw query over a table a space writes into is refused unless it carries `ctx.spaceFilter` — the error names the table. Queries over any other table, and every typed helper below, are unaffected. `ctx.db.unfiltered` is the explicit door for a result never served to a viewer.
 :::
 
 ```typescript

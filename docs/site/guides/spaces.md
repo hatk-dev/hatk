@@ -68,9 +68,18 @@ export default defineQuery('com.example.getBoard', async (ctx) => {
 
 `ctx.paginate` builds the gate into the SQL it composes, so an ordinary feed is already correct.
 
-### Hand-written SQL has to ask
+### Hand-written SQL: hatk tells you when it matters
 
-Nothing can inject a predicate into a string you wrote, so `ctx.db.query` is the one path that stays open. `ctx.spaceFilter(alias, nextFreeParam)` returns the predicate, its parameters, and where the numbering continues:
+Nothing can inject a predicate into a string you wrote, so `ctx.db.query` is the one read path hatk cannot gate for you. It does the next best thing. At boot it knows exactly which tables a space row can land in — the collections your configured space types declare — and a raw query naming one of those tables without the gate is refused, by name, with the helper that fixes it:
+
+```
+UngatedSpaceQueryError: Raw SQL reads "com.atmoboards.forum.thread", which
+permissioned spaces write into, without the space gate. ...
+```
+
+So a feed over a collection no space touches never hears about any of this, and stays that way even if you add space types later. Only a query genuinely at risk is stopped, and it is stopped on the first run in development rather than in production.
+
+When it is, `ctx.spaceFilter(alias, nextFreeParam)` returns the predicate, its parameters, and where the numbering continues:
 
 ```typescript
 export default defineQuery('com.example.listThreads', async (ctx) => {
@@ -92,6 +101,10 @@ export default defineQuery('com.example.listThreads', async (ctx) => {
 The two clauses do different jobs and you need both. `t.space = $1` is **which** board the caller asked for. `gate.sql` is **whether they may have it**. Drop the second and anyone who can name a space URI reads it.
 
 Outside a viewer's scope the gate compiles to `t.space IS NULL` and binds no parameters, so on an instance that indexes no space it costs one test on an indexed column and changes no result.
+
+For a result that is never served to a viewer — an admin rollup, a count, a maintenance pass — `ctx.db.unfiltered(sql, params)` runs the same query with the guard off. It is its own name rather than an option so that every such read says so where it happens and can be found with grep.
+
+The check is a guard rail, not the security boundary: it matches the quoted table name and the gate's own SQL, and is meant to catch a mistake early rather than to survive an adversary. The gate applied by the helpers is the boundary.
 
 ## Blobs
 

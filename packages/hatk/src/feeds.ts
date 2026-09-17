@@ -11,6 +11,7 @@ import {
 } from './database/db.ts'
 import { resolveRecords, buildBaseContext } from './hydrate.ts'
 import { spaceFilterSql } from './spaces/visibility.ts'
+import { guardedQuerySQL, unfilteredQuerySQL } from './spaces/guard.ts'
 import type { BaseContext, Row } from './hydrate.ts'
 import type { Checked } from './lex-types.ts'
 
@@ -33,7 +34,11 @@ export interface PaginateResult<T> {
 }
 
 export interface FeedContext {
-  db: { query: (sql: string, params?: unknown[]) => Promise<unknown[]> }
+  db: {
+    query: (sql: string, params?: unknown[]) => Promise<unknown[]>
+    /** Raw SQL with the permissioned-space guard off. See `spaces/guard.ts`. */
+    unfiltered: (sql: string, params?: unknown[]) => Promise<unknown[]>
+  }
   params: Record<string, string>
   cursor?: string
   limit: number
@@ -171,14 +176,14 @@ export function registerFeed(name: string, generator: ReturnType<typeof defineFe
     view: generator.view,
     generate: async (params, cursor, limit, viewer) => {
       const paginateDeps = {
-        db: { query: querySQL },
+        db: { query: guardedQuerySQL, unfiltered: unfilteredQuerySQL },
         cursor,
         limit,
         packCursor,
         unpackCursor,
       }
       const ctx: FeedContext = {
-        db: { query: querySQL },
+        db: { query: guardedQuerySQL, unfiltered: unfilteredQuerySQL },
         params,
         cursor,
         limit,
@@ -230,14 +235,14 @@ export async function initFeeds(feedsDir: string): Promise<void> {
       view: generator.view,
       generate: async (params, cursor, limit, viewer) => {
         const paginateDeps = {
-          db: { query: querySQL },
+          db: { query: guardedQuerySQL, unfiltered: unfilteredQuerySQL },
           cursor,
           limit,
           packCursor,
           unpackCursor,
         }
         const ctx: FeedContext = {
-          db: { query: querySQL },
+          db: { query: guardedQuerySQL, unfiltered: unfilteredQuerySQL },
           params,
           cursor,
           limit,

@@ -9,7 +9,8 @@
 import type { OAuthConfig, SpacesConfig } from '../config.ts'
 import { emit } from '../logger.ts'
 import { log } from '../logger.ts'
-import { configureSpaceEngine, reconcileAll, unwatchSpace, watchSpace } from './engine.ts'
+import { collectionsForSpaceType, configureSpaceEngine, reconcileAll, unwatchSpace, watchSpace } from './engine.ts'
+import { setSpaceBackedCollections } from './guard.ts'
 import { configureSpaceIdentity } from './identity.ts'
 import { clearPendingNotices } from './notify.ts'
 
@@ -24,6 +25,7 @@ export {
 export { getSpaceCredential, mintSpaceCredential, isNotAuthorized, isSpaceGone } from './credential.ts'
 export { listSpaceRepos, listSpaceWatches, type SpaceWatch } from './store.ts'
 export { isSpaceReadable, readableSpaces, withReadableSpaces } from './visibility.ts'
+export { UngatedSpaceQueryError, spaceBackedCollections } from './guard.ts'
 export { handleWriteNotice } from './engine.ts'
 export {
   clearPendingNotices,
@@ -105,6 +107,14 @@ export function startSpaces(opts: StartSpacesOptions): void {
     ...(serviceId ? { serviceId } : {}),
   })
 
+  // The tables a space row can land in, so raw SQL over one of them without
+  // the gate is refused by name rather than quietly served to everyone.
+  const backed = new Set(spaces.types.flatMap((type) => collectionsForSpaceType(type)))
+  setSpaceBackedCollections(backed)
+  if (backed.size > 0) {
+    log(`[spaces] raw SQL over ${[...backed].join(', ')} must carry ctx.spaceFilter`)
+  }
+
   const intervalMs = Math.max(30, spaces.reconcileInterval ?? 300) * 1000
 
   const sweep = async (): Promise<void> => {
@@ -136,6 +146,7 @@ export function stopSpaces(): void {
   if (sweepTimer) clearInterval(sweepTimer)
   sweepTimer = null
   serviceId = null
+  setSpaceBackedCollections([])
   clearPendingNotices()
 }
 

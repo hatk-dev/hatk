@@ -11,6 +11,7 @@ import {
 import { blobUrl } from './xrpc.ts'
 import { collectionFromRecordUri } from './spaces/uri.ts'
 import { spaceFilterSql } from './spaces/visibility.ts'
+import { guardedQuerySQL, unfilteredQuerySQL } from './spaces/guard.ts'
 import type { Row } from './lex-types.ts'
 
 export type { Row }
@@ -19,7 +20,15 @@ export type { Row }
 
 export interface BaseContext {
   viewer: { did: string; handle?: string } | null
-  db: { query: (sql: string, params?: unknown[]) => Promise<unknown[]> }
+  db: {
+    query: (sql: string, params?: unknown[]) => Promise<unknown[]>
+    /**
+     * Raw SQL with the permissioned-space guard off. Named so it can be found
+     * with grep: for results never served to a viewer, such as an admin
+     * rollup. See `spaces/guard.ts`.
+     */
+    unfiltered: (sql: string, params?: unknown[]) => Promise<unknown[]>
+  }
   getRecords: <R = unknown>(collection: string, uris: string[]) => Promise<Map<string, Row<R>>>
   lookup: <R = unknown>(collection: string, field: string, values: string[]) => Promise<Map<string, Row<R>>>
   count: (collection: string, field: string, values: string[]) => Promise<Map<string, number>>
@@ -97,7 +106,7 @@ export async function resolveRecords(uris: string[]): Promise<Row<unknown>[]> {
 export function buildBaseContext(viewer: { did: string; handle?: string } | null): BaseContext {
   return {
     viewer,
-    db: { query: querySQL },
+    db: { query: guardedQuerySQL, unfiltered: unfilteredQuerySQL },
     getRecords: getRecordsMap,
     lookup: async (collection, field, values) => {
       if (values.length === 0) return new Map()

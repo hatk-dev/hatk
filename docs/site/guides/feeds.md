@@ -90,7 +90,7 @@ const { rows, cursor } = await ctx.paginate<{ uri: string }>(
 
 `paginate` appends cursor conditions, `ORDER BY`, and `LIMIT` to your query. You provide the base `SELECT` and any `WHERE` clauses for filtering; `paginate` adds the rest.
 
-It also applies the [permissioned-space](/guides/spaces) gate, so a feed shows each viewer the spaces they may read and everyone else the public rows alone. A feed that builds SQL without `paginate` has to carry `ctx.spaceFilter` itself.
+It also applies the [permissioned-space](/guides/spaces) gate, so a feed shows each viewer the spaces they may read and everyone else the public rows alone. A feed that builds its own SQL over a space-backed table is refused with an error naming the table and `ctx.spaceFilter`; a feed over anything else is never affected.
 
 ### Using the viewer
 
