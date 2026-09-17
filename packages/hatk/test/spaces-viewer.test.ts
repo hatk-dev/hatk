@@ -163,3 +163,20 @@ test('no viewer and no oauth means no credential', async () => {
   expect(await viewerCredential(oauth, null, SPACE_URI)).toBeNull()
   expect(await viewerCredential(null, MEMBER, SPACE_URI)).toBeNull()
 })
+
+test('concurrent requests for one cold viewer resolve once', async () => {
+  // A page fires several requests at once and all of them miss the same cold
+  // cache; each would otherwise mint its own credential per space.
+  let calls = 0
+  mintSpaceCredential.mockImplementation(async (_o: unknown, space: string, did: string) => {
+    calls++
+    await new Promise((r) => setTimeout(r, 5))
+    return credential(space, did)
+  })
+  await Promise.all([
+    readableSpacesFor(oauth, MEMBER),
+    readableSpacesFor(oauth, MEMBER),
+    viewerCredential(oauth, MEMBER, SPACE_URI),
+  ])
+  expect(calls).toBe(2) // one per watched space, once
+})

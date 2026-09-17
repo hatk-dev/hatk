@@ -49,6 +49,14 @@ interface Entry {
 
 const cache = new Map<string, Entry>()
 
+/**
+ * Resolutions in flight, one per viewer. A page fires several requests at
+ * once and every one of them misses the same cold cache; without this each
+ * would mint its own credential per space, and a member landing on the home
+ * page cost six times what it needed to.
+ */
+const inFlight = new Map<string, Promise<Entry>>()
+
 function entryFor(viewerDid: string): Entry | undefined {
   const entry = cache.get(viewerDid)
   if (!entry) return undefined
@@ -81,7 +89,17 @@ async function inBatches<T, R>(items: T[], size: number, fn: (item: T) => Promis
   return out
 }
 
-async function resolve(oauth: OAuthConfig, viewerDid: string): Promise<Entry> {
+function resolve(oauth: OAuthConfig, viewerDid: string): Promise<Entry> {
+  const pending = inFlight.get(viewerDid)
+  if (pending) return pending
+  const task = resolveNow(oauth, viewerDid).finally(() => {
+    if (inFlight.get(viewerDid) === task) inFlight.delete(viewerDid)
+  })
+  inFlight.set(viewerDid, task)
+  return task
+}
+
+async function resolveNow(oauth: OAuthConfig, viewerDid: string): Promise<Entry> {
   const watches = await listSpaceWatches()
   const credentials = new Map<string, SpaceCredential | null>()
   if (watches.length === 0) return store(viewerDid, credentials)
@@ -161,4 +179,5 @@ export function forgetViewerSpaces(viewerDid: string): void {
 
 export function resetViewerSpaces(): void {
   cache.clear()
+  inFlight.clear()
 }

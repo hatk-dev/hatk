@@ -31,7 +31,7 @@
 import type { OAuthConfig } from '../config.ts'
 import { getLexicon, getLexiconArray } from '../database/schema.ts'
 import { bulkInsertRecords, deleteRecord, insertRecord, purgeSpaceRecords } from '../database/db.ts'
-import { validateRecord } from '@bigmoves/lexicon'
+import { validateRecordWithSpaces } from '../database/validate.ts'
 import { emit, timer } from '../logger.ts'
 import { isPrivateCollection } from '../private-collections.ts'
 import { listSessionDids } from '../oauth/db.ts'
@@ -203,14 +203,30 @@ async function withCredential<T>(
 
 // --- Record application ---
 
-/** Skip a record the lexicon refuses, the way the firehose path does. */
-function indexable(collection: string, record: unknown): record is Record<string, any> {
-  if (!record || typeof record !== 'object') return false
+/**
+ * Skip a record the lexicon refuses, the way the firehose path does — and say
+ * why, the way the firehose path does. A record silently skipped is a record
+ * that never appears with no trace of the reason, which is the worst kind of
+ * missing.
+ */
+function indexable(uri: string, collection: string, record: unknown): record is Record<string, any> {
+  if (!record || typeof record !== 'object') {
+    emit('spaces', 'validation_skip', { uri, collection, error: 'record is not an object' })
+    return false
+  }
   const typed = record as Record<string, unknown>
   // A record whose $type disagrees with the collection it was filed under is
   // not the record the collection's table is shaped for.
-  if (typeof typed.$type === 'string' && typed.$type !== collection) return false
-  return !validateRecord(getLexiconArray(), collection, { $type: collection, ...typed })
+  if (typeof typed.$type === 'string' && typed.$type !== collection) {
+    emit('spaces', 'validation_skip', { uri, collection, error: `$type is ${typed.$type}` })
+    return false
+  }
+  const problem = validateRecordWithSpaces(getLexiconArray(), collection, { $type: collection, ...typed })
+  if (problem) {
+    emit('spaces', 'validation_skip', { uri, collection, path: problem.path, error: problem.message })
+    return false
+  }
+  return true
 }
 
 /**
@@ -272,7 +288,7 @@ async function applyOps(
       }
     }
 
-    if (!indexable(op.collection, value)) {
+    if (!indexable(uri, op.collection, value)) {
       skipped++
       continue
     }
@@ -388,7 +404,7 @@ async function syncFull(
         throw err
       }
       for (const rec of (out.records ?? []) as { rkey: string; cid: string; value?: Record<string, unknown> }[]) {
-        if (!indexable(collection, rec.value)) {
+        if (!indexable(spaceRecordUri(watch.space, writer, collection, rec.rkey), collection, rec.value)) {
           skipped++
           continue
         }

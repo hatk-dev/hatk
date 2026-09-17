@@ -42,7 +42,7 @@ export function backfillEligible(status: string | null): boolean {
 import type { BulkRecord } from './database/db.ts'
 import { emit, timer } from './logger.ts'
 import type { BackfillConfig } from './config.ts'
-import { validateRecord } from '@bigmoves/lexicon'
+import { validateRecordWithSpaces } from './database/validate.ts'
 import { getLexiconArray } from './database/schema.ts'
 
 /** Options passed to {@link runBackfill}. */
@@ -301,7 +301,7 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
         const rkey = entry.path.split('/').slice(1).join('/')
         const uri = `at://${did}/${collection}/${rkey}`
 
-        const validationError = validateRecord(getLexiconArray(), collection, record)
+        const validationError = validateRecordWithSpaces(getLexiconArray(), collection, record)
         if (validationError) {
           validationSkips[collection] = (validationSkips[collection] || 0) + 1
           continue

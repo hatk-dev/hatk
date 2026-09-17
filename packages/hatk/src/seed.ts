@@ -24,7 +24,7 @@
  * ```
  */
 import { loadLexicons } from './database/schema.ts'
-import { validateRecord } from '@bigmoves/lexicon'
+import { validateRecordWithSpaces } from './database/validate.ts'
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 
@@ -90,7 +90,7 @@ export function seed<R extends Record<string, unknown> = Record<string, unknown>
     record: R[K] extends Record<string, unknown> ? R[K] : Record<string, unknown>,
     opts: { rkey: string },
   ): Promise<{ uri: string; cid: string; commit: { cid: string; rev: string }; validationStatus: string }> {
-    const error = validateRecord(lexiconArray, collection, record)
+    const error = validateRecordWithSpaces(lexiconArray, collection, record)
     if (error) {
       throw new Error(
         `[seed] validation error in ${collection}: ${error.path ? error.path + ': ' : ''}${error.message}`,
