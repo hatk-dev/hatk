@@ -204,9 +204,12 @@ Two sub-decisions:
   injected at the same place as the takedown join, with the readable set
   coming from `ctx`. App-authored feed SQL has to opt in with a helper.
 
-**5. Blobs.** Same credentialed route as Path A. With a service credential hatk
-could cache blob bytes locally, but then hatk holds members' private photos,
-which is a storage and posture question worth deciding on purpose.
+**5. Blobs.** Same credentialed route as Path A, with the bytes cached in
+memory so a photo is read from its repo once rather than once per member
+looking at it. The posture that buys is worth stating: hatk holds members'
+private photos for as long as the process lives and no longer, bounded and
+never written to disk, and every request is authorized before the cache is
+consulted at all.
 
 **6. Backfill.** `listRepos` at the authority, then per writer either `getRepo`
 (verified CAR) or `listRecords` per collection (simpler, unverified). Writer
@@ -362,8 +365,21 @@ host already lets a minted credential outlive a revocation by up to two hours.
 
 **Blobs** (`spaces/blob.ts`, `GET /space-blob`). A space blob has no public URL
 by design, so it is fetched from the repo that holds it with the viewer's own
-credential and served `private, no-store` with a content-type allowlist. A
-viewer who may not read the space gets the same 404 as a missing blob.
+credential and served with a content-type allowlist. A viewer who may not read
+the space gets the same 404 as a missing blob.
+
+Both caches under that route sit behind the credential check, never in front of
+it. The response is `private, max-age=60, must-revalidate` with the blob's CID
+as its ETag — a CID is a hash of the bytes it names, so the validator is free
+and exact — which lets the viewer's own browser keep what it was shown and no
+shared cache keep anything; `vary: cookie, authorization` keeps two people
+signing in on one browser apart. Behind that, bytes are held in a bounded
+in-memory LRU keyed by space _and_ CID. The space has to be in the key: the
+check that a blob is actually referenced from the space being named lives
+upstream in `com.atproto.space.getBlob`, so a cache that hit on CID alone would
+let a viewer who may read one space name any CID they had heard of and be
+served it without that check running. Blobs past a per-entry limit are streamed
+rather than held.
 
 **Write notices** (`spaces/notify.ts`, `spaces/verify.ts`). Registration happens
 inside reconcile, where a credential is already in hand — `registerNotify` is
@@ -403,6 +419,11 @@ nothing, so there is no key to publish or to steal.
 - **Search pagination is approximate** over space rows: FTS ranks before the
   gate filters, so a page can come back short. No leak, and it costs nothing
   until spaces are configured.
+- **Space blobs are served at full size.** A public blob can go through an
+  image CDN and come back at the size it is drawn; a space blob cannot, because
+  no cache outside this process may hold one. Resizing them belongs on the
+  cache fill, where the bytes are already in hand and the derivative would be
+  what is held.
 
 ## The community app port (2026-09-17)
 

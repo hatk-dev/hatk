@@ -1509,14 +1509,15 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         }
       }
 
-      // GET /space-blob?space=&repo=&cid= — a blob inside a permissioned space,
-      // fetched with the viewer's own credential. Unlike /blob/ below it is not
-      // dev-only and not cacheable: a space blob has no public URL by design,
-      // and this response belongs to one viewer.
+      // GET /space-blob?space=&repo=&cid= — a blob inside a permissioned space.
+      // Unlike /blob/ below it is not dev-only, and every request is authorized
+      // with the viewer's own credential for the space: a space blob has no
+      // public URL by design. `if-none-match` is passed along because the
+      // answer may be that the viewer already holds it.
       if (url.pathname === '/space-blob') {
         const parsed = parseSpaceBlobRequest(url.searchParams)
         if (!parsed) return withCors(jsonError(400, 'Expected space, repo and cid', acceptEncoding))
-        return withCors(await serveSpaceBlob(oauth, viewer, parsed))
+        return withCors(await serveSpaceBlob(oauth, viewer, parsed, request.headers.get('if-none-match')))
       }
 
       // GET /blob/:did/:cid — dev-only image proxy (see blobUrl in xrpc.ts).

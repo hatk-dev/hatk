@@ -19,6 +19,7 @@ vi.mock('../src/spaces/identity.ts', () => ({
 const { createHandler } = await import('../src/server.ts')
 const { insertRecord } = await import('../src/database/index.ts')
 const { setPrivateCollections } = await import('../src/private-collections.ts')
+const { resetSpaceBlobCache } = await import('../src/spaces/blob.ts')
 const { PUBLIC_COLLECTION, SPACE_URI, setupFixtureDatabase } = await import('./fixture.ts')
 
 const MEMBER = 'did:plc:member'
@@ -57,6 +58,7 @@ beforeEach(() => {
     viewer?.did === MEMBER ? [SPACE_URI] : [],
   )
   viewerCredential.mockReset()
+  resetSpaceBlobCache()
 })
 
 async function uris(res: Response): Promise<string[]> {
@@ -148,7 +150,21 @@ test('a space blob is served to a member with their own credential', async () =>
     asViewer(`/space-blob?space=${encodeURIComponent(SPACE_URI)}&repo=${WRITER}&cid=bafy`, MEMBER),
   )
   expect(res.status).toBe(200)
-  expect(res.headers.get('cache-control')).toBe('private, no-store')
+  expect(res.headers.get('cache-control')).toBe('private, max-age=60, must-revalidate')
+  expect(res.headers.get('etag')).toBe('"bafy"')
+})
+
+test('a space blob request carries its validator through to the answer', async () => {
+  viewerCredential.mockResolvedValue({
+    space: SPACE_URI,
+    readerDid: MEMBER,
+    expiresAt: Date.now() + 1000,
+    fetch: async () => new Response('png bytes', { headers: { 'content-type': 'image/png' } }),
+  })
+  const request = asViewer(`/space-blob?space=${encodeURIComponent(SPACE_URI)}&repo=${WRITER}&cid=bafy`, MEMBER)
+  request.headers.set('if-none-match', '"bafy"')
+  const res = await handler()(request)
+  expect(res.status).toBe(304)
 })
 
 test('a malformed space blob request is refused', async () => {
