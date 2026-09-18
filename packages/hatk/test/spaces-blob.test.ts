@@ -15,13 +15,34 @@ vi.mock('../src/spaces/identity.ts', () => ({
   clearSpaceIdentityCache: vi.fn(),
 }))
 
-const { parseSpaceBlobRequest, resetSpaceBlobCache, serveSpaceBlob } = await import('../src/spaces/blob.ts')
+const { asPreset, parseSpaceBlobRequest, resetSpaceBlobCache, serveSpaceBlob, spaceBlobUrl } =
+  await import('../src/spaces/blob.ts')
+const { default: sharp } = await import('sharp')
+
+/** A photograph-shaped source: flat colour would compress to nothing and prove nothing. */
+async function photo(width: number, height: number): Promise<Uint8Array<ArrayBuffer>> {
+  return bytes(
+    sharp({
+      create: { width, height, channels: 3, noise: { type: 'gaussian', mean: 128, sigma: 40 }, background: '#888' },
+    })
+      .jpeg({ quality: 95 })
+      .toBuffer(),
+  )
+}
+
+/** Node's Buffer is not a `BodyInit` as far as the type checker is concerned. */
+async function bytes(buf: Promise<Buffer>): Promise<Uint8Array<ArrayBuffer>> {
+  const out = await buf
+  return new Uint8Array(out.buffer, out.byteOffset, out.byteLength) as Uint8Array<ArrayBuffer>
+}
 
 const SPACE = 'at://did:plc:authority/space/test.hatk.board/self'
 const WRITER = 'did:plc:writer'
 const VIEWER = { did: 'did:plc:member' }
 const oauth = { issuer: 'https://appview.test', scopes: ['atproto'], clients: [] } as any
 const request = { space: SPACE, repo: WRITER, cid: 'bafyimage' }
+
+const IMAGE = { 'content-type': 'image/jpeg' }
 
 let credentialFetch: ReturnType<typeof vi.fn>
 
@@ -226,5 +247,97 @@ test('a length the repo host never sent does not stop the blob being held', asyn
   )
   expect(await (await serveSpaceBlob(oauth, VIEWER, request)).text()).toBe('bytes')
   await serveSpaceBlob(oauth, VIEWER, request)
+  expect(credentialFetch).toHaveBeenCalledTimes(1)
+})
+
+// --- Presets ---
+
+test('a preset rides along in the url, and none is the original', () => {
+  expect(spaceBlobUrl(SPACE, WRITER, 'bafy', 'feed_thumbnail')).toContain('preset=feed_thumbnail')
+  expect(spaceBlobUrl(SPACE, WRITER, 'bafy')).not.toContain('preset')
+})
+
+test('only a name from the list is a preset', () => {
+  // Free-form dimensions would let anyone mint unlimited cache keys and put
+  // the cost of an arbitrary resize behind a URL.
+  expect(asPreset('avatar_thumbnail')).toBe('avatar_thumbnail')
+  expect(asPreset('rs:fill:4000:4000')).toBeUndefined()
+  expect(asPreset(null)).toBeUndefined()
+})
+
+test('an unrecognised preset is served as the original, not refused', () => {
+  // A broken image is a worse answer than a large one.
+  const parsed = parseSpaceBlobRequest(new URLSearchParams({ space: SPACE, repo: WRITER, cid: 'bafy', preset: 'huge' }))
+  expect(parsed).toEqual({ space: SPACE, repo: WRITER, cid: 'bafy' })
+})
+
+test('the preset is part of the etag, because it is part of the answer', async () => {
+  const res = await serveSpaceBlob(oauth, VIEWER, { ...request, preset: 'feed_thumbnail' })
+  expect(res.headers.get('etag')).toBe('"bafyimage-feed_thumbnail"')
+})
+
+test('two sizes of one blob are two cache entries', async () => {
+  credentialFetch.mockImplementation(async () => new Response(await photo(400, 300), { headers: IMAGE }))
+  await serveSpaceBlob(oauth, VIEWER, { ...request, preset: 'feed_thumbnail' })
+  await serveSpaceBlob(oauth, VIEWER, { ...request, preset: 'avatar_thumbnail' })
+  await serveSpaceBlob(oauth, VIEWER, { ...request, preset: 'avatar_thumbnail' })
+  expect(credentialFetch).toHaveBeenCalledTimes(2)
+})
+
+test('a photograph comes back at the size it is drawn', async () => {
+  const source = await photo(3000, 2000)
+  credentialFetch.mockImplementation(async () => new Response(source, { headers: IMAGE }))
+
+  const res = await serveSpaceBlob(oauth, VIEWER, { ...request, preset: 'avatar_thumbnail' })
+  const out = Buffer.from(await res.arrayBuffer())
+  expect(res.headers.get('content-type')).toBe('image/jpeg')
+  const meta = await sharp(out).metadata()
+  expect(meta.width).toBe(128)
+  expect(meta.height).toBe(128)
+  expect(out.byteLength).toBeLessThan(source.byteLength / 10)
+})
+
+test('a small source is not blown up to fill its preset', async () => {
+  credentialFetch.mockImplementation(async () => new Response(await photo(200, 150), { headers: IMAGE }))
+  const res = await serveSpaceBlob(oauth, VIEWER, { ...request, preset: 'feed_thumbnail' })
+  expect((await sharp(Buffer.from(await res.arrayBuffer())).metadata()).width).toBe(200)
+})
+
+test('the format is kept, so a transparent png does not quietly go opaque', async () => {
+  const png = await sharp({ create: { width: 600, height: 600, channels: 4, background: '#0000' } })
+    .png()
+    .toBuffer()
+  credentialFetch.mockImplementation(async () => new Response(png, { headers: { 'content-type': 'image/png' } }))
+  const res = await serveSpaceBlob(oauth, VIEWER, { ...request, preset: 'avatar_thumbnail' })
+  expect(res.headers.get('content-type')).toBe('image/png')
+  expect((await sharp(Buffer.from(await res.arrayBuffer())).metadata()).hasAlpha).toBe(true)
+})
+
+test('an animation is served whole rather than reduced to its first frame', async () => {
+  const gif = await sharp({ create: { width: 300, height: 300, channels: 3, background: '#123' } })
+    .gif()
+    .toBuffer()
+  credentialFetch.mockImplementation(async () => new Response(gif, { headers: { 'content-type': 'image/gif' } }))
+  const res = await serveSpaceBlob(oauth, VIEWER, { ...request, preset: 'feed_thumbnail' })
+  expect(Buffer.from(await res.arrayBuffer()).byteLength).toBe(gif.byteLength)
+})
+
+test('something sharp cannot read is served as it came', async () => {
+  // Resizing is an improvement on the answer, never a condition of giving one.
+  const res = await serveSpaceBlob(oauth, VIEWER, { ...request, preset: 'feed_thumbnail' })
+  expect(res.status).toBe(200)
+  expect(await res.text()).toBe('bytes')
+})
+
+test('an original too large to hold is still worth resizing', async () => {
+  // The camera-sized photograph is the case resizing pays for most; refusing
+  // to read it would refuse the request that needs answering.
+  const source = await photo(4000, 3000)
+  expect(source.byteLength).toBeGreaterThan(4 * 1024 * 1024)
+  credentialFetch.mockImplementation(async () => new Response(source, { headers: IMAGE }))
+
+  const res = await serveSpaceBlob(oauth, VIEWER, { ...request, preset: 'feed_thumbnail' })
+  expect((await sharp(Buffer.from(await res.arrayBuffer())).metadata()).width).toBe(1000)
+  await serveSpaceBlob(oauth, VIEWER, { ...request, preset: 'feed_thumbnail' })
   expect(credentialFetch).toHaveBeenCalledTimes(1)
 })

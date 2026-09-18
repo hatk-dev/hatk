@@ -381,6 +381,22 @@ let a viewer who may read one space name any CID they had heard of and be
 served it without that check running. Blobs past a per-entry limit are streamed
 rather than held.
 
+A `preset` names the size to serve, from the same list and the same numbers
+hatk's public path gives imgproxy — `avatar`, `avatar_thumbnail`,
+`feed_thumbnail`, `feed_fullsize`, `banner` — so an app says a size once and
+means it either side of the line between a public blob and a permissioned one.
+What differs is who resizes: a space blob may not pass through an image CDN, so
+it happens on the cache fill, where the bytes are already in hand. Only a name
+from that list is accepted; free-form dimensions would let anyone mint
+unlimited cache keys and put the cost of an arbitrary resize behind a URL. The
+resizer is sharp, an _optional_ peer dependency — most of what installs hatk
+never serves a space — and everything it cannot do (sharp absent, an animation,
+an image it cannot read, a derivative that came out no smaller) falls back to
+the original rather than to an error. Format is preserved rather than
+normalised to JPEG, which would flatten a PNG's transparency; EXIF orientation
+is applied and the rest of the metadata dropped, so a ride photo's GPS stops
+being served with it.
+
 **Write notices** (`spaces/notify.ts`, `spaces/verify.ts`). Registration happens
 inside reconcile, where a credential is already in hand — `registerNotify` is
 authenticated with one, so only somebody the authority already admits can
@@ -419,11 +435,10 @@ nothing, so there is no key to publish or to steal.
 - **Search pagination is approximate** over space rows: FTS ranks before the
   gate filters, so a page can come back short. No leak, and it costs nothing
   until spaces are configured.
-- **Space blobs are served at full size.** A public blob can go through an
-  image CDN and come back at the size it is drawn; a space blob cannot, because
-  no cache outside this process may hold one. Resizing them belongs on the
-  cache fill, where the bytes are already in hand and the derivative would be
-  what is held.
+- **Space blob resizing needs sharp installed.** It is an optional peer
+  dependency, so a deployment that never adds it serves originals and logs
+  `resize_unavailable` once. Nothing fails; images are just as large as they
+  were.
 
 ## The community app port (2026-09-17)
 

@@ -55,7 +55,7 @@ export {
   type WriteNotice,
 } from './notify.ts'
 export * from './uri.ts'
-export { blobCid, resetSpaceBlobCache, spaceBlobUrl } from './blob.ts'
+export { asPreset, blobCid, resetSpaceBlobCache, type SpaceBlobPreset, spaceBlobUrl } from './blob.ts'
 export { records, requireSpace, spaceRecords } from './records.ts'
 
 let sweepTimer: ReturnType<typeof setInterval> | null = null

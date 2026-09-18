@@ -50,9 +50,16 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.2.14",
     "@vitest/coverage-v8": "^4.1.11",
+    "sharp": "^0.35.4",
     "vite": "^8.0.0"
   },
   "peerDependencies": {
+    "sharp": "^0.35.4",
     "vite": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "sharp": {
+      "optional": true
+    }
   }
 }

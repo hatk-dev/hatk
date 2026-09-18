@@ -13,7 +13,7 @@ import { collectionFromRecordUri } from './spaces/uri.ts'
 import { spaceFilterSql } from './spaces/visibility.ts'
 import { guardedQuerySQL, unfilteredQuerySQL } from './spaces/guard.ts'
 import { records, requireSpace, spaceRecords } from './spaces/records.ts'
-import { spaceBlobUrl } from './spaces/blob.ts'
+import { type SpaceBlobPreset, spaceBlobUrl } from './spaces/blob.ts'
 import type { Row } from './lex-types.ts'
 
 export type { Row }
@@ -66,8 +66,13 @@ export interface BaseContext {
   records: <R = unknown>(collection: string, field: string, values: string[]) => Promise<Row<R>[]>
   /** Throw `NotAuthorized` unless the viewer may read this space. */
   requireSpace: (space: string) => void
-  /** The URL this appview serves a space blob at, for the viewer asking. */
-  spaceBlobUrl: (space: string, repo: string, cid: string) => string
+  /**
+   * The URL this appview serves a space blob at, for the viewer asking.
+   *
+   * The preset names the size it is drawn at, from the same list the public
+   * path uses. Left out, the original comes back.
+   */
+  spaceBlobUrl: (space: string, repo: string, cid: string, preset?: SpaceBlobPreset) => string
 }
 
 // --- Record Resolution ---
