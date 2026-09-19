@@ -12,7 +12,7 @@ import {
   buildSchemas,
 } from './database/schema.ts'
 import { discoverViews } from './views.ts'
-import { initDatabase, getCursor, querySQL, getSqlDialect, getSchemaDump, migrateSchema } from './database/db.ts'
+import { initDatabase, getCursor, querySQL, getSqlDialect, getSchemaDump } from './database/db.ts'
 import { createAdapter } from './database/adapter-factory.ts'
 import { getDialect } from './database/dialect.ts'
 import { setSearchPort } from './database/fts.ts'
@@ -74,7 +74,7 @@ log(`[main] Loaded config: ${collections.length} collections`)
 discoverViews()
 
 const engineDialect = getDialect(config.databaseEngine)
-const { schemas, ddlStatements } = buildSchemas(lexicons, collections, engineDialect)
+const { schemas, ddlStatements, indexStatements } = buildSchemas(lexicons, collections, engineDialect)
 for (const s of schemas) {
   if (s.columns.length === 0) {
     log(`[main] No lexicon found for ${s.collection}, using generic JSON storage`)
@@ -89,13 +89,11 @@ if (config.database !== ':memory:') {
 }
 const { adapter, searchPort } = await createAdapter(config.databaseEngine)
 setSearchPort(searchPort)
-await initDatabase(adapter, config.database, schemas, ddlStatements)
+// Migrates as part of opening, between creating the tables and indexing them.
+const migrationChanges = await initDatabase(adapter, config.database, schemas, ddlStatements, indexStatements)
 log(
   `[main] Database initialized (${config.databaseEngine}, ${config.database === ':memory:' ? 'in-memory' : config.database})`,
 )
-
-// Auto-migrate schema if lexicons changed
-const migrationChanges = await migrateSchema(schemas)
 if (migrationChanges.length > 0) {
   log(`[main] Applied ${migrationChanges.length} schema migration(s)`)
 }

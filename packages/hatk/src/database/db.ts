@@ -47,12 +47,26 @@ async function all<T = unknown>(sql: string, params: unknown[] = []): Promise<T[
   return port.query<T>(sql, params)
 }
 
+/**
+ * Open the database and leave its schema correct, whether it is new or not.
+ *
+ * The order is the point. An index names a column, so it cannot be built until
+ * the column is there, and on an existing database the column only arrives when
+ * `migrateSchema` runs — `CREATE TABLE IF NOT EXISTS` sees a table already and
+ * adds nothing. So: create the tables, reconcile the columns against the
+ * lexicons, then build the indexes.
+ *
+ * `indexStatements` may be left out, and callers that build from nothing do:
+ * a combined script passed as `ddlStatements` is valid on an empty database,
+ * because there every column is created with its table.
+ */
 export async function initDatabase(
   adapter: DatabasePort,
   dbPath: string,
   tableSchemas: TableSchema[],
   ddlStatements: string[],
-): Promise<void> {
+  indexStatements: string[] = [],
+): Promise<MigrationChange[]> {
   port = adapter
   dialect = getDialect(adapter.dialect)
 
@@ -226,6 +240,17 @@ export async function initDatabase(
   try {
     await run(`ALTER TABLE _oauth_requests ADD COLUMN pds_token_endpoint TEXT`)
   } catch {}
+
+  // Now the columns the indexes below name are all present, on a database of
+  // any age. A new collection's table was created above and needs nothing; an
+  // existing one gets whatever the lexicons have gained since it was written.
+  const changes = await migrateSchema(tableSchemas)
+
+  for (const ddl of indexStatements) {
+    await port.executeMultiple(ddl)
+  }
+
+  return changes
 }
 
 interface MigrationChange {

@@ -8,12 +8,28 @@
  * *old* DDL applied — that is exactly the state a deploy with a changed
  * lexicon finds itself in.
  */
-import { describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { createAdapter } from '../src/database/adapter-factory.ts'
 import { SQLITE_DIALECT } from '../src/database/dialect.ts'
 import { setSearchPort } from '../src/database/fts.ts'
-import { generateCreateTableSQL, generateTableSchema, type TableSchema } from '../src/database/schema.ts'
-import { getRepoStatus, initDatabase, migrateSchema, querySQL, runSQL, setRepoStatus } from '../src/database/db.ts'
+import {
+  generateCreateTableSQL,
+  generateSchemaDDL,
+  generateTableSchema,
+  type TableSchema,
+} from '../src/database/schema.ts'
+import {
+  closeDatabase,
+  getRepoStatus,
+  initDatabase,
+  migrateSchema,
+  querySQL,
+  runSQL,
+  setRepoStatus,
+} from '../src/database/db.ts'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const NSID = 'test.mig.item'
 
@@ -34,16 +50,23 @@ function schemaFor(lex: any): TableSchema {
   return generateTableSchema(NSID, lex, new Map([[NSID, lex]]), SQLITE_DIALECT)
 }
 
-/** Fresh database with `registered` in the schema map but `applied` as DDL. */
+/**
+ * Fresh database with `registered` in the schema map but `applied` as DDL.
+ *
+ * Opened with no DDL at all, and the drifted tables laid down afterwards:
+ * `initDatabase` reconciles what it opens, so handing it the old tables
+ * directly would have it repair the very drift each case exists to hand to
+ * `migrateSchema`. Registering the new schema and creating the old tables
+ * after is the state a deploy with a changed lexicon actually finds.
+ */
 async function boot(registered: TableSchema[], applied: TableSchema[] = registered): Promise<void> {
   const { adapter, searchPort } = await createAdapter('sqlite')
   setSearchPort(searchPort)
-  await initDatabase(
-    adapter,
-    ':memory:',
-    registered,
-    applied.map((s) => generateCreateTableSQL(s, SQLITE_DIALECT)),
-  )
+  await initDatabase(adapter, ':memory:', registered, [], [])
+  for (const schema of applied) {
+    const { tables, indexes } = generateSchemaDDL(schema, SQLITE_DIALECT)
+    for (const statement of [...tables, ...indexes]) await runSQL(statement)
+  }
 }
 
 async function columns(table: string): Promise<Record<string, string>> {
@@ -239,6 +262,87 @@ describe('migrateSchema', () => {
     expect(await querySQL(`SELECT name FROM sqlite_master WHERE name = '${NSID}__items'`)).toEqual([])
     // The collection's own table is untouched
     expect(await querySQL(`SELECT name FROM sqlite_master WHERE name = '${NSID}'`)).toHaveLength(1)
+  })
+
+  /**
+   * The ordering bug that took grain's appview down on 2026-09-19.
+   *
+   * An index names a column. `CREATE TABLE IF NOT EXISTS` looks at a table that
+   * already exists and adds nothing, so on a database written before the column
+   * existed the index is the statement that fails — and it used to run before
+   * the migration that would have added it, killing the process at boot. A
+   * fresh database could never show it, because there the column is created
+   * with its table, which is why every test and every local run stayed green.
+   *
+   * These boot twice against one file, which is the only way to be an old
+   * database rather than to describe one.
+   */
+  describe('an existing database gaining an indexed column', () => {
+    let dir: string
+    let dbPath: string
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'hatk-migrate-'))
+      dbPath = join(dir, 'grain.db')
+    })
+
+    afterEach(() => {
+      closeDatabase()
+      rmSync(dir, { recursive: true, force: true })
+    })
+
+    /** Open `dbPath` the way main.ts does, with the two passes kept apart. */
+    async function bootFile(schema: TableSchema, applied?: TableSchema) {
+      const { adapter, searchPort } = await createAdapter('sqlite')
+      setSearchPort(searchPort)
+      const source = applied ?? schema
+      const { tables, indexes } = generateSchemaDDL(source, SQLITE_DIALECT)
+      return initDatabase(adapter, dbPath, [schema], tables, indexes)
+    }
+
+    test('boots, rather than dying on an index for a column that is not there yet', async () => {
+      // `subject` is an at-uri, so it is a ref column and earns an index — the
+      // shape `space` had when it was added to every table at once.
+      const v2 = lexicon({
+        text: { type: 'string' },
+        count: { type: 'integer' },
+        subject: { type: 'string', format: 'at-uri' },
+      })
+
+      await bootFile(schemaFor(V1))
+      closeDatabase()
+
+      // The same file, now read by a build whose lexicon has gained a column.
+      await expect(bootFile(schemaFor(v2))).resolves.toBeDefined()
+
+      expect(await columns(NSID)).toHaveProperty('subject')
+      const idx = await querySQL(
+        `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = '${NSID}' AND name LIKE '%subject%'`,
+      )
+      expect(idx).toHaveLength(1)
+    })
+
+    test('an index the DDL names on a legacy table without `space` still gets built', async () => {
+      // Exactly what production was: rows indexed long before spaces existed.
+      const { adapter, searchPort } = await createAdapter('sqlite')
+      setSearchPort(searchPort)
+      await initDatabase(adapter, dbPath, [], [], [])
+      await runSQL(
+        `CREATE TABLE "${NSID}" (uri TEXT PRIMARY KEY, cid TEXT, did TEXT NOT NULL, indexed_at TEXT NOT NULL, text TEXT, count INTEGER)`,
+      )
+      await runSQL(`INSERT INTO "${NSID}" (uri, did, indexed_at, text) VALUES ('at://a/1', 'did:plc:a', 'now', 'kept')`)
+      closeDatabase()
+
+      await bootFile(schemaFor(V1))
+
+      expect(await columns(NSID)).toHaveProperty('space')
+      // The migration adds the column; the row that predates it reads as public.
+      expect(await querySQL(`SELECT text, space FROM "${NSID}"`)).toEqual([{ text: 'kept', space: null }])
+      const idx = await querySQL(
+        `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = '${NSID}' AND name LIKE '%space%'`,
+      )
+      expect(idx).toHaveLength(1)
+    })
   })
 
   test('rejects a table name that could smuggle SQL into introspection', async () => {

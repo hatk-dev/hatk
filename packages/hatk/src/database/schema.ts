@@ -414,8 +414,25 @@ export function generateTableSchema(
   }
 }
 
-// Generate CREATE TABLE SQL from a TableSchema
-export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect = DUCKDB_DIALECT): string {
+/**
+ * The DDL for a schema, with the tables kept apart from their indexes.
+ *
+ * They have to be separable because they cannot always run together. An index
+ * names a column, and on a database that predates that column the index is the
+ * statement that fails — `CREATE TABLE IF NOT EXISTS` has already decided the
+ * table is fine as it stands, and the column only arrives when `migrateSchema`
+ * runs. So a boot against an existing database creates the tables, reconciles
+ * the columns, and only then builds the indexes.
+ */
+export interface SchemaDDL {
+  /** `CREATE TABLE` for the collection and its child and union-branch tables. */
+  tables: string[]
+  /** `CREATE INDEX` for all of them, safe to run only once the columns exist. */
+  indexes: string[]
+}
+
+/** The DDL for a schema, split into the two passes {@link SchemaDDL} describes. */
+export function generateSchemaDDL(schema: TableSchema, dialect: SqlDialect = DUCKDB_DIALECT): SchemaDDL {
   // `space` is the permissioned space a row came from, and NULL for everything
   // off the firehose. It is the only per-row visibility marker in the schema:
   // a space record is readable by whoever the space's authority admits, so no
@@ -450,23 +467,27 @@ export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect 
     indexes.push(`CREATE INDEX IF NOT EXISTS idx_${prefix}_${refCol} ON ${schema.tableName}(${q(refCol)});`)
   }
 
-  // Child table DDL
-  const childDDL: string[] = []
+  // Child and union-branch tables, kept apart from their indexes for the same
+  // reason the top-level ones are.
+  const childTables: string[] = []
+  const childIndexes: string[] = []
   for (const child of schema.children) {
     const childLines: string[] = ['  parent_uri TEXT NOT NULL', '  parent_did TEXT NOT NULL']
     for (const col of child.columns) {
       const nullable = col.notNull ? ' NOT NULL' : ''
       childLines.push(`  ${q(col.name)} ${col.sqlType}${nullable}`)
     }
-    childDDL.push(`CREATE TABLE IF NOT EXISTS ${child.tableName} (\n${childLines.join(',\n')}\n);`)
+    childTables.push(`CREATE TABLE IF NOT EXISTS ${child.tableName} (\n${childLines.join(',\n')}\n);`)
 
     const childPrefix = `${prefix}__${toSnakeCase(child.fieldName)}`
-    childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${childPrefix}_parent ON ${child.tableName}(parent_uri);`)
-    childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${childPrefix}_did ON ${child.tableName}(parent_did);`)
+    childIndexes.push(`CREATE INDEX IF NOT EXISTS idx_${childPrefix}_parent ON ${child.tableName}(parent_uri);`)
+    childIndexes.push(`CREATE INDEX IF NOT EXISTS idx_${childPrefix}_did ON ${child.tableName}(parent_did);`)
 
     for (const col of child.columns) {
       if (col.isJson || col.sqlType === 'BLOB') continue
-      childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${childPrefix}_${col.name} ON ${child.tableName}(${q(col.name)});`)
+      childIndexes.push(
+        `CREATE INDEX IF NOT EXISTS idx_${childPrefix}_${col.name} ON ${child.tableName}(${q(col.name)});`,
+      )
     }
   }
 
@@ -478,22 +499,35 @@ export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect 
         const nullable = col.notNull ? ' NOT NULL' : ''
         branchLines.push(`  ${q(col.name)} ${col.sqlType}${nullable}`)
       }
-      childDDL.push(`CREATE TABLE IF NOT EXISTS ${branch.tableName} (\n${branchLines.join(',\n')}\n);`)
+      childTables.push(`CREATE TABLE IF NOT EXISTS ${branch.tableName} (\n${branchLines.join(',\n')}\n);`)
 
       const branchPrefix = branch.tableName.replace(/"/g, '').replace(/\./g, '_')
-      childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${branchPrefix}_parent ON ${branch.tableName}(parent_uri);`)
-      childDDL.push(`CREATE INDEX IF NOT EXISTS idx_${branchPrefix}_did ON ${branch.tableName}(parent_did);`)
+      childIndexes.push(`CREATE INDEX IF NOT EXISTS idx_${branchPrefix}_parent ON ${branch.tableName}(parent_uri);`)
+      childIndexes.push(`CREATE INDEX IF NOT EXISTS idx_${branchPrefix}_did ON ${branch.tableName}(parent_did);`)
 
       for (const col of branch.columns) {
         if (col.isJson || col.sqlType === 'BLOB') continue
-        childDDL.push(
+        childIndexes.push(
           `CREATE INDEX IF NOT EXISTS idx_${branchPrefix}_${col.name} ON ${branch.tableName}(${q(col.name)});`,
         )
       }
     }
   }
 
-  return [createTable, ...indexes, ...childDDL].join('\n')
+  return { tables: [createTable, ...childTables], indexes: [...indexes, ...childIndexes] }
+}
+
+/**
+ * Both passes as one script, in an order that is valid on a fresh database.
+ *
+ * What every caller that builds a database from nothing wants — a test, a
+ * fixture, the `hatk schema` dump. A boot that may meet an existing database
+ * wants {@link generateSchemaDDL} instead, so the migration can run between
+ * the two passes.
+ */
+export function generateCreateTableSQL(schema: TableSchema, dialect: SqlDialect = DUCKDB_DIALECT): string {
+  const { tables, indexes } = generateSchemaDDL(schema, dialect)
+  return [...tables, ...indexes].join('\n')
 }
 
 /**
@@ -504,33 +538,36 @@ export function buildSchemas(
   lexicons: Map<string, any>,
   collections: string[],
   dialect: SqlDialect = DUCKDB_DIALECT,
-): { schemas: TableSchema[]; ddlStatements: string[] } {
+): { schemas: TableSchema[]; ddlStatements: string[]; indexStatements: string[] } {
   const schemas: TableSchema[] = []
   const ddlStatements: string[] = []
+  const indexStatements: string[] = []
 
   for (const nsid of collections) {
     const lexicon = lexicons.get(nsid)
     if (!lexicon) {
-      const genericDDL = `CREATE TABLE IF NOT EXISTS "${nsid}" (
+      const prefix = nsid.replace(/\./g, '_')
+      ddlStatements.push(`CREATE TABLE IF NOT EXISTS "${nsid}" (
       uri TEXT PRIMARY KEY,
       cid TEXT,
       did TEXT NOT NULL,
       space TEXT,
       indexed_at ${dialect.timestampType} NOT NULL,
       data ${dialect.jsonType}
-    );
-    CREATE INDEX IF NOT EXISTS idx_${nsid.replace(/\./g, '_')}_indexed ON "${nsid}"(indexed_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_${nsid.replace(/\./g, '_')}_author ON "${nsid}"(did);
-    CREATE INDEX IF NOT EXISTS idx_${nsid.replace(/\./g, '_')}_space ON "${nsid}"(space);`
+    );`)
+      indexStatements.push(`CREATE INDEX IF NOT EXISTS idx_${prefix}_indexed ON "${nsid}"(indexed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_${prefix}_author ON "${nsid}"(did);
+    CREATE INDEX IF NOT EXISTS idx_${prefix}_space ON "${nsid}"(space);`)
       schemas.push({ collection: nsid, tableName: `"${nsid}"`, columns: [], refColumns: [], children: [], unions: [] })
-      ddlStatements.push(genericDDL)
       continue
     }
 
     const schema = generateTableSchema(nsid, lexicon, lexicons, dialect)
     schemas.push(schema)
-    ddlStatements.push(generateCreateTableSQL(schema, dialect))
+    const { tables, indexes } = generateSchemaDDL(schema, dialect)
+    ddlStatements.push(tables.join('\n'))
+    indexStatements.push(indexes.join('\n'))
   }
 
-  return { schemas, ddlStatements }
+  return { schemas, ddlStatements, indexStatements }
 }

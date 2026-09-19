@@ -31,6 +31,8 @@ export {
   buildSchemas,
   generateTableSchema,
   generateCreateTableSQL,
+  generateSchemaDDL,
+  type SchemaDDL,
   toSnakeCase,
   getLexicon,
   getLexiconArray,

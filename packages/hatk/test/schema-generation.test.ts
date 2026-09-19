@@ -419,7 +419,7 @@ describe('buildSchemas', () => {
   test('a configured collection with no lexicon falls back to a generic data-column table', () => {
     // Lets an app index a collection it only knows by NSID; the empty
     // columns list is what tells migrateSchema to leave the table alone.
-    const { schemas, ddlStatements } = buildSchemas(new Map(), ['test.unknown'], DUCKDB_DIALECT)
+    const { schemas, ddlStatements, indexStatements } = buildSchemas(new Map(), ['test.unknown'], DUCKDB_DIALECT)
     expect(schemas[0]).toEqual({
       collection: 'test.unknown',
       tableName: '"test.unknown"',
@@ -429,7 +429,11 @@ describe('buildSchemas', () => {
       unions: [],
     })
     expect(ddlStatements[0]).toContain('data JSON')
-    expect(ddlStatements[0]).toContain('idx_test_unknown_indexed')
+    // The index is held back for the second pass, the same as any other table's:
+    // it cannot run until the columns are reconciled.
+    expect(ddlStatements[0]).not.toContain('CREATE INDEX')
+    expect(indexStatements[0]).toContain('idx_test_unknown_indexed')
+    expect(indexStatements[0]).toContain('idx_test_unknown_space')
   })
 })
 

@@ -11,7 +11,7 @@ import {
   buildSchemas,
 } from './database/schema.ts'
 import { discoverViews } from './views.ts'
-import { initDatabase, migrateSchema, getSchemaDump } from './database/db.ts'
+import { initDatabase, getSchemaDump } from './database/db.ts'
 import { createAdapter } from './database/adapter-factory.ts'
 import { getDialect } from './database/dialect.ts'
 import { setSearchPort } from './database/fts.ts'
@@ -55,15 +55,14 @@ const collections = config.collections.length > 0 ? config.collections : discove
 discoverViews()
 
 const engineDialect = getDialect(config.databaseEngine)
-const { schemas, ddlStatements } = buildSchemas(lexicons, collections, engineDialect)
+const { schemas, ddlStatements, indexStatements } = buildSchemas(lexicons, collections, engineDialect)
 
 if (config.database !== ':memory:') {
   mkdirSync(dirname(config.database), { recursive: true })
 }
 const { adapter, searchPort } = await createAdapter(config.databaseEngine)
 setSearchPort(searchPort)
-await initDatabase(adapter, config.database, schemas, ddlStatements)
-await migrateSchema(schemas)
+await initDatabase(adapter, config.database, schemas, ddlStatements, indexStatements)
 
 // Write db/schema.sql
 try {
