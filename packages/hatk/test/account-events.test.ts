@@ -126,8 +126,15 @@ test('deactivated and deleted repos are not backfilled', () => {
 })
 
 test('Jetstream delivers account events to the same handler', async () => {
+  // As Jetstream sends it: the status nested under `account`.
   processEvent(
-    { $type: 'network.bsky.jetstream.subscribeEvents#account', did: ALICE, active: false, status: 'deleted' },
+    {
+      $type: 'network.bsky.jetstream.subscribeEvents#account',
+      did: ALICE,
+      seq: 26292189730,
+      time: '2026-09-24T21:22:59.127Z',
+      account: { active: false, did: ALICE, seq: 33908136752, status: 'deleted', time: '2026-09-24T21:22:59.127Z' },
+    },
     new Set([PUBLIC_COLLECTION]),
   )
   await vi.waitFor(async () => expect(await getRepoStatus(ALICE)).toBe('deleted'))

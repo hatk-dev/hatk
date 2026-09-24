@@ -165,9 +165,12 @@ export function processEvent(payload: any, collections: Set<string>): void {
   }
 
   if (kind === 'account') {
+    // Jetstream nests the status: `{ did, seq, account: { active, status } }`,
+    // unlike the relay's flat #account frame.
     const did = typeof payload.did === 'string' ? payload.did : undefined
-    const status = typeof payload.status === 'string' ? payload.status : undefined
-    if (did) void handleAccountEvent(did, payload.active === true, status)
+    const account = payload.account ?? {}
+    const status = typeof account.status === 'string' ? account.status : undefined
+    if (did) void handleAccountEvent(did, account.active === true, status)
     return
   }
 
