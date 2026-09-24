@@ -35,11 +35,17 @@ export function purgeableCollections(collections: Iterable<string>): string[] {
  * Takendown repos are excluded: re-backfilling one ends in
  * `setRepoStatus(did, 'active')`, which would silently reinstate an account an
  * admin took down — takedowns must survive every redeploy. Reinstatement goes
- * through `/admin/reverse-takedown` only. Exported for tests.
+ * through `/admin/reverse-takedown` only. Deactivated and deleted repos are
+ * excluded for the same reason from the other side: the network said so, and
+ * only the network saying otherwise (an `#account` event) brings them back.
+ * Exported for tests.
  */
 export function backfillEligible(status: string | null): boolean {
-  return status !== 'active' && status !== 'takendown'
+  return !status || !NOT_BACKFILLED.has(status)
 }
+
+/** Statuses a backfill must leave alone. See {@link backfillEligible}. */
+const NOT_BACKFILLED = new Set(['active', 'takendown', 'deactivated', 'deleted'])
 import type { BulkRecord } from './database/db.ts'
 import { emit, timer } from './logger.ts'
 import type { BackfillConfig } from './config.ts'
@@ -198,10 +204,17 @@ async function* listReposByCollection(
  */
 export async function backfillRepo(did: string, collections: Set<string>, fetchTimeout: number): Promise<number> {
   // A takendown repo must never be re-imported: the success path ends in
-  // setRepoStatus('active'), which would reinstate the account. Guarding here
-  // covers every caller (boot scan, auto-backfill, admin re-index).
-  if ((await getRepoStatus(did)) === 'takendown') {
+  // setRepoStatus('active'), which would reinstate the account. Nor a
+  // deactivated or deleted one, which the network has said is not there.
+  // Guarding here covers every caller (boot scan, auto-backfill, admin
+  // re-index).
+  const current = await getRepoStatus(did)
+  if (current === 'takendown') {
     emit('backfill', 'takedown_skip', { did })
+    return 0
+  }
+  if (current === 'deactivated' || current === 'deleted') {
+    emit('backfill', 'inactive_skip', { did, status: current })
     return 0
   }
   const elapsed = timer()

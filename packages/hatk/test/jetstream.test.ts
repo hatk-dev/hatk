@@ -54,11 +54,12 @@ test('buildSubscribeUrl sends each collection explicitly rather than a wildcard'
   expect(url.toString()).not.toContain('*')
 })
 
-test('buildSubscribeUrl requests commit and identity kinds', () => {
+test('buildSubscribeUrl requests commit, identity and account kinds', () => {
   const url = new URL(buildSubscribeUrl('wss://js.example', COLLECTIONS, null))
   // A collections filter constrains commits only, so a commits-only stream
-  // needs kinds — but dropping identity would break handle renames.
-  expect(url.searchParams.getAll('kinds')).toEqual(['commit', 'identity'])
+  // needs kinds — but dropping identity would break handle renames, and
+  // dropping account would leave deleted accounts in the index.
+  expect(url.searchParams.getAll('kinds')).toEqual(['commit', 'identity', 'account'])
 })
 
 test('buildSubscribeUrl omits the cursor when starting from the live tip', () => {
@@ -178,7 +179,7 @@ test('processEvent passes an identity event with no handle through for re-resolu
 })
 
 test('processEvent ignores kinds hatk does not consume', () => {
-  processEvent({ $type: 'network.bsky.jetstream.subscribeEvents#account', did: 'did:plc:alice' }, COLLECTIONS)
+  processEvent({ $type: 'network.bsky.jetstream.subscribeEvents#sync', did: 'did:plc:alice' }, COLLECTIONS)
   expect(applyCommit).not.toHaveBeenCalled()
   expect(handleIdentityEvent).not.toHaveBeenCalled()
 })

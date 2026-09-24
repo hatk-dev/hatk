@@ -560,6 +560,31 @@ export async function listActiveRepoDids(): Promise<string[]> {
   return rows.map((r: any) => r.did)
 }
 
+/**
+ * Repo statuses whose records no read serves: taken down by an admin here, or
+ * gone quiet on the network — deactivated (or suspended, or taken down by its
+ * host) and deleted. A SQL list, for `status NOT IN ...`.
+ */
+export const HIDDEN_REPO_STATUSES = "('takendown', 'deactivated', 'deleted')"
+
+/**
+ * Remove every record an account holds in the index, public and in spaces:
+ * what an account deleted on the network leaves behind. Each goes the way
+ * {@link deleteRecord} takes one — out of the search index, its child and
+ * union rows, then the row itself.
+ */
+export async function purgeRepoRecords(did: string): Promise<number> {
+  let removed = 0
+  for (const [collection, schema] of schemas) {
+    const rows = await all<{ uri: string }>(`SELECT uri FROM ${schema.tableName} WHERE did = $1`, [did])
+    for (const { uri } of rows) {
+      await deleteRecord(collection, uri)
+      removed++
+    }
+  }
+  return removed
+}
+
 export async function removeRepo(did: string): Promise<void> {
   await run(`DELETE FROM _repos WHERE did = $1`, [did])
 }
@@ -1349,7 +1374,7 @@ export async function queryRecords(
   params.push(...gate.params)
   paramIdx = gate.nextIdx
 
-  let sql = `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE (r.status IS NULL OR r.status != 'takendown')`
+  let sql = `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE (r.status IS NULL OR r.status NOT IN ${HIDDEN_REPO_STATUSES})`
   if (conditions.length) sql += ' AND ' + conditions.join(' AND ')
   sql += ` ORDER BY t.${sortName} ${direction}, t.cid ${direction} LIMIT $${paramIdx++}`
   params.push(limit + 1) // fetch one extra for cursor
@@ -1398,7 +1423,7 @@ export async function getRecordByUri(uri: string): Promise<any | null> {
   for (const [_collection, schema] of schemas) {
     const gate = spaceFilterSql('t', 2)
     const rows = await all(
-      `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE t.uri = $1 AND ${gate.sql} AND (r.status IS NULL OR r.status != 'takendown')`,
+      `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE t.uri = $1 AND ${gate.sql} AND (r.status IS NULL OR r.status NOT IN ${HIDDEN_REPO_STATUSES})`,
       [uri, ...gate.params],
     )
     if (rows.length > 0) {
@@ -1436,7 +1461,7 @@ export async function getRecordsByUris(collection: string, uris: string[]): Prom
   const placeholders = uris.map((_, i) => `$${i + 1}`).join(',')
   const gate = spaceFilterSql('t', uris.length + 1)
   const rows = await all(
-    `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE t.uri IN (${placeholders}) AND ${gate.sql} AND (r.status IS NULL OR r.status != 'takendown')`,
+    `SELECT t.*, r.handle FROM ${schema.tableName} t LEFT JOIN _repos r ON t.did = r.did WHERE t.uri IN (${placeholders}) AND ${gate.sql} AND (r.status IS NULL OR r.status NOT IN ${HIDDEN_REPO_STATUSES})`,
     [...uris, ...gate.params],
   )
 
@@ -1542,7 +1567,7 @@ export async function searchRecords(
           LEFT JOIN _repos r ON m.did = r.did
           WHERE m.uri IN (${placeholders})
           AND ${gate.sql}
-          AND (r.status IS NULL OR r.status != 'takendown')`,
+          AND (r.status IS NULL OR r.status NOT IN ${HIDDEN_REPO_STATUSES})`,
           [...uriList, ...gate.params],
         )
 

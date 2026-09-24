@@ -20,6 +20,7 @@ import {
   configureIndexer,
   getLastSeq,
   handleIdentityEvent,
+  handleAccountEvent,
   isIndexableCollection,
   jetstreamCursorKey,
   noteSeq,
@@ -34,8 +35,11 @@ import { log, emit } from './logger.ts'
 export const MAX_COLLECTIONS = 100
 export const MAX_DIDS = 10_000
 
-/** Event kinds hatk consumes. `commit` carries records; `identity` drives handle renames. */
-const KINDS = ['commit', 'identity'] as const
+/**
+ * Event kinds hatk consumes. `commit` carries records; `identity` drives handle
+ * renames; `account` says an account was deactivated, deleted, or came back.
+ */
+const KINDS = ['commit', 'identity', 'account'] as const
 
 const RECONNECT_DELAY_MS = 3000
 
@@ -157,6 +161,13 @@ export function processEvent(payload: any, collections: Set<string>): void {
     const did = typeof payload.did === 'string' ? payload.did : undefined
     const handle = typeof payload.handle === 'string' ? payload.handle : undefined
     if (did) handleIdentityEvent(did, handle)
+    return
+  }
+
+  if (kind === 'account') {
+    const did = typeof payload.did === 'string' ? payload.did : undefined
+    const status = typeof payload.status === 'string' ? payload.status : undefined
+    if (did) void handleAccountEvent(did, payload.active === true, status)
     return
   }
 

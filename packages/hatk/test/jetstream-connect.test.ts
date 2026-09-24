@@ -127,7 +127,7 @@ test('the tail subscribes with the JSON subprotocol and the configured filters',
   const url = new URL(ws.url)
   expect(url.pathname).toBe('/xrpc/network.bsky.jetstream.subscribeEvents')
   expect(url.searchParams.getAll('collections')).toEqual([PUBLIC_COLLECTION])
-  expect(url.searchParams.getAll('kinds')).toEqual(['commit', 'identity'])
+  expect(url.searchParams.getAll('kinds')).toEqual(['commit', 'identity', 'account'])
 })
 
 test('a boot cursor is offered on the first attempt', async () => {

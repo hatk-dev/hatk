@@ -114,8 +114,9 @@ test('an #identity frame with no did is dropped rather than resolved', async () 
 })
 
 test('an event kind hatk does not consume is ignored', async () => {
-  // #account, #sync and friends share the frame shape; only #commit is indexed.
-  processMessage(frame({ op: 1, t: '#account' }, { seq: 5, did: DID, active: false }), COLLECTIONS)
+  // #sync and friends share the frame shape; only #commit is indexed (#identity
+  // and #account change a repo's handle and status, not its records).
+  processMessage(frame({ op: 1, t: '#sync' }, { seq: 5, did: DID }), COLLECTIONS)
   await _flushForTests()
   expect(await rkeys()).toEqual([])
   expect(getLastSeq()).toBeNull()

@@ -10,6 +10,8 @@ import {
   deleteRecord,
   setCursor,
   setRepoStatus,
+  getRepoStatus,
+  purgeRepoRecords,
   getRepoRetryInfo,
   listAllRepoStatuses,
   getDatabasePort,
@@ -755,6 +757,60 @@ export async function handleIdentityEvent(did: string, payloadHandle: string | u
 }
 
 /**
+ * Handle an `#account` event: the network saying an account is active again,
+ * or is not — deactivated, suspended, taken down by its host, or deleted.
+ *
+ * - deleted: every record it holds here is removed, and it is marked
+ *   `deleted`.
+ * - deactivated, suspended, taken down by its host: marked `deactivated`. Its
+ *   records stay, and no read serves them (see HIDDEN_REPO_STATUSES), so an
+ *   account that comes back is whole again at once.
+ * - active again, after either: marked `pending` and backfilled, since it may
+ *   have changed while it was gone.
+ *
+ * An admin's own takedown here wins over all of it: only reverse-takedown
+ * lifts that. Statuses that say nothing about the account itself (a relay's
+ * `desynchronized` or `throttled`) change nothing. Like identity events, only
+ * DIDs already tracked are touched.
+ */
+export async function handleAccountEvent(did: string, active: boolean, status: string | undefined): Promise<void> {
+  if (!repoStatusCache.has(did)) return
+  try {
+    const current = await getRepoStatus(did)
+    if (current === null || current === 'takendown') return
+
+    if (!active && status === 'deleted') {
+      const removed = await purgeRepoRecords(did)
+      await setRepoStatus(did, 'deleted')
+      repoStatusCache.set(did, 'deleted')
+      emit('indexer', 'account_deleted', { did, removed })
+      return
+    }
+    if (!active && status && INACTIVE_ACCOUNT_STATUSES.has(status)) {
+      if (current === 'deactivated') return
+      await setRepoStatus(did, 'deactivated')
+      repoStatusCache.set(did, 'deactivated')
+      emit('indexer', 'account_deactivated', { did, status })
+      return
+    }
+    if (active && (current === 'deactivated' || current === 'deleted')) {
+      await setRepoStatus(did, 'pending')
+      repoStatusCache.set(did, 'pending')
+      emit('indexer', 'account_reactivated', { did, was: current })
+      void triggerAutoBackfill(did)
+    }
+  } catch (err: unknown) {
+    emit('indexer', 'account_event_error', {
+      did,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
+/** `#account` statuses that mean the account itself is not there. */
+const INACTIVE_ACCOUNT_STATUSES = new Set(['deactivated', 'suspended', 'takendown'])
+
+/**
  * Whether a collection's records may be written from network data.
  *
  * Private collections are AppView-authoritative: nothing on the network may
@@ -863,6 +919,15 @@ export function processMessage(
     const did = typeof body.value.did === 'string' ? body.value.did : undefined
     const handle = typeof body.value.handle === 'string' ? body.value.handle : undefined
     if (did) handleIdentityEvent(did, handle)
+    return
+  }
+
+  // Account status changes (deactivated, deleted, back again). Fire-and-forget,
+  // like identity.
+  if (header.value.t === '#account') {
+    const did = typeof body.value.did === 'string' ? body.value.did : undefined
+    const status = typeof body.value.status === 'string' ? body.value.status : undefined
+    if (did) void handleAccountEvent(did, body.value.active === true, status)
     return
   }
 
