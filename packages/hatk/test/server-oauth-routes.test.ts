@@ -553,6 +553,6 @@ test('reports are validated against the known labels and filed with the subject 
   const rows = (await querySQL(`SELECT subject_uri, subject_did FROM _reports ORDER BY id`)) as any[]
   expect(rows).toEqual([
     { subject_uri: subject.uri, subject_did: BOB.did },
-    { subject_uri: `at://${BOB.did}`, subject_did: BOB.did },
+    { subject_uri: BOB.did, subject_did: BOB.did },
   ])
 })
