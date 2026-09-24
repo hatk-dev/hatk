@@ -1061,6 +1061,103 @@ async function handleRefreshTokenGrant(
   }
 }
 
+// --- Sessions obtained outside the redirect flow ---
+
+/** A refusal from the endpoint {@link obtainSession} called, or an answer it cannot use. */
+export class ObtainSessionError extends Error {
+  constructor(
+    /** The endpoint's error code, e.g. an XRPC error name. */
+    public readonly error: string,
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message)
+  }
+}
+
+/** What {@link obtainSession} returns: the endpoint's whole response, and whose session it held. */
+export interface ObtainedSession {
+  did: string
+  response: Record<string, unknown>
+}
+
+/**
+ * Obtain a session for another account straight from its authorization server,
+ * outside the redirect flow: a group host creating an account for this app and
+ * handing it a session, say.
+ *
+ * `body` is POSTed as JSON to `url` as this app's OAuth client, the way the
+ * token endpoint is called: `client_id` and, for a confidential client, a client
+ * assertion addressed to the endpoint's origin, are added to it, and the request
+ * carries a DPoP proof from the app's key, answering a nonce challenge once.
+ * `headers` are sent too, for whatever else the endpoint wants to know (service
+ * auth from the viewer, typically).
+ *
+ * The response must hold an OAuth token response, at `session` or as the whole
+ * body. That session is stored for its `sub` exactly as a login's is, bound to
+ * the same DPoP key, so refresh and the PDS helpers work for that DID from here
+ * on. It is only accepted if the account's own authorization server is the one
+ * that answered: an endpoint cannot hand over a session for an account it does
+ * not serve.
+ */
+export async function obtainSession(
+  config: OAuthConfig,
+  url: string,
+  body: Record<string, unknown>,
+  opts: { headers?: Record<string, string> } = {},
+): Promise<ObtainedSession> {
+  const origin = new URL(url).origin
+  const payload = {
+    ...body,
+    ...(await withClientAuth({ client_id: pdsClientId(config.issuer, config) }, config.issuer, config, origin)),
+  }
+  const send = async (nonce?: string) =>
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        ...opts.headers,
+        'Content-Type': 'application/json',
+        DPoP: await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', url, undefined, nonce),
+      },
+      body: JSON.stringify(payload),
+    })
+  let res = await send()
+  let out = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  const nonce = res.headers.get('DPoP-Nonce')
+  if (!res.ok && out.error === 'use_dpop_nonce' && nonce) {
+    res = await send(nonce)
+    out = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  }
+  if (!res.ok) {
+    throw new ObtainSessionError(
+      typeof out.error === 'string' ? out.error : 'UpstreamFailure',
+      String(out.message ?? out.error_description ?? `${url} failed (${res.status})`),
+      res.status,
+    )
+  }
+
+  const token = (typeof out.session === 'object' && out.session ? out.session : out) as Record<string, unknown>
+  const did = token.sub
+  if (typeof did !== 'string' || typeof token.access_token !== 'string') {
+    throw new ObtainSessionError('NoSession', `${url} returned no session`, 502)
+  }
+  const { pdsEndpoint, authServerEndpoint, authServerMetadata } = await discoverAuthServer(did, _plcUrl)
+  if (new URL(authServerEndpoint).origin !== origin) {
+    throw new ObtainSessionError('WrongAuthServer', `${origin} is not the authorization server for ${did}`, 502)
+  }
+  await storeSession(did, {
+    pdsEndpoint,
+    pdsAuthServer: authServerEndpoint,
+    pdsTokenEndpoint: authServerMetadata.token_endpoint,
+    accessToken: token.access_token,
+    refreshToken: typeof token.refresh_token === 'string' ? token.refresh_token : undefined,
+    dpopJkt: serverJkt,
+    tokenExpiresAt: typeof token.expires_in === 'number' ? Math.floor(Date.now() / 1000) + token.expires_in : undefined,
+  })
+  emit('oauth', 'session_obtained', { did, from: origin })
+  return { did, response: out }
+}
+
 // --- PDS Session Refresh ---
 
 export async function refreshPdsSession(

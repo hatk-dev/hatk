@@ -44,6 +44,7 @@ import { createHmac } from 'node:crypto'
 import type { OAuthConfig, CdnConfig } from './config.ts'
 import { pdsCreateRecord, pdsPutRecord, pdsDeleteRecord, pdsApplyWrites, pdsXrpc } from './pds-proxy.ts'
 import type { PdsXrpcOptions } from './pds-proxy.ts'
+import { obtainSession, ObtainSessionError, type ObtainedSession } from './oauth/server.ts'
 
 export type { Row, FlatRow }
 
@@ -130,7 +131,30 @@ export interface XrpcContext<
    * the granted scopes still apply. See {@link pdsXrpc}.
    */
   pds: (nsid: string, options?: PdsXrpcOptions) => Promise<Record<string, unknown>>
+  /**
+   * The record helpers and `pds` above, acting as another account this app
+   * holds a session for — one it obtained with {@link obtainSession}, say.
+   * Nothing here checks that the viewer may act for that account: that is the
+   * app's decision, made before calling.
+   */
+  asAccount: (did: string) => AccountHelpers
+  /**
+   * Obtain a session for another account straight from its authorization
+   * server, outside the redirect flow — a group host creating an account for
+   * this app, for instance. POSTs `body` to `url` as this app's OAuth client,
+   * with DPoP, and stores the session the response carries for its `sub`, so
+   * {@link asAccount} works for it afterwards. See `obtainSession` in
+   * `oauth/server.ts`.
+   */
+  obtainSession: (
+    url: string,
+    body: Record<string, unknown>,
+    opts?: { headers?: Record<string, string> },
+  ) => Promise<ObtainedSession>
 }
+
+/** The PDS helpers on {@link XrpcContext}, for one account. */
+export type AccountHelpers = Pick<XrpcContext, 'createRecord' | 'putRecord' | 'deleteRecord' | 'applyWrites' | 'pds'>
 
 /** Internal representation of a loaded XRPC handler module. */
 interface XrpcHandler {
@@ -234,30 +258,50 @@ export function buildXrpcContext(
       const uri = await findUriByFields(collection, conditions)
       return uri !== null
     },
+    ...accountHelpers(viewer),
+    asAccount: (did) => accountHelpers({ did }),
+    obtainSession: async (url, body, opts) => {
+      if (!_oauthConfig) throw new Error('No OAuth config — cannot obtain a session')
+      try {
+        return await obtainSession(_oauthConfig, url, body, opts)
+      } catch (err) {
+        if (err instanceof ObtainSessionError) throw new InvalidRequestError(err.message, err.error)
+        throw err
+      }
+    },
+  }
+}
+
+/**
+ * The PDS helpers for one account, with the session this app holds for it: the
+ * viewer's, or another account's through {@link XrpcContext.asAccount}.
+ */
+function accountHelpers(account: { did: string } | null): AccountHelpers {
+  const ready = (what: string) => {
+    if (!_oauthConfig) throw new Error(`No OAuth config — cannot ${what}`)
+    if (!account) throw new Error(`Authentication required to ${what}`)
+    return { config: _oauthConfig, account }
+  }
+  return {
     createRecord: async (collection, record, opts) => {
-      if (!_oauthConfig) throw new Error('No OAuth config — cannot write to PDS')
-      if (!viewer) throw new Error('Authentication required to write records')
-      return pdsCreateRecord(_oauthConfig, viewer, { collection, record, rkey: opts?.rkey })
+      const { config, account } = ready('write records')
+      return pdsCreateRecord(config, account, { collection, record, rkey: opts?.rkey })
     },
     putRecord: async (collection, rkey, record) => {
-      if (!_oauthConfig) throw new Error('No OAuth config — cannot write to PDS')
-      if (!viewer) throw new Error('Authentication required to write records')
-      return pdsPutRecord(_oauthConfig, viewer, { collection, rkey, record })
+      const { config, account } = ready('write records')
+      return pdsPutRecord(config, account, { collection, rkey, record })
     },
     deleteRecord: async (collection, rkey) => {
-      if (!_oauthConfig) throw new Error('No OAuth config — cannot write to PDS')
-      if (!viewer) throw new Error('Authentication required to write records')
-      await pdsDeleteRecord(_oauthConfig, viewer, { collection, rkey })
+      const { config, account } = ready('write records')
+      await pdsDeleteRecord(config, account, { collection, rkey })
     },
     applyWrites: async (writes) => {
-      if (!_oauthConfig) throw new Error('No OAuth config — cannot write to PDS')
-      if (!viewer) throw new Error('Authentication required to write records')
-      return pdsApplyWrites(_oauthConfig, viewer, { writes })
+      const { config, account } = ready('write records')
+      return pdsApplyWrites(config, account, { writes })
     },
     pds: async (nsid, options) => {
-      if (!_oauthConfig) throw new Error('No OAuth config — cannot call the PDS')
-      if (!viewer) throw new Error('Authentication required to call the PDS')
-      return pdsXrpc(_oauthConfig, viewer, nsid, options)
+      const { config, account } = ready('call the PDS')
+      return pdsXrpc(config, account, nsid, options)
     },
   }
 }

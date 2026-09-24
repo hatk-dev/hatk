@@ -194,6 +194,27 @@ test('with a session, the write helpers proxy to the PDS as the viewer', async (
   configureOAuth(null)
 })
 
+test('asAccount proxies as the named account, whoever the viewer is', async () => {
+  configureOAuth(oauth)
+  const GROUP = { did: 'did:plc:group' }
+  // Signed out or not, the account is the one named; whether the viewer may use
+  // it is the app's decision.
+  for (const viewer of [ME, null]) {
+    const as = buildXrpcContext({}, undefined, 1, viewer).asAccount(GROUP.did)
+    await as.createRecord('xyz.c', { a: 1 })
+    expect(pds.pdsCreateRecord).toHaveBeenLastCalledWith(oauth, GROUP, { collection: 'xyz.c', record: { a: 1 } })
+    await as.pds('com.atproto.space.listRepos')
+    expect(pds.pdsXrpc).toHaveBeenLastCalledWith(oauth, GROUP, 'com.atproto.space.listRepos', undefined)
+  }
+  configureOAuth(null)
+})
+
+test('obtainSession refuses without OAuth configured', async () => {
+  configureOAuth(null)
+  const ctx = buildXrpcContext({}, undefined, 1, ME)
+  await expect(ctx.obtainSession('https://host.test/x', {})).rejects.toThrow(/No OAuth config/)
+})
+
 // --- registration + execution ---
 
 test('executing an unregistered method resolves to null', async () => {
