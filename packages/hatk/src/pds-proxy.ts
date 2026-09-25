@@ -25,6 +25,61 @@ export class ScopeMissingProxyError extends ProxyError {
   }
 }
 
+/**
+ * A call the session's grant does not cover, where signing in again would not
+ * change that: the server granted less than it was asked for, on purpose. The
+ * session is kept and only this call fails, as a 403 — the answer is no, not
+ * "authorize again". Named apart from ScopeMissingError on purpose: the browser
+ * client and the admin page answer that name by starting a new sign-in.
+ */
+export class ScopeWithheldProxyError extends ProxyError {
+  constructor() {
+    super(403, 'ScopeWithheld')
+  }
+}
+
+type ProxySession = {
+  access_token: string
+  pds_endpoint: string
+  did: string
+  refresh_token: string
+  dpop_jkt: string
+  requested_scope?: string | null
+  granted_scope?: string | null
+}
+
+/**
+ * Did the server grant this session less than it was asked for?
+ *
+ * A scope refusal means one of two things. Either the session predates a
+ * scope the app has since added, and a new sign-in asks for it — or the server
+ * chose not to grant it, as a group's host does when someone signs in as the
+ * group, and a new sign-in gets the same answer. Ending the session is the
+ * fix for the first and, for the second, signs the account out on every page
+ * that makes a call it may not.
+ *
+ * Narrower is counted, not compared: a server reports its grant in its own
+ * words — the reference PDS drops default parameters, sorts collections and
+ * fills them in from a space's declaration — so a full grant rarely matches the
+ * request string for string. It does keep one scope for each one asked for,
+ * and narrowing takes whole scopes away, so fewer scopes granted than asked
+ * for is the sign.
+ *
+ * A session that predates recording either keeps the old answer.
+ */
+function withheldByServer(session: ProxySession): boolean {
+  if (!session.requested_scope || !session.granted_scope) return false
+  const count = (scope: string) => new Set(scope.split(/\s+/).filter(Boolean)).size
+  return count(session.granted_scope) < count(session.requested_scope)
+}
+
+/** End the session so the user authorizes again — unless that could not help. */
+async function refuseForScope(session: ProxySession): Promise<never> {
+  if (withheldByServer(session)) throw new ScopeWithheldProxyError()
+  await deleteSession(session.did)
+  throw new ScopeMissingProxyError()
+}
+
 // --- Low-level PDS proxy with DPoP + nonce retry + token refresh ---
 
 interface PdsProxyResult {
@@ -39,7 +94,7 @@ type FetchFn = (token: string, nonce?: string) => Promise<PdsProxyResult>
 /** Shared retry logic: DPoP nonce handling + token refresh. */
 async function withDpopRetry(
   oauthConfig: OAuthConfig,
-  session: { access_token: string; pds_endpoint: string; did: string; refresh_token: string; dpop_jkt: string },
+  session: ProxySession,
   doFetch: FetchFn,
 ): Promise<PdsProxyResult> {
   let accessToken = session.access_token
@@ -58,11 +113,8 @@ async function withDpopRetry(
     }
   }
 
-  // Step 2: handle insufficient scope — clear session so user re-authenticates with updated scopes
-  if (result.body.error === 'ScopeMissingError') {
-    await deleteSession(session.did)
-    throw new ScopeMissingProxyError()
-  }
+  // Step 2: handle insufficient scope — see refuseForScope
+  if (result.body.error === 'ScopeMissingError') await refuseForScope(session)
 
   // Step 3: handle expired PDS token — refresh and retry
   if (isTokenError(result.body.error)) {
@@ -86,10 +138,7 @@ async function withDpopRetry(
       // handled above; pds.js answers InvalidToken for a scope its permissioned
       // space endpoints refuse, which is indistinguishable from expiry until
       // the refresh rules expiry out.
-      if (!result.ok && isTokenError(result.body.error)) {
-        await deleteSession(session.did)
-        throw new ScopeMissingProxyError()
-      }
+      if (!result.ok && isTokenError(result.body.error)) await refuseForScope(session)
     }
   }
 
@@ -131,7 +180,7 @@ function isTokenError(error: unknown): boolean {
 
 async function proxyToPds(
   oauthConfig: OAuthConfig,
-  session: { access_token: string; pds_endpoint: string; did: string; refresh_token: string; dpop_jkt: string },
+  session: ProxySession,
   method: string,
   pdsUrl: string,
   body: unknown,

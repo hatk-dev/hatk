@@ -1,5 +1,5 @@
-import { afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest'
-import { pdsXrpc, ScopeMissingProxyError } from '../src/pds-proxy.ts'
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
+import { pdsXrpc, ScopeMissingProxyError, ScopeWithheldProxyError } from '../src/pds-proxy.ts'
 import { initOAuth } from '../src/oauth/server.ts'
 import { OAUTH_DDL, getSession, storeSession } from '../src/oauth/db.ts'
 import { runSQL } from '../src/database/db.ts'
@@ -113,4 +113,75 @@ test('an unrelated failure is left alone', async () => {
     status: 400,
   })
   expect(await getSession(DID)).not.toBeNull()
+})
+
+// A server may grant less than it was asked for, on purpose: a group's host
+// narrows a sign-in as the group to what the person's roles allow. A refusal
+// then is the server's answer, not an old session, and a new sign-in would get
+// the same grant — so ending the session only signs the account out on every
+// page that makes a call it may not.
+describe('a session the server granted less than it asked for', () => {
+  const asked = 'atproto repo:app.example.post space:app.example.pool?action=read space:app.example.members?action=read'
+  const narrowed = 'atproto repo:app.example.post space:app.example.pool?action=read'
+
+  async function storeNarrowed(granted = narrowed) {
+    await storeSession(DID, {
+      pdsEndpoint: PDS,
+      pdsAuthServer: PDS,
+      accessToken: 'stale-token',
+      refreshToken: 'a-refresh-token',
+      dpopJkt: 'jkt',
+      requestedScope: asked,
+      grantedScope: granted,
+    })
+  }
+
+  test('keeps the session and fails only the call', async () => {
+    await storeNarrowed()
+    stubFetchSequence([{ status: 403, body: { error: 'ScopeMissingError' } }])
+
+    const err = await pdsXrpc(config, { did: DID }, 'com.atproto.space.listSpaces').catch((e) => e)
+    expect(err).toBeInstanceOf(ScopeWithheldProxyError)
+    expect(err).not.toBeInstanceOf(ScopeMissingProxyError)
+    // Not the name the browser client answers by signing in again.
+    expect(err).toMatchObject({ status: 403, message: 'ScopeWithheld' })
+    expect(await getSession(DID)).not.toBeNull()
+  })
+
+  test('keeps it through the refusal pds.js spells as an expired token', async () => {
+    await storeNarrowed()
+    stubFetchSequence([refused, refreshed, refused])
+
+    await expect(pdsXrpc(config, { did: DID }, 'com.atproto.space.listSpaces')).rejects.toBeInstanceOf(
+      ScopeWithheldProxyError,
+    )
+    const session = await getSession(DID)
+    // Refreshed, and still knowing what it was granted.
+    expect(session).toMatchObject({ access_token: 'fresh-token', requested_scope: asked, granted_scope: narrowed })
+  })
+
+  test("a full grant in the server's own words still ends the session", async () => {
+    // The reference PDS rewrites a space scope it grants — default parameters
+    // dropped, collections filled in — so the grant does not match the request
+    // string for string. Nothing was withheld; the app has asked for more since.
+    await storeNarrowed(
+      'atproto repo:app.example.post space:app.example.pool?collection=app.example.photo&action=read space:app.example.members?action=read',
+    )
+    stubFetchSequence([{ status: 403, body: { error: 'ScopeMissingError' } }])
+
+    await expect(pdsXrpc(config, { did: DID }, 'com.atproto.space.listSpaces')).rejects.toBeInstanceOf(
+      ScopeMissingProxyError,
+    )
+    expect(await getSession(DID)).toBeNull()
+  })
+
+  test('a full grant still ends the session: the app has asked for more since', async () => {
+    await storeNarrowed(asked)
+    stubFetchSequence([{ status: 403, body: { error: 'ScopeMissingError' } }])
+
+    await expect(pdsXrpc(config, { did: DID }, 'com.atproto.space.listSpaces')).rejects.toBeInstanceOf(
+      ScopeMissingProxyError,
+    )
+    expect(await getSession(DID)).toBeNull()
+  })
 })

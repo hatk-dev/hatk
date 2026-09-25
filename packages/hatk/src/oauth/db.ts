@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS _oauth_sessions (
   refresh_token TEXT,
   dpop_jkt TEXT NOT NULL,
   token_expires_at INTEGER,
+  requested_scope TEXT,
+  granted_scope TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -43,6 +45,7 @@ CREATE TABLE IF NOT EXISTS _oauth_requests (
   pds_state TEXT,
   did TEXT,
   login_hint TEXT,
+  pds_scope TEXT,
   expires_at INTEGER NOT NULL
 );
 
@@ -112,12 +115,14 @@ export async function storeOAuthRequest(
     pdsState?: string
     did?: string
     loginHint?: string
+    /** What was asked of the PDS, which is not always `scope`: see negotiateScope. */
+    pdsScope?: string
     expiresAt: number
   },
 ): Promise<void> {
   await runSQL(
-    `INSERT INTO _oauth_requests (request_uri, client_id, redirect_uri, scope, state, code_challenge, code_challenge_method, dpop_jkt, pds_request_uri, pds_auth_server, pds_authorization_endpoint, pds_token_endpoint, pds_endpoint, pds_code_verifier, pds_state, did, login_hint, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+    `INSERT INTO _oauth_requests (request_uri, client_id, redirect_uri, scope, state, code_challenge, code_challenge_method, dpop_jkt, pds_request_uri, pds_auth_server, pds_authorization_endpoint, pds_token_endpoint, pds_endpoint, pds_code_verifier, pds_state, did, login_hint, expires_at, pds_scope)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
     [
       requestUri,
       data.clientId,
@@ -137,6 +142,7 @@ export async function storeOAuthRequest(
       data.did || null,
       data.loginHint || null,
       data.expiresAt,
+      data.pdsScope || null,
     ],
   )
 }
@@ -185,11 +191,20 @@ export async function storeSession(
     refreshToken?: string
     dpopJkt: string
     tokenExpiresAt?: number
+    /**
+     * The scope asked of the PDS for this session, and the scope it granted.
+     * A server may grant less than it was asked for, on purpose — a group's
+     * host narrows a sign-in as the group to what the person's roles allow —
+     * and the difference is what tells a refusal it can do nothing about from
+     * one a new sign-in would fix. See withheldByServer in pds-proxy.ts.
+     */
+    requestedScope?: string
+    grantedScope?: string
   },
 ): Promise<void> {
   await runSQL(
-    `INSERT OR REPLACE INTO _oauth_sessions (did, pds_endpoint, pds_auth_server, pds_token_endpoint, access_token, refresh_token, dpop_jkt, token_expires_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,CURRENT_TIMESTAMP)`,
+    `INSERT OR REPLACE INTO _oauth_sessions (did, pds_endpoint, pds_auth_server, pds_token_endpoint, access_token, refresh_token, dpop_jkt, token_expires_at, requested_scope, granted_scope, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP)`,
     [
       did,
       data.pdsEndpoint,
@@ -199,6 +214,8 @@ export async function storeSession(
       data.refreshToken || null,
       data.dpopJkt,
       data.tokenExpiresAt || null,
+      data.requestedScope || null,
+      data.grantedScope || null,
     ],
   )
 }

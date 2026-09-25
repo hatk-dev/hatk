@@ -240,6 +240,17 @@ export async function initDatabase(
   try {
     await run(`ALTER TABLE _oauth_requests ADD COLUMN pds_token_endpoint TEXT`)
   } catch {}
+  // What a session asked for and was granted. NULL on sessions that predate
+  // this, which are treated as they were before: a scope refusal ends them.
+  try {
+    await run(`ALTER TABLE _oauth_sessions ADD COLUMN requested_scope TEXT`)
+  } catch {}
+  try {
+    await run(`ALTER TABLE _oauth_sessions ADD COLUMN granted_scope TEXT`)
+  } catch {}
+  try {
+    await run(`ALTER TABLE _oauth_requests ADD COLUMN pds_scope TEXT`)
+  } catch {}
 
   // Now the columns the indexes below name are all present, on a database of
   // any age. A new collection's table was created above and needs nothing; an

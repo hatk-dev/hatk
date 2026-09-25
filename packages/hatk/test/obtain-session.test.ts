@@ -119,6 +119,20 @@ test('calls the endpoint as the OAuth client, with DPoP, and stores the session 
   })
 })
 
+test('remembers the scope it asked for and the scope it was granted', async () => {
+  // A host may grant less than was asked; what tells a later refusal apart
+  // from an outdated session is having both.
+  answers = [{ status: 200, body: session({ scope: 'atproto repo:app.example.profile' }) }]
+  await obtainSession(config, ENDPOINT, {
+    handle: 'club.test',
+    scope: 'atproto repo:app.example.profile repo:app.example.item',
+  })
+  expect(await getSession(GROUP)).toMatchObject({
+    requested_scope: 'atproto repo:app.example.profile repo:app.example.item',
+    granted_scope: 'atproto repo:app.example.profile',
+  })
+})
+
 test('answers a nonce challenge once', async () => {
   answers = [
     { status: 400, body: { error: 'use_dpop_nonce' }, headers: { 'DPoP-Nonce': 'n1' } },

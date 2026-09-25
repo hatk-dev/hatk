@@ -391,6 +391,7 @@ export async function handlePar(
   let pdsTokenEndpoint: string | undefined
   let pdsCodeVerifier: string | undefined
   let pdsState: string | undefined
+  let pdsScope: string | undefined
   let pdsEndpoint: string | undefined
 
   if (prompt === 'create' && body.login_hint) {
@@ -440,7 +441,7 @@ export async function handlePar(
     const parEndpoint = endpoints.parEndpoint
     const serverDpopProof = await createDpopProof(serverPrivateJwk, serverPublicJwk, 'POST', parEndpoint)
 
-    const pdsScope = await negotiateScope(
+    pdsScope = await negotiateScope(
       config,
       body.scope || 'atproto transition:generic',
       pdsEndpoint,
@@ -541,6 +542,7 @@ export async function handlePar(
     pdsState,
     did,
     loginHint: body.login_hint,
+    pdsScope,
     expiresAt,
   })
 
@@ -702,6 +704,7 @@ export async function serverLogin(
     pdsState,
     did,
     loginHint: handle,
+    pdsScope: scope,
     expiresAt,
   })
 
@@ -831,6 +834,8 @@ export async function handleCallback(
     refreshToken: tokenData.refresh_token,
     dpopJkt: serverJkt,
     tokenExpiresAt: tokenData.expires_in ? Math.floor(Date.now() / 1000) + tokenData.expires_in : undefined,
+    requestedScope: request.pds_scope ?? undefined,
+    grantedScope: typeof tokenData.scope === 'string' ? tokenData.scope : undefined,
   })
 
   await fireOnLoginHook(did, config)
@@ -1153,6 +1158,8 @@ export async function obtainSession(
     refreshToken: typeof token.refresh_token === 'string' ? token.refresh_token : undefined,
     dpopJkt: serverJkt,
     tokenExpiresAt: typeof token.expires_in === 'number' ? Math.floor(Date.now() / 1000) + token.expires_in : undefined,
+    requestedScope: typeof body.scope === 'string' ? body.scope : undefined,
+    grantedScope: typeof token.scope === 'string' ? token.scope : undefined,
   })
   emit('oauth', 'session_obtained', { did, from: origin })
   return { did, response: out }
@@ -1169,6 +1176,8 @@ export async function refreshPdsSession(
     pds_token_endpoint?: string
     refresh_token: string
     dpop_jkt: string
+    requested_scope?: string | null
+    granted_scope?: string | null
   },
 ): Promise<{ accessToken: string; refreshToken?: string; expiresAt?: number } | null> {
   if (!session.refresh_token) return null
@@ -1247,6 +1256,9 @@ export async function refreshPdsSession(
     refreshToken: tokenData.refresh_token || session.refresh_token,
     dpopJkt: session.dpop_jkt,
     tokenExpiresAt: tokenData.expires_in ? Math.floor(Date.now() / 1000) + tokenData.expires_in : undefined,
+    // A refresh renews the grant, it does not renegotiate it.
+    requestedScope: session.requested_scope ?? undefined,
+    grantedScope: typeof tokenData.scope === 'string' ? tokenData.scope : (session.granted_scope ?? undefined),
   })
 
   return {
