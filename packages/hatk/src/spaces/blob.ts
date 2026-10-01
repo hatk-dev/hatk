@@ -39,7 +39,7 @@ const SERVABLE = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif',
  * a viewer who has just lost access still sees what they had. A minute is
  * small against what the surrounding design already accepts: the readable set
  * is cached for five, and the space host lets a minted credential outlive a
- * revocation by up to two hours.
+ * revocation by up to ten minutes unless the authority revokes it early.
  */
 const MAX_AGE_S = 60
 

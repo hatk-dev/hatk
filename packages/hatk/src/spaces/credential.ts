@@ -13,12 +13,13 @@
  *   the reader's PDS signs a delegation token   (60s, single-use, addressed to
  *                                                the authority's space host)
  *   the authority checks it, checks the reader against the space's policy, and
- *   returns a credential bound to the key that signed our DPoP proof   (2h)
+ *   returns a credential bound to the key that signed the exchange   (10 min)
  *
  * — and the credential is then presented to every writer's host in the space.
  * It carries no audience, which is why it must be bound to a key rather than
- * held as a bearer token: a host handed a bearer credential to serve its own
- * repo could replay it against every other host in the space.
+ * held as a bearer token: each request signs the credential together with the
+ * DID it is addressed to, so a host handed one to serve its own repo cannot
+ * replay it against any other account. See signature.ts.
  *
  * The consequence to be honest about: a space is only readable while somebody
  * who can read it has a live session here. That is the same bound the data has
@@ -27,26 +28,17 @@
  */
 
 import type { OAuthConfig } from '../config.ts'
-import { computeJwkThumbprint, generateKeyPair } from '../oauth/crypto.ts'
-import { createDpopProof } from '../oauth/dpop.ts'
 import { pdsXrpc } from '../pds-proxy.ts'
 import { emit } from '../logger.ts'
 import { spaceHostEndpoint } from './identity.ts'
+import { generateSpaceSigKey, spaceSigHeaders, type SpaceSigKey } from './signature.ts'
 import { parseSpaceRef } from './uri.ts'
 
-/** Re-mint this long before the credential's own expiry rather than racing it. */
-const RENEW_LEAD_MS = 5 * 60 * 1000
-
 /**
- * The key credentials are bound to, generated once per process and never
- * persisted. It is registered nowhere, so a restart costs one round trip to
- * mint fresh credentials and nothing else.
+ * Re-mint this long before the credential's own expiry rather than racing it.
+ * Credentials live ten minutes, so this keeps nine of them.
  */
-let bindingKey: Promise<{ privateJwk: JsonWebKey; publicJwk: JsonWebKey }> | null = null
-function getBindingKey(): Promise<{ privateJwk: JsonWebKey; publicJwk: JsonWebKey }> {
-  bindingKey ??= generateKeyPair()
-  return bindingKey
-}
+const RENEW_LEAD_MS = 60 * 1000
 
 export class SpaceCredentialError extends Error {
   constructor(
@@ -73,7 +65,10 @@ export interface SpaceCredential {
   /** The account whose delegation bought it. */
   readerDid: string
   expiresAt: number
-  /** A fetch that presents the credential with a fresh DPoP proof per request. */
+  /**
+   * A fetch that presents the credential, signed for whoever the request is
+   * addressed to: the `repo` it names, or else the space's authority.
+   */
   fetch: (input: string | URL, init?: RequestInit) => Promise<Response>
 }
 
@@ -89,29 +84,24 @@ function expiryOf(jwt: string): number {
 }
 
 /**
- * Exchange a delegation token for a credential at the authority.
- *
- * The proof sent here carries no `ath`: a delegation token is an authorization
- * grant rather than an access token, so there is nothing to hash yet, and a
- * server that checks will refuse a proof that includes one. `dpopJkt` is sent
- * alongside because implementations differ on which they read — the reference
- * reads the proof, others read the field — and they agree here by construction.
+ * Exchange a delegation token for a credential at the authority, binding it to
+ * `key` by signing the token with it.
  */
-async function exchange(authorityHost: string, space: string, delegationToken: string): Promise<string> {
-  const { privateJwk, publicJwk } = await getBindingKey()
+async function exchange(
+  authorityHost: string,
+  space: string,
+  delegationToken: string,
+  key: SpaceSigKey,
+): Promise<string> {
   const url = `${authorityHost}/xrpc/com.atproto.space.getSpaceCredential`
-  const proof = await createDpopProof(privateJwk, publicJwk, 'POST', url)
-  const dpopJkt = await computeJwkThumbprint(publicJwk)
-
   const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      Authorization: `Bearer ${delegationToken}`,
-      DPoP: proof,
+      ...(await spaceSigHeaders(key, `Bearer ${delegationToken}`)),
     },
-    body: JSON.stringify({ space, dpopJkt }),
+    body: JSON.stringify({ space }),
   })
   const body = (await res.json().catch(() => ({}))) as { credential?: string; error?: string; message?: string }
   if (!res.ok || !body.credential) {
@@ -147,18 +137,25 @@ export async function mintSpaceCredential(
     throw new SpaceCredentialError(err?.status ?? 502, 'DelegationFailed', err?.message ?? 'delegation failed')
   }
 
+  // A key per credential, held only as long as the credential is.
+  const key = await generateSpaceSigKey()
   const authorityHost = await spaceHostEndpoint(ref.authority)
-  const credential = await exchange(authorityHost, space, token)
-  const { privateJwk, publicJwk } = await getBindingKey()
+  const credential = await exchange(authorityHost, space, token, key)
 
+  // Signatures depend only on the credential and the audience, so each is made
+  // once and reused for as long as the credential lives.
+  const signed = new Map<string, Promise<Record<string, string>>>()
   const credentialFetch = async (input: string | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === 'string' ? input : input.toString()
-    const method = (init?.method ?? 'GET').toUpperCase()
-    const proof = await createDpopProof(privateJwk, publicJwk, method, url, credential)
+    const audience = new URL(url).searchParams.get('repo') ?? ref.authority
+    let sig = signed.get(audience)
+    if (!sig) {
+      sig = spaceSigHeaders(key, `Atproto-Space ${credential}`, audience)
+      signed.set(audience, sig)
+    }
     const headers = new Headers(init?.headers)
-    headers.set('Authorization', `DPoP ${credential}`)
-    headers.set('DPoP', proof)
-    return fetch(url, { ...init, method, headers })
+    for (const [name, value] of Object.entries(await sig)) headers.set(name, value)
+    return fetch(url, { ...init, headers })
   }
 
   return { space, readerDid, expiresAt: expiryOf(credential), fetch: credentialFetch }
@@ -215,8 +212,7 @@ export function forgetSpaceCredential(space: string): void {
   cache.delete(space)
 }
 
-/** For tests: drop every cached credential and the process binding key. */
+/** For tests: drop every cached credential. */
 export function resetSpaceCredentials(): void {
   cache.clear()
-  bindingKey = null
 }

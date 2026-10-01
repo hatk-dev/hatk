@@ -101,15 +101,25 @@ export async function verifyNotice(
 export interface WriteNotice {
   space: string
   repo: string
-  rev: string
+  /** The revision the repo reached. */
+  repoRev: string
+  /** Where the authority sequenced the write across the whole space. */
+  spaceRev?: string
 }
 
+/**
+ * A forwarded notice is `{ space, repo, repoRev, hash, spaceRev, prevSpaceRev? }`.
+ * An authority on a release before the space-revision split sends `rev` in
+ * place of `repoRev` and no `spaceRev`; that is read too, since nothing here
+ * depends on either beyond knowing which repo to look at.
+ */
 export function parseWriteNotice(body: unknown): WriteNotice | null {
   if (!body || typeof body !== 'object') return null
-  const { space, repo, rev } = body as Record<string, unknown>
-  if (typeof space !== 'string' || typeof repo !== 'string' || typeof rev !== 'string') return null
+  const { space, repo, repoRev, rev, spaceRev } = body as Record<string, unknown>
+  const at = typeof repoRev === 'string' ? repoRev : rev
+  if (typeof space !== 'string' || typeof repo !== 'string' || typeof at !== 'string') return null
   if (!parseSpaceRef(space) || !repo.startsWith('did:')) return null
-  return { space, repo, rev }
+  return { space, repo, repoRev: at, ...(typeof spaceRev === 'string' ? { spaceRev } : {}) }
 }
 
 /**

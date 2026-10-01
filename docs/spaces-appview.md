@@ -64,8 +64,8 @@ Verified in the reference PDS and pds.js, not from the lexicon prose alone.
   access past what the protocol permits. hatk must never serve space rows
   without a viewer.
 - **Only the authority decides.** Repo hosts check that the credential is
-  signed by the space's authority and bound to the presented DPoP key, nothing
-  else. Membership is evaluated once, at `getSpaceCredential`, and for the
+  signed by the space's authority and that the request is signed by the key it
+  is bound to, for an audience they answer for, nothing else. Membership is evaluated once, at `getSpaceCredential`, and for the
   community host that call goes to `checkUserAccess`, which reads
   `access.readableBy` against `membership.roles`.
 - **Delegation tokens are self-mintable.** Verification resolves the `#atproto`
@@ -73,8 +73,11 @@ Verified in the reference PDS and pds.js, not from the lexicon prose alone.
   person or the token to have come from an XRPC call. A did:web with an ES256
   key in its document can sign its own. Lifetime is 60 seconds, single-use
   `jti`, `aud` = `<authority>#atproto_space_host`.
-- **Credentials last 2 hours**, carry no `aud`, and are bound to a DPoP key via
-  `cnf.jkt`. Every read carries a fresh DPoP proof with `ath`.
+- **Credentials last 10 minutes** (an hour at most), carry no `aud`, and are
+  bound via `cnf.kid` to the P-256 did:key that signed the exchange. Every read
+  carries an RFC 9421 signature over `Authorization` and
+  `Atproto-Space-Audience` — the `repo` being read, or the authority — so a
+  signature is reusable for one credential and one audience.
 - **Notices are one-shot.** The reference PDS forwards `notifyWrite` from an
   in-memory background queue with one try and a log line on failure. pds.js is
   the same. A reconcile sweep against `listRepos` is mandatory, not a nicety.

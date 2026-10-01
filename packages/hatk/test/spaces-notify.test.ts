@@ -145,11 +145,22 @@ test('an authority whose key cannot be resolved is an upstream failure, not a pa
 
 // --- Payloads ---
 
-test('a write notice names the space, the repo and the revision', () => {
+test('a write notice names the space, the repo and the revisions', () => {
+  expect(
+    parseWriteNotice({ space: SPACE, repo: WRITER, repoRev: '3a', hash: 'h', spaceRev: '3s', prevSpaceRev: '3r' }),
+  ).toEqual({
+    space: SPACE,
+    repo: WRITER,
+    repoRev: '3a',
+    spaceRev: '3s',
+  })
+})
+
+test('a notice from an authority before the space-revision split is read too', () => {
   expect(parseWriteNotice({ space: SPACE, repo: WRITER, rev: '3a' })).toEqual({
     space: SPACE,
     repo: WRITER,
-    rev: '3a',
+    repoRev: '3a',
   })
 })
 
@@ -157,8 +168,8 @@ test('an incomplete or malformed notice is refused', () => {
   expect(parseWriteNotice(null)).toBeNull()
   expect(parseWriteNotice('nope')).toBeNull()
   expect(parseWriteNotice({ space: SPACE, repo: WRITER })).toBeNull()
-  expect(parseWriteNotice({ space: 'at://x/y/z', repo: WRITER, rev: '3a' })).toBeNull()
-  expect(parseWriteNotice({ space: SPACE, repo: 'alice.test', rev: '3a' })).toBeNull()
+  expect(parseWriteNotice({ space: 'at://x/y/z', repo: WRITER, repoRev: '3a' })).toBeNull()
+  expect(parseWriteNotice({ space: SPACE, repo: 'alice.test', repoRev: '3a' })).toBeNull()
 })
 
 // --- Debounce ---

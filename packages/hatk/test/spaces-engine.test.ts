@@ -155,7 +155,7 @@ test('something that is not a space ref is refused', async () => {
 
 test('a space with no local state is read whole', async () => {
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3a' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
     getLatestCommit: () => ({ commit: { rev: '3a' } }),
     listRecords: (p) =>
       p.get('collection') === PUBLIC_COLLECTION
@@ -173,7 +173,7 @@ test('the revision is taken before the read, not after', async () => {
   // A write landing mid-read is then re-read on the next sweep rather than
   // skipped, which is the direction to be wrong in.
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3a' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
     getLatestCommit: () => ({ commit: { rev: '3a' } }),
     listRecords: () => ({ records: [] }),
   }
@@ -184,7 +184,7 @@ test('the revision is taken before the read, not after', async () => {
 
 test('a record the lexicon refuses is skipped, not indexed', async () => {
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3a' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
     getLatestCommit: () => ({ commit: { rev: '3a' } }),
     listRecords: (p) =>
       p.get('collection') === PUBLIC_COLLECTION
@@ -202,7 +202,7 @@ test('a record the lexicon refuses is skipped, not indexed', async () => {
 
 test('a writer the authority names but whose host holds no repo is not an error', async () => {
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3a' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
     getLatestCommit: () => Response.json({ error: 'RepoNotFound' }, { status: 404 }),
   }
   await watchSpace(SPACE_URI)
@@ -212,7 +212,7 @@ test('a writer the authority names but whose host holds no repo is not an error'
 
 test('a collection the writer has never written is not a failure', async () => {
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3a' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
     getLatestCommit: () => ({ commit: { rev: '3a' } }),
     listRecords: [
       () => ({ records: [{ rkey: 'one', cid: 'c1', value: { text: 'hi' } }] }),
@@ -225,7 +225,7 @@ test('a collection the writer has never written is not a failure', async () => {
 
 test('a full read pages until the cursor runs out', async () => {
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3a' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
     getLatestCommit: () => ({ commit: { rev: '3a' } }),
     listRecords: (p) => {
       if (p.get('collection') !== PUBLIC_COLLECTION) return { records: [] }
@@ -246,7 +246,7 @@ test('every writer the space names is handed to the indexer as a repo to track',
   // into the space, and nothing they write there is a signal collection.
   indexer.trackRepo.mockClear()
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '1' }, { did: BOB, rev: '1' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '1' }, { did: BOB, repoRev: '1' }] }),
     getLatestCommit: () => ({ commit: { rev: '1' } }),
     listRecords: () => ({ records: [] }),
   }
@@ -260,7 +260,7 @@ test('a writer already read is advanced through the op log, not re-read whole', 
   await putSpaceWatch({ space: SPACE_URI, authority: SPACE_AUTHORITY, spaceType: SPACE_TYPE })
   await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3b' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3b' }] }),
     listRepoOps: () => ({
       ops: [{ rev: '3b', collection: PUBLIC_COLLECTION, rkey: 'new', cid: 'c1', prev: null, value: { text: 'new' } }],
       commit: { rev: '3b' },
@@ -277,7 +277,7 @@ test('a writer already read is advanced through the op log, not re-read whole', 
 test('the op log is asked for everything after the revision we hold', async () => {
   await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3b' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3b' }] }),
     listRepoOps: () => ({ ops: [], commit: { rev: '3b' } }),
   }
   await reconcileSpace(watch)
@@ -289,7 +289,7 @@ test('an op with no cid is a delete', async () => {
   await insertRecord(PUBLIC_COLLECTION, spaceRecord(ALICE, PUBLIC_COLLECTION, 'gone'), 'c0', ALICE, { text: 'old' })
   await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3b' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3b' }] }),
     listRepoOps: () => ({
       ops: [{ rev: '3b', collection: PUBLIC_COLLECTION, rkey: 'gone', cid: null, prev: 'c0' }],
       commit: { rev: '3b' },
@@ -304,7 +304,7 @@ test('an op with no cid is a delete', async () => {
 test('only the last op for a record in a page is applied', async () => {
   await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3c' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3c' }] }),
     listRepoOps: () => ({
       ops: [
         { rev: '3b', collection: PUBLIC_COLLECTION, rkey: 'x', cid: 'c1', prev: null, value: { text: 'first' } },
@@ -324,7 +324,7 @@ test('an op whose value was superseded is fetched rather than guessed', async ()
   // later in the same page arrives without one.
   await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3b' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3b' }] }),
     listRepoOps: () => ({
       ops: [{ rev: '3b', collection: PUBLIC_COLLECTION, rkey: 'x', cid: 'c2', prev: 'c1' }],
       commit: { rev: '3b' },
@@ -343,7 +343,7 @@ test('an op whose record has since vanished becomes a delete', async () => {
   await insertRecord(PUBLIC_COLLECTION, spaceRecord(ALICE, PUBLIC_COLLECTION, 'x'), 'c1', ALICE, { text: 'old' })
   await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3b' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3b' }] }),
     listRepoOps: () => ({
       ops: [{ rev: '3b', collection: PUBLIC_COLLECTION, rkey: 'x', cid: 'c2', prev: 'c1' }],
       commit: { rev: '3b' },
@@ -359,7 +359,7 @@ test('an op whose record has since vanished becomes a delete', async () => {
 test('ops for collections outside the space type are ignored', async () => {
   await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3b' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3b' }] }),
     listRepoOps: () => ({
       ops: [
         { rev: '3b', collection: 'app.bsky.feed.unindexed', rkey: 'x', cid: 'c1', prev: null, value: { text: 'x' } },
@@ -374,7 +374,7 @@ test('ops for collections outside the space type are ignored', async () => {
 test('the op log is paged until it reaches the head', async () => {
   await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3c' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3c' }] }),
     listRepoOps: [
       () => ({
         ops: [{ rev: '3b', collection: PUBLIC_COLLECTION, rkey: 'one', cid: 'c1', prev: null, value: { text: 'a' } }],
@@ -398,7 +398,7 @@ test('an op log that cannot carry us forward falls back to a full read', async (
   // compact past our position, and the answer then is a full read, not a gap.
   await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3b' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3b' }] }),
     listRepoOps: () => Response.json({ error: 'InvalidRequest', message: 'since too old' }, { status: 400 }),
     getLatestCommit: () => ({ commit: { rev: '3b' } }),
     listRecords: (p) =>
@@ -416,7 +416,7 @@ test('an op log that cannot carry us forward falls back to a full read', async (
 test('a full read replaces what the writer held rather than merging into it', async () => {
   await insertRecord(PUBLIC_COLLECTION, spaceRecord(ALICE, PUBLIC_COLLECTION, 'stale'), 'c0', ALICE, { text: 'old' })
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3a' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
     getLatestCommit: () => ({ commit: { rev: '3a' } }),
     listRecords: (p) =>
       p.get('collection') === PUBLIC_COLLECTION
@@ -433,7 +433,7 @@ test('a full read replaces what the writer held rather than merging into it', as
 
 test('a writer whose revision has not moved is not read again', async () => {
   await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
-  routes = { listRepos: () => ({ repos: [{ did: ALICE, rev: '3a' }] }) }
+  routes = { listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }) }
 
   await reconcileSpace(watch)
 
@@ -462,7 +462,7 @@ test('a writer the space no longer names has their rows dropped', async () => {
   await insertRecord(PUBLIC_COLLECTION, spaceRecord(BOB, PUBLIC_COLLECTION, 'bye'), 'c1', BOB, { text: 'bob' })
   await putSpaceRepo({ space: SPACE_URI, did: BOB, pds: null, rev: '3a' })
   await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
-  routes = { listRepos: () => ({ repos: [{ did: ALICE, rev: '3a' }] }) }
+  routes = { listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }) }
 
   await reconcileSpace(watch)
 
@@ -587,7 +587,7 @@ test('unwatching a space never followed is harmless', async () => {
 
 test('a synced record is stored under its space and served only in scope', async () => {
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3a' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
     getLatestCommit: () => ({ commit: { rev: '3a' } }),
     listRecords: (p) =>
       p.get('collection') === PUBLIC_COLLECTION
@@ -659,7 +659,7 @@ test('failing to subscribe costs latency, not the sweep', async () => {
   withService()
   routes = {
     registerNotify: () => Response.json({ error: 'ServiceNotResolvable' }, { status: 400 }),
-    listRepos: () => ({ repos: [{ did: ALICE, rev: '3a' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
     getLatestCommit: () => ({ commit: { rev: '3a' } }),
     listRecords: () => ({ records: [] }),
   }

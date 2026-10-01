@@ -241,7 +241,7 @@ test('re-reading a repo whole leaves the rows its account wrote into a space', a
   // roster vanished and every member was shown the door.
   await putSpaceWatch(watch)
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: 'space-1' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: 'space-1' }] }),
     getLatestCommit: () => ({ commit: { rev: 'space-1' } }),
     listRecords: (p) =>
       p.get('collection') === PUBLIC_COLLECTION
@@ -336,7 +336,7 @@ test('a roster record read out of a space brings the named repo in', async () =>
     { collection: PUBLIC_COLLECTION, rkey: 'self', record: profile('bob') },
   ])
   routes = {
-    listRepos: () => ({ repos: [{ did: CLUB, rev: 'space-1' }] }),
+    listRepos: () => ({ repos: [{ did: CLUB, repoRev: 'space-1' }] }),
     getLatestCommit: () => ({ commit: { rev: 'space-1' } }),
     listRecords: (p) =>
       p.get('collection') === ROSTER
@@ -403,7 +403,7 @@ test('a strongRef written through a space keeps the space URI it points at', asy
   const thread = spaceRecordUri(SPACE_URI, CLUB, PUBLIC_COLLECTION, 'thread')
   await putSpaceWatch(watch)
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: 'space-1' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: 'space-1' }] }),
     getLatestCommit: () => ({ commit: { rev: 'space-1' } }),
     listRecords: (p) =>
       p.get('collection') === REPLY
@@ -438,7 +438,7 @@ test('a space sync of one writer leaves another writer and the repo rows alone',
   )
   await insertRecord(PUBLIC_COLLECTION, `at://${ALICE}/${PUBLIC_COLLECTION}/own`, 'cid-o', ALICE, profile('alice repo'))
   routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, rev: 'space-2' }, { did: BOB, rev: 'space-1' }] }),
+    listRepos: () => ({ repos: [{ did: ALICE, repoRev: 'space-2' }, { did: BOB, repoRev: 'space-1' }] }),
     getLatestCommit: () => ({ commit: { rev: 'space-2' } }),
     listRecords: (p) =>
       p.get('collection') === PUBLIC_COLLECTION && p.get('repo') === ALICE

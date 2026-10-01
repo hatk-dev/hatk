@@ -74,17 +74,17 @@ test('a verified notice is acknowledged and the repo read afterwards', async () 
   // Answered before syncing: delivery is best-effort by protocol, and a sync
   // failure is not the authority's problem to wait on.
   const res = await handler({ serviceDid: 'did:web:appview.test' })(
-    post('/xrpc/com.atproto.space.notifyWrite', { space: SPACE, repo: WRITER, rev: '3a' }),
+    post('/xrpc/com.atproto.space.notifyWrite', { space: SPACE, repo: WRITER, repoRev: '3a' }),
   )
   expect(res.status).toBe(200)
   expect(handleWriteNotice).not.toHaveBeenCalled()
   await vi.advanceTimersByTimeAsync(1000)
-  expect(handleWriteNotice).toHaveBeenCalledWith({ space: SPACE, repo: WRITER, rev: '3a' })
+  expect(handleWriteNotice).toHaveBeenCalledWith({ space: SPACE, repo: WRITER, repoRev: '3a' })
 })
 
 test('the notice is verified against the authority the body names', async () => {
   await handler({ serviceDid: 'did:web:appview.test' })(
-    post('/xrpc/com.atproto.space.notifyWrite', { space: SPACE, repo: WRITER, rev: '3a' }),
+    post('/xrpc/com.atproto.space.notifyWrite', { space: SPACE, repo: WRITER, repoRev: '3a' }),
   )
   expect(verifyNotice).toHaveBeenCalledWith('Bearer token', {
     iss: AUTHORITY,
@@ -96,7 +96,7 @@ test('the notice is verified against the authority the body names', async () => 
 test('an unverified notice changes nothing', async () => {
   verifyNotice.mockRejectedValue(new NoticeError(403, 'Notice signature does not verify'))
   const res = await handler({ serviceDid: 'did:web:appview.test' })(
-    post('/xrpc/com.atproto.space.notifyWrite', { space: SPACE, repo: WRITER, rev: '3a' }),
+    post('/xrpc/com.atproto.space.notifyWrite', { space: SPACE, repo: WRITER, repoRev: '3a' }),
   )
   expect(res.status).toBe(403)
   await vi.advanceTimersByTimeAsync(1000)
@@ -109,7 +109,7 @@ test('a refused notice says so in this instance\'s own log', async () => {
   // slow rather than broken. Found exactly that way, on a live deployment.
   verifyNotice.mockRejectedValue(new NoticeError(403, 'Notice signature does not verify'))
   await handler({ serviceDid: 'did:web:appview.test' })(
-    post('/xrpc/com.atproto.space.notifyWrite', { space: SPACE, repo: WRITER, rev: '3a' }),
+    post('/xrpc/com.atproto.space.notifyWrite', { space: SPACE, repo: WRITER, repoRev: '3a' }),
   )
 
   expect(emit).toHaveBeenCalledWith('spaces', 'notice_refused', {
@@ -130,7 +130,7 @@ test('a malformed notice is refused before it is verified', async () => {
 
 test('an instance that receives no notices has no endpoint to speak of', async () => {
   spaceServiceId.mockReturnValue(null)
-  const res = await handler()(post('/xrpc/com.atproto.space.notifyWrite', { space: SPACE, repo: WRITER, rev: '3a' }))
+  const res = await handler()(post('/xrpc/com.atproto.space.notifyWrite', { space: SPACE, repo: WRITER, repoRev: '3a' }))
   expect(res.status).toBe(404)
   expect(verifyNotice).not.toHaveBeenCalled()
 })
@@ -138,7 +138,7 @@ test('an instance that receives no notices has no endpoint to speak of', async (
 test('a burst about one repo becomes a single read', async () => {
   const h = handler({ serviceDid: 'did:web:appview.test' })
   for (let i = 0; i < 4; i++) {
-    await h(post('/xrpc/com.atproto.space.notifyWrite', { space: SPACE, repo: WRITER, rev: `3${i}` }))
+    await h(post('/xrpc/com.atproto.space.notifyWrite', { space: SPACE, repo: WRITER, repoRev: `3${i}` }))
   }
   await vi.advanceTimersByTimeAsync(2000)
   expect(handleWriteNotice).toHaveBeenCalledTimes(1)

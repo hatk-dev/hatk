@@ -23,6 +23,7 @@ const {
   mintSpaceCredential,
   resetSpaceCredentials,
 } = await import('../src/spaces/credential.ts')
+const { parseMultibaseKey, verifySignature } = await import('../src/spaces/verify.ts')
 
 const SPACE = 'at://did:plc:authority/space/test.hatk.board/self'
 const READER = 'did:plc:reader'
@@ -36,7 +37,7 @@ function credentialJwt(expSeconds: number): string {
   return `header.${payload}.signature`
 }
 
-const inTwoHours = () => Math.floor(Date.now() / 1000) + 7200
+const inTenMinutes = () => Math.floor(Date.now() / 1000) + 600
 
 let fetchMock: ReturnType<typeof vi.fn>
 
@@ -46,7 +47,7 @@ beforeEach(() => {
   spaceHostEndpoint.mockReset()
   spaceHostEndpoint.mockResolvedValue(AUTHORITY_HOST)
   pdsXrpc.mockResolvedValue({ token: 'delegation-token' })
-  fetchMock = vi.fn(async () => Response.json({ credential: credentialJwt(inTwoHours()) }))
+  fetchMock = vi.fn(async () => Response.json({ credential: credentialJwt(inTenMinutes()) }))
   vi.stubGlobal('fetch', fetchMock)
 })
 
@@ -67,41 +68,73 @@ test('mints by trading a delegation token from the reader own PDS', async () => 
   expect(credential.space).toBe(SPACE)
 })
 
-test('the exchange carries the delegation as a bearer token and proves a key', async () => {
+/** The did:key a signature names, and whether it signed `base` over these headers. */
+function checkSignature(headers: Record<string, string>, base: string, keyDid: string): boolean {
+  const sig = headers.Signature.match(/^atproto-space=:(.+):$/)![1]
+  return verifySignature(
+    parseMultibaseKey(keyDid.slice('did:key:'.length)),
+    new Uint8Array(Buffer.from(sig, 'base64')),
+    new TextEncoder().encode(base),
+  )
+}
+
+function exchangeKey(): string {
+  const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>
+  return headers['Signature-Input'].match(/keyid="([^"]+)"/)![1]
+}
+
+test('the exchange carries the delegation as a bearer token, signed by a fresh key', async () => {
   await mintSpaceCredential(oauth as any, SPACE, READER)
   const init = fetchMock.mock.calls[0][1] as RequestInit
   const headers = init.headers as Record<string, string>
   expect(headers.Authorization).toBe('Bearer delegation-token')
-  expect(headers.DPoP).toMatch(/^[\w-]+\.[\w-]+\.[\w-]+$/)
-  expect(JSON.parse(init.body as string)).toMatchObject({ space: SPACE, dpopJkt: expect.any(String) })
+  const keyDid = exchangeKey()
+  expect(keyDid).toMatch(/^did:key:zDn/)
+  expect(headers['Signature-Input']).toBe(`atproto-space=("authorization");keyid="${keyDid}"`)
+  const base = [
+    '"authorization": Bearer delegation-token',
+    `"@signature-params": ("authorization");keyid="${keyDid}"`,
+  ].join('\n')
+  expect(checkSignature(headers, base, keyDid)).toBe(true)
+  expect(JSON.parse(init.body as string)).toEqual({ space: SPACE })
 })
 
-test('the exchange proof carries no ath', async () => {
-  // A delegation token is an authorization grant, not an access token, so
-  // there is nothing to hash yet and a server that checks refuses a proof
-  // that includes one.
+test('each credential is bound to a key of its own', async () => {
   await mintSpaceCredential(oauth as any, SPACE, READER)
-  const init = fetchMock.mock.calls[0][1] as RequestInit
-  const proof = (init.headers as Record<string, string>).DPoP
-  const payload = JSON.parse(Buffer.from(proof.split('.')[1], 'base64url').toString())
-  expect(payload.ath).toBeUndefined()
-  expect(payload.htm).toBe('POST')
+  const first = exchangeKey()
+  fetchMock.mockClear()
+  await mintSpaceCredential(oauth as any, SPACE, READER)
+  expect(exchangeKey()).not.toBe(first)
 })
 
-test('reads present the credential DPoP-bound with an ath', async () => {
+test('a read is signed for the repo it names, with the exchange key', async () => {
   // One credential reads a whole space and is shown to every writer host in
-  // it. As a bearer token, a host given one to serve its own repo could replay
-  // it against all the others.
+  // it. Signed for one account, it cannot be replayed at another.
+  const jwt = credentialJwt(inTenMinutes())
+  fetchMock.mockImplementationOnce(async () => Response.json({ credential: jwt }))
   const credential = await mintSpaceCredential(oauth as any, SPACE, READER)
+  const keyDid = exchangeKey()
   fetchMock.mockImplementationOnce(async () => Response.json({ records: [] }))
-  await credential.fetch('https://writer.test/xrpc/com.atproto.space.listRecords')
+  await credential.fetch(`https://writer.test/xrpc/com.atproto.space.listRecords?space=x&repo=${OTHER_READER}`)
 
-  const [, init] = fetchMock.mock.calls[1]
-  const headers = (init as RequestInit).headers as Headers
-  expect(headers.get('Authorization')).toMatch(/^DPoP /)
-  const payload = JSON.parse(Buffer.from(headers.get('DPoP')!.split('.')[1], 'base64url').toString())
-  expect(payload.ath).toEqual(expect.any(String))
-  expect(payload.htm).toBe('GET')
+  const headers = Object.fromEntries(((fetchMock.mock.calls[1][1] as RequestInit).headers as Headers).entries())
+  expect(headers.authorization).toBe(`Atproto-Space ${jwt}`)
+  expect(headers['atproto-space-audience']).toBe(OTHER_READER)
+  expect(headers['signature-input']).toBe('atproto-space=("authorization" "atproto-space-audience")')
+  const base = [
+    `"authorization": Atproto-Space ${jwt}`,
+    `"atproto-space-audience": ${OTHER_READER}`,
+    '"@signature-params": ("authorization" "atproto-space-audience")',
+  ].join('\n')
+  expect(checkSignature({ Signature: headers.signature }, base, keyDid)).toBe(true)
+})
+
+test('a read that names no repo is signed for the authority', async () => {
+  const credential = await mintSpaceCredential(oauth as any, SPACE, READER)
+  fetchMock.mockImplementationOnce(async () => Response.json({ repos: [] }))
+  await credential.fetch(`${AUTHORITY_HOST}/xrpc/com.atproto.space.listRepos?space=x`)
+  const headers = (fetchMock.mock.calls[1][1] as RequestInit).headers as Headers
+  expect(headers.get('Atproto-Space-Audience')).toBe('did:plc:authority')
 })
 
 test('a refusal names what the authority said', async () => {

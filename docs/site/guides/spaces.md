@@ -143,7 +143,7 @@ hatk fetches the bytes with the viewer's own credential and serves them `private
 
 ## What to expect
 
-**Revocation lags.** A viewer's readable set is cached for five minutes, so somebody ejected from a community may still be served its rows for a few minutes. The space host itself already lets a minted credential outlive a revocation by up to two hours.
+**Revocation lags.** A viewer's readable set is cached for five minutes, so somebody ejected from a community may still be served its rows for a few minutes. The space host itself lets a minted credential outlive a revocation by up to ten minutes, unless the authority revokes it early.
 
 **Writes appear on notice or on sweep.** With `serviceDid` set, within about a second. Without it, within one `reconcileInterval`.
 

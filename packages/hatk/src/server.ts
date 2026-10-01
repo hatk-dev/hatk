@@ -1423,7 +1423,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         const serviceId = spaceServiceId()
         if (!serviceId) return withCors(jsonError(404, 'This instance receives no space notices', acceptEncoding))
         const notice = parseWriteNotice(await request.json().catch(() => null))
-        if (!notice) return withCors(jsonError(400, 'Expected space, repo and rev', acceptEncoding))
+        if (!notice) return withCors(jsonError(400, 'Expected space, repo and repoRev', acceptEncoding))
         try {
           await verifyNotice(request.headers.get('authorization'), {
             iss: parseSpaceRef(notice.space)!.authority,

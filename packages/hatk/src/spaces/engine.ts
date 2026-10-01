@@ -183,9 +183,10 @@ function codeOf(err: unknown): string | undefined {
 /**
  * Run a credentialed read, re-minting once on a 401.
  *
- * A credential lives two hours and a sweep can outlive one. Re-minting costs a
- * round trip; treating the expiry as a failure costs the whole sync and leaves
- * the space looking unreadable when nothing about the membership changed.
+ * A credential lives ten minutes and a sweep can outlive one; an authority can
+ * also revoke one early. Re-minting costs a round trip; treating the refusal as
+ * a failure costs the whole sync and leaves the space looking unreadable when
+ * nothing about the membership changed.
  */
 async function withCredential<T>(
   watch: SpaceWatch,
@@ -511,13 +512,16 @@ async function listWriters(
       cursor,
       limit: 1000,
     })
-    for (const repo of (out.repos ?? []) as { did: string; rev?: string }[]) {
-      writers.push({ did: repo.did, rev: typeof repo.rev === 'string' ? repo.rev : null })
+    // Ordered by space revision, and a repo updated mid-walk can turn up twice;
+    // the later entry is the newer state. The walk ends on an empty page, the
+    // only one without a cursor.
+    for (const repo of (out.repos ?? []) as { did: string; repoRev?: string }[]) {
+      writers.push({ did: repo.did, rev: typeof repo.repoRev === 'string' ? repo.repoRev : null })
     }
     cursor = typeof out.cursor === 'string' ? out.cursor : undefined
     if (!cursor) break
   }
-  return writers
+  return [...new Map(writers.map((w) => [w.did, w])).values()]
 }
 
 /**

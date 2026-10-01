@@ -20,7 +20,7 @@
  * somebody ejected from a community may still be served that community's rows
  * for a few minutes. The alternative is two round trips on every request, and
  * the space host itself already lets a minted credential outlive a revocation
- * by up to two hours.
+ * by up to ten minutes.
  */
 
 import type { OAuthConfig } from '../config.ts'
