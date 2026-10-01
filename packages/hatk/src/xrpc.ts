@@ -19,6 +19,12 @@
  * ```
  */
 import { guardedQuerySQL, unfilteredQuerySQL } from './spaces/guard.ts'
+import {
+  forgetReaderSpaceCredential,
+  readerSpaceCredential,
+  SpaceCredentialError,
+  type SpaceCredential,
+} from './spaces/credential.ts'
 import { resolve, relative } from 'node:path'
 import { readdirSync, statSync } from 'node:fs'
 import { log, emit, timer } from './logger.ts'
@@ -131,6 +137,24 @@ export interface XrpcContext<
    * the granted scopes still apply. See {@link pdsXrpc}.
    */
   pds: (nsid: string, options?: PdsXrpcOptions) => Promise<Record<string, unknown>>
+  /**
+   * The viewer's own credential for a space, minted with their session and
+   * cached until shortly before it expires. Its `fetch` presents it to any
+   * host in the space, signed for the repo a request names (or the authority).
+   *
+   * For reads an app makes itself, as the viewer, that the index does not
+   * serve. Throws a `SpaceCredentialError` — `status` and `code` are the
+   * authority's — when the viewer may not read the space, and with status 401
+   * when there is no viewer. Pass `refresh` after a host refuses a credential
+   * that had not yet expired.
+   */
+  spaceCredential: (space: string, opts?: { refresh?: boolean }) => Promise<SpaceCredential>
+  /**
+   * Drop the viewer's cached credential for a space, after something that may
+   * have changed their standing in it, such as leaving. Does nothing without a
+   * viewer.
+   */
+  forgetSpaceCredential: (space: string) => void
   /**
    * The record helpers and `pds` above, acting as another account this app
    * holds a session for — one it obtained with {@link obtainSession}, say.
@@ -259,6 +283,14 @@ export function buildXrpcContext(
       return uri !== null
     },
     ...accountHelpers(viewer),
+    spaceCredential: async (space, opts) => {
+      if (!_oauthConfig) throw new Error('No OAuth config — cannot read a space')
+      if (!viewer) throw new SpaceCredentialError(401, 'AuthRequired', 'Authentication required to read a space')
+      return readerSpaceCredential(_oauthConfig, viewer.did, space, opts)
+    },
+    forgetSpaceCredential: (space) => {
+      if (viewer) forgetReaderSpaceCredential(viewer.did, space)
+    },
     asAccount: (did) => accountHelpers({ did }),
     obtainSession: async (url, body, opts) => {
       if (!_oauthConfig) throw new Error('No OAuth config — cannot obtain a session')

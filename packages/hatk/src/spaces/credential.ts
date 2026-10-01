@@ -212,7 +212,61 @@ export function forgetSpaceCredential(space: string): void {
   cache.delete(space)
 }
 
+// --- Per reader ---
+
+/**
+ * Credentials minted as one particular reader, for reads made on their behalf.
+ *
+ * Kept apart from the cache above, which holds whichever session works for a
+ * space and is right for indexing it. A read made for a viewer has to be made
+ * as that viewer: the authority's answer is the authorization.
+ */
+const readerCache = new Map<string, SpaceCredential>()
+
+/** Pairs held at once. Past this the least recently used goes. */
+const MAX_READER_CREDENTIALS = 5000
+
+/**
+ * `readerDid`'s own credential for `space`, minted with their stored session.
+ *
+ * Throws a {@link SpaceCredentialError} when they may not read it, carrying the
+ * authority's status and code, and caches only successes — a refusal is asked
+ * again next time rather than remembered. `refresh` mints anew, for a read the
+ * host refused despite a credential that had not expired by our clock.
+ */
+export async function readerSpaceCredential(
+  oauthConfig: OAuthConfig,
+  readerDid: string,
+  space: string,
+  opts: { refresh?: boolean } = {},
+): Promise<SpaceCredential> {
+  const key = `${readerDid} ${space}`
+  const cached = readerCache.get(key)
+  readerCache.delete(key)
+  if (!opts.refresh && fresh(cached)) {
+    readerCache.set(key, cached)
+    return cached
+  }
+  const credential = await mintSpaceCredential(oauthConfig, space, readerDid)
+  readerCache.set(key, credential)
+  while (readerCache.size > MAX_READER_CREDENTIALS) {
+    const oldest = readerCache.keys().next()
+    if (oldest.done) break
+    readerCache.delete(oldest.value)
+  }
+  return credential
+}
+
+/**
+ * Drop `readerDid`'s cached credential for `space`, after something that may
+ * have changed their standing in it — leaving it, say. The next read mints anew.
+ */
+export function forgetReaderSpaceCredential(readerDid: string, space: string): void {
+  readerCache.delete(`${readerDid} ${space}`)
+}
+
 /** For tests: drop every cached credential. */
 export function resetSpaceCredentials(): void {
   cache.clear()
+  readerCache.clear()
 }

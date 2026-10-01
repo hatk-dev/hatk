@@ -209,6 +209,19 @@ test('asAccount proxies as the named account, whoever the viewer is', async () =
   configureOAuth(null)
 })
 
+test('spaceCredential needs a viewer, and says so as a 401', async () => {
+  configureOAuth(oauth)
+  const err = await buildXrpcContext({}, undefined, 1, null)
+    .spaceCredential('at://did:plc:a/space/xyz.s/self')
+    .catch((e) => e)
+  expect(err.status).toBe(401)
+  expect(err.code).toBe('AuthRequired')
+  configureOAuth(null)
+  await expect(
+    buildXrpcContext({}, undefined, 1, ME).spaceCredential('at://did:plc:a/space/xyz.s/self'),
+  ).rejects.toThrow(/No OAuth config/)
+})
+
 test('obtainSession refuses without OAuth configured', async () => {
   configureOAuth(null)
   const ctx = buildXrpcContext({}, undefined, 1, ME)

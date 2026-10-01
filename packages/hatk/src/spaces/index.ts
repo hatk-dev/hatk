@@ -24,7 +24,16 @@ export {
   unwatchSpace,
   watchSpace,
 } from './engine.ts'
-export { getSpaceCredential, mintSpaceCredential, isNotAuthorized, isSpaceGone } from './credential.ts'
+export {
+  getSpaceCredential,
+  mintSpaceCredential,
+  readerSpaceCredential,
+  forgetReaderSpaceCredential,
+  isNotAuthorized,
+  isSpaceGone,
+  SpaceCredentialError,
+  type SpaceCredential,
+} from './credential.ts'
 export { listSpaceRepos, listSpaceWatches, type SpaceWatch } from './store.ts'
 export { isSpaceReadable, readableSpaces, withReadableSpaces } from './visibility.ts'
 export { UngatedSpaceQueryError, spaceBackedCollections } from './guard.ts'
@@ -54,6 +63,7 @@ export {
   verifyNotice,
   type WriteNotice,
 } from './notify.ts'
+export { generateSpaceSigKey, spaceSigHeaders, type SpaceSigKey } from './signature.ts'
 export * from './uri.ts'
 export { asPreset, blobCid, resetSpaceBlobCache, type SpaceBlobPreset, spaceBlobUrl } from './blob.ts'
 export { records, requireSpace, spaceRecords } from './records.ts'

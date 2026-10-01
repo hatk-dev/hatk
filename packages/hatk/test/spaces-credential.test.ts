@@ -21,6 +21,8 @@ const {
   isNotAuthorized,
   isSpaceGone,
   mintSpaceCredential,
+  readerSpaceCredential,
+  forgetReaderSpaceCredential,
   resetSpaceCredentials,
 } = await import('../src/spaces/credential.ts')
 const { parseMultibaseKey, verifySignature } = await import('../src/spaces/verify.ts')
@@ -239,4 +241,46 @@ test('a credential with an unreadable expiry is used but not held long', async (
   const credential = await mintSpaceCredential(oauth as any, SPACE, READER)
   expect(credential.expiresAt).toBeGreaterThan(Date.now())
   expect(credential.expiresAt).toBeLessThan(Date.now() + 11 * 60 * 1000)
+})
+
+// --- Per reader ---
+
+test('a reader credential is minted as that reader and reused for them', async () => {
+  const first = await readerSpaceCredential(oauth as any, READER, SPACE)
+  expect(first.readerDid).toBe(READER)
+  await readerSpaceCredential(oauth as any, READER, SPACE)
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})
+
+test('another reader of the same space gets their own', async () => {
+  // A read made for a viewer has to be made as that viewer; the index's cache
+  // holds whichever session works, which is not an answer about this one.
+  await readerSpaceCredential(oauth as any, READER, SPACE)
+  const other = await readerSpaceCredential(oauth as any, OTHER_READER, SPACE)
+  expect(other.readerDid).toBe(OTHER_READER)
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+})
+
+test('a refused reader gets the authority status, and is asked again next time', async () => {
+  fetchMock.mockImplementationOnce(async () => Response.json({ error: 'UserNotAuthorized' }, { status: 403 }))
+  const err = await readerSpaceCredential(oauth as any, READER, SPACE).catch((e) => e)
+  expect(err).toBeInstanceOf(SpaceCredentialError)
+  expect(err.status).toBe(403)
+  expect(isNotAuthorized(err)).toBe(true)
+  await expect(readerSpaceCredential(oauth as any, READER, SPACE)).resolves.toBeDefined()
+})
+
+test('refresh mints a reader credential anew', async () => {
+  await readerSpaceCredential(oauth as any, READER, SPACE)
+  await readerSpaceCredential(oauth as any, READER, SPACE, { refresh: true })
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+})
+
+test('forgetting a reader credential makes their next read mint', async () => {
+  await readerSpaceCredential(oauth as any, READER, SPACE)
+  await readerSpaceCredential(oauth as any, OTHER_READER, SPACE)
+  forgetReaderSpaceCredential(READER, SPACE)
+  await readerSpaceCredential(oauth as any, READER, SPACE)
+  await readerSpaceCredential(oauth as any, OTHER_READER, SPACE)
+  expect(fetchMock).toHaveBeenCalledTimes(3)
 })

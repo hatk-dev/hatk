@@ -141,6 +141,19 @@ Build the URL with `ctx.spaceBlobUrl(space, writerDid, cid)` — it is hatk's ro
 
 hatk fetches the bytes with the viewer's own credential and serves them `private, no-store`. A viewer who may not read the space gets the same 404 as a missing blob.
 
+## Reading a space yourself
+
+For a read the index does not serve — a space you do not follow, or one you read at request time instead of indexing — `ctx.spaceCredential(space)` gives you the viewer's own credential for it. Its `fetch` presents the credential to any host in the space:
+
+```typescript
+const credential = await ctx.spaceCredential(space)
+const res = await credential.fetch(
+  `${writerPds}/xrpc/com.atproto.space.listRecords?space=${encodeURIComponent(space)}&repo=${writer}&collection=${collection}`,
+)
+```
+
+hatk signs each request for the account it reads — the `repo` it names, or the space's authority for `listRepos` — and caches the credential per viewer until shortly before it expires. When the viewer may not read the space it throws a `SpaceCredentialError` whose `status` and `code` are the authority's; with no viewer, the status is 401. If a host refuses a credential that has not expired, call again with `{ refresh: true }`. After something that may change the viewer's standing in a space, such as leaving it, `ctx.forgetSpaceCredential(space)` drops the cached one.
+
 ## What to expect
 
 **Revocation lags.** A viewer's readable set is cached for five minutes, so somebody ejected from a community may still be served its rows for a few minutes. The space host itself lets a minted credential outlive a revocation by up to ten minutes, unless the authority revokes it early.
