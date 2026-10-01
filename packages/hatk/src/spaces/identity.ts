@@ -44,6 +44,10 @@ function fetchDidDoc(did: string): Promise<DidDocument | null> {
     }
   })()
   docCache.set(did, pending)
+  // A failed lookup is not an answer: the next call asks again.
+  void pending.then((doc) => {
+    if (doc === null && docCache.get(did) === pending) docCache.delete(did)
+  })
   return pending
 }
 

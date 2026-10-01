@@ -36,6 +36,7 @@ import { enabledPushTransports, initPush, isPushEnabled } from './push.ts'
 import { initSetup } from './setup.ts'
 import { initServer } from './server-init.ts'
 import { startSpaces } from './spaces/index.ts'
+import { configureSpaceIdentity } from './spaces/identity.ts'
 
 const configPath = process.argv[2] || 'hatk.config.ts'
 const configDir = dirname(resolve(configPath))
@@ -46,6 +47,9 @@ registerHatkResolveHook()
 const config = await loadConfig(configPath)
 configureRelay(config.relay)
 configurePlc(config.plc)
+// Space reads resolve authorities too, and ctx.spaceCredential works without
+// `spaces` indexing being configured.
+configureSpaceIdentity(config.plc)
 configureCdn(config.cdn)
 
 // 2. Load lexicons, validate schemas, and discover collections

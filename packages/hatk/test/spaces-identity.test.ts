@@ -144,3 +144,10 @@ test('an unresolvable DID has no key', async () => {
   fetchMock.mockImplementation(async () => new Response('nope', { status: 404 }))
   expect(await atprotoSigningKey(AUTHORITY)).toBeNull()
 })
+
+test('a failed lookup is asked again rather than remembered', async () => {
+  fetchMock.mockImplementationOnce(async () => new Response('down', { status: 503 }))
+  await expect(spaceHostEndpoint(AUTHORITY)).rejects.toThrow()
+  fetchMock.mockImplementation(didDoc([{ id: '#atproto_pds', serviceEndpoint: 'https://pds.test' }]))
+  expect(await spaceHostEndpoint(AUTHORITY)).toBe('https://pds.test')
+})
