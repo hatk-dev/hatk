@@ -13,6 +13,7 @@ import {
   noteIndexed,
   noteBackfilled,
   pendingCount,
+  _setCatchUpDelayForTests,
 } from '../src/classifiers.ts'
 import {
   getRepoStatus,
@@ -73,6 +74,7 @@ function mockModel(byHandle: Record<string, number>) {
 }
 
 beforeAll(async () => {
+  _setCatchUpDelayForTests(0)
   await setupFixtureDatabase()
   await setRepoStatus(ADMIN, 'active', undefined, { handle: 'admin.test' })
   await setRepoStatus(SPAMMER, 'active', undefined, { handle: 'spammer.test' })
@@ -404,6 +406,8 @@ test('a scan since a moment covers records written after it, not ones merely re-
 
 /** Wait for the boot catch-up pass and the index-time queue to go quiet. */
 async function settled() {
+  // Let a catch-up timer due now fire before checking whether anything runs.
+  await new Promise((r) => setTimeout(r, 20))
   for (let i = 0; i < 200; i++) {
     if (!getScanProgress()?.running && pendingCount() === 0) return
     await new Promise((r) => setTimeout(r, 10))
@@ -425,6 +429,42 @@ test('scoring on index starts from when it was first switched on, across restart
   expect(await getCursor('classifiers:since')).toBe(first)
   await settled()
   stopScoringOnIndex()
+})
+
+test('the boot catch-up scores what is new but was never queued, as after a restart', async () => {
+  registerClassifier('records', {
+    subject: 'record',
+    collections: [PUBLIC_COLLECTION],
+    questions: { looks_like_spam: { type: 'noul', instructions: 'Is this spam?' } },
+    async buildState({ subject }) {
+      return { text: subject.value?.text }
+    },
+  })
+  const asked: string[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url: string, init: any) => {
+      asked.push(JSON.parse(init.body).state.text)
+      return clefResponse({ answers: { looks_like_spam: { type: 'noul', noul: 0.1 } }, usage: {} })
+    }),
+  )
+  await runSQL(`DELETE FROM _cursor WHERE key = 'classifiers:since'`)
+  await startScoringOnIndex()
+  await settled()
+  stopScoringOnIndex()
+
+  // Indexed while the server was down: in the table, never handed to the queue.
+  const missed = tidAt(new Date(Date.now() + 1000))
+  await insertRecord(PUBLIC_COLLECTION, `at://${REGULAR}/${PUBLIC_COLLECTION}/${missed}`, `cid-${missed}`, REGULAR, {
+    $type: PUBLIC_COLLECTION,
+    text: missed,
+  })
+  await startScoringOnIndex()
+  await settled()
+
+  expect(asked).toEqual([missed])
+  stopScoringOnIndex()
+  await runSQL(`DELETE FROM "${PUBLIC_COLLECTION}"`)
 })
 
 test('a record is scored as it is indexed; a re-indexed old one and a delete are not', async () => {

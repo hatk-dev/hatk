@@ -401,14 +401,29 @@ function isNewSince(uri: string, since: string): boolean {
   return t === null || t.toISOString() >= since
 }
 
+/**
+ * Rows of a table indexed at or after `since`, public ones only.
+ *
+ * The query names `indexed_at` alone. Given `space IS NULL` as well, SQLite
+ * picks the space index, which matches nearly every row, and walks the whole
+ * table; on a few million Bluesky posts that is seconds of a blocked process.
+ * So the space filter is applied here instead.
+ */
+async function indexedSince(tableName: string, columns: string, since: string): Promise<Record<string, any>[]> {
+  const rows = (await querySQL(`SELECT ${columns}, space FROM ${tableName} WHERE indexed_at >= $1`, [since])) as Record<
+    string,
+    any
+  >[]
+  return rows.filter((r) => r.space == null)
+}
+
 /** Active DIDs with any public record new since `since`, in any collection. */
 async function activeSince(since: string): Promise<Set<string>> {
   const dids = new Set<string>()
   for (const schema of listSchemas()) {
-    const rows = (await querySQL(`SELECT uri, did FROM ${schema.tableName} WHERE indexed_at >= $1 AND space IS NULL`, [
-      since,
-    ])) as { uri: string; did: string }[]
-    for (const r of rows) if (isNewSince(r.uri, since)) dids.add(r.did)
+    for (const r of await indexedSince(schema.tableName, 'uri, did', since)) {
+      if (isNewSince(r.uri, since)) dids.add(r.did)
+    }
   }
   return dids
 }
@@ -428,18 +443,26 @@ async function enumerateSubjects(c: LoadedClassifier, since?: string): Promise<C
   }
 
   const out: ClassifierSubject[] = []
+  let active: Set<string> | undefined
   for (const collection of c.collections ?? []) {
     const schema = getSchema(collection)
     if (!schema) continue
     // The same population as an account scan: active repos only, so content an
     // administrator already took down is not filed again. Space rows are left
     // out entirely; they are members' permissioned data, not public posts.
-    const rows = (await querySQL(
-      `SELECT t.* FROM ${schema.tableName} t
-         JOIN _repos r ON r.did = t.did AND r.status = 'active'
-        WHERE t.space IS NULL${since ? ' AND t.indexed_at >= $1' : ''}`,
-      since ? [since] : [],
-    )) as Record<string, any>[]
+    let rows: Record<string, any>[]
+    if (since) {
+      active ??= new Set(
+        ((await querySQL(`SELECT did FROM _repos WHERE status = 'active'`)) as { did: string }[]).map((r) => r.did),
+      )
+      rows = (await indexedSince(schema.tableName, '*', since)).filter((r) => active!.has(r.did))
+    } else {
+      rows = (await querySQL(
+        `SELECT t.* FROM ${schema.tableName} t
+           JOIN _repos r ON r.did = t.did AND r.status = 'active'
+          WHERE t.space IS NULL`,
+      )) as Record<string, any>[]
+    }
     for (const row of rows) {
       if (since && !isNewSince(row.uri, since)) continue
       out.push({ uri: row.uri, did: row.did, collection, value: rowValue(schema, row) })
@@ -671,6 +694,13 @@ const SINCE_CURSOR = 'classifiers:since'
  */
 const ACCOUNT_SETTLE_MS = 60_000
 const LIVE_CONCURRENCY = 4
+/** How long after boot the catch-up pass waits. */
+let CATCH_UP_DELAY_MS = 60_000
+
+/** For tests: run the boot catch-up after `ms` rather than a minute. */
+export function _setCatchUpDelayForTests(ms: number): void {
+  CATCH_UP_DELAY_MS = ms
+}
 const MAX_ATTEMPTS = 5
 
 interface Pending {
@@ -703,7 +733,14 @@ export async function startScoringOnIndex(): Promise<void> {
     await setCursor(SINCE_CURSOR, since)
   }
   log(`[classifiers] scoring on index, for content new since ${since}`)
-  runScan({ since }).catch((err) => emit('classifiers', 'catch_up_error', { error: err.message }))
+  // Held back from boot: the catch-up reads the database, and a server still
+  // starting up should not wait on that.
+  const from = since
+  const catchUp = setTimeout(() => {
+    if (since !== from || current?.running) return
+    runScan({ since: from }).catch((err) => emit('classifiers', 'catch_up_error', { error: err.message }))
+  }, CATCH_UP_DELAY_MS)
+  catchUp.unref?.()
 }
 
 export function stopScoringOnIndex(): void {
