@@ -20,6 +20,7 @@ import { initFeeds, listFeeds } from './feeds.ts'
 import { initXrpc, listXrpc, configureRelay, configureCdn, configureOAuth, callXrpc } from './xrpc.ts'
 import { initOpengraph } from './opengraph.ts'
 import { initLabels, getLabelDefinitions } from './labels.ts'
+import { initClassifiers, listClassifiers, configureClef } from './classifiers.ts'
 import { auxCursorKey, jetstreamCursorKey, startAuxIndexer, startIndexer, sweepReferences } from './indexer.ts'
 import { startJetstreamIndexer } from './jetstream.ts'
 import { rebuildAllIndexes } from './database/fts.ts'
@@ -125,9 +126,18 @@ if (existsSync(serverDir)) {
   log(`[main] OpenGraph initialized`)
   await initLabels(resolve(configDir, 'labels'))
   log(`[main] Labels initialized: ${getLabelDefinitions().length} definitions`)
+  await initClassifiers(resolve(configDir, 'classifiers'))
+  log(`[main] Classifiers initialized: ${listClassifiers().join(', ') || 'none'}`)
 }
 
 // Register built-in dev.hatk.* handlers so callXrpc() can find them
+configureClef(
+  config.clef && {
+    apiToken: config.clef.apiToken,
+    model: config.clef.model,
+    endpoint: `https://api.cloudflare.com/client/v4/accounts/${config.clef.accountId}/ai/run/@cf/cloudflare/${config.clef.model}`,
+  },
+)
 setPrivateCollections(config.privateCollections)
 registerCoreHandlers(collections, config.oauth)
 configureOAuth(config.oauth)

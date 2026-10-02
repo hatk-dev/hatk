@@ -30,9 +30,22 @@ import {
   queryReports,
   resolveReport,
   getOpenReportCount,
+  queryClassifications,
+  getClassificationStats,
+  getRecordsByDid,
+  getRecordCountsByDid,
+  findOpenReportsForSubject,
 } from './database/db.ts'
+import { runScan, getScanProgress, listClassifiers, isClefConfigured } from './classifiers.ts'
 import { executeFeed, listFeeds } from './feeds.ts'
-import { executeXrpc, InvalidRequestError, NotFoundError, registerCoreXrpcHandler, isLocalRelay, paramsFromSearch } from './xrpc.ts'
+import {
+  executeXrpc,
+  InvalidRequestError,
+  NotFoundError,
+  registerCoreXrpcHandler,
+  isLocalRelay,
+  paramsFromSearch,
+} from './xrpc.ts'
 import { pdsFor } from './backfill.ts'
 import { resolveRecords } from './hydrate.ts'
 import { handleOpengraphRequest, buildOgMeta } from './opengraph.ts'
@@ -935,6 +948,95 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
         if (action === 'resolve') {
           await insertLabels([{ src: 'admin', uri: report.subjectUri, val: report.label }])
+        }
+        invalidateAdminStats()
+        return withCors(json({ ok: true }, 200, acceptEncoding))
+      }
+
+      // GET /admin/review — the classifier review queue
+      if (url.pathname === '/admin/review' && request.method === 'GET') {
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
+        const result = await queryClassifications({
+          classifier: url.searchParams.get('classifier') || undefined,
+          signal: url.searchParams.get('signal') || undefined,
+          minScore: url.searchParams.has('minScore') ? Number(url.searchParams.get('minScore')) : undefined,
+          state: (url.searchParams.get('state') as any) || 'pending',
+          limit: parseInt(url.searchParams.get('limit') || '25'),
+          offset: parseInt(url.searchParams.get('offset') || '0'),
+        })
+        return withCors(json(result, 200, acceptEncoding))
+      }
+
+      // GET /admin/review/stats — rollups, classifier names, scan progress
+      if (url.pathname === '/admin/review/stats' && request.method === 'GET') {
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
+        const stats = await getClassificationStats()
+        return withCors(
+          json(
+            { ...stats, classifiers: listClassifiers(), configured: isClefConfigured(), scan: getScanProgress() },
+            200,
+            acceptEncoding,
+          ),
+        )
+      }
+
+      // POST /admin/review/scan — start a scan. Returns as soon as it is under
+      // way; a scan of a whole network outlives any sensible request timeout, so
+      // progress is polled from /admin/review/stats rather than awaited here.
+      if (url.pathname === '/admin/review/scan' && request.method === 'POST') {
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
+        if (!isClefConfigured())
+          return withCors(jsonError(400, 'Clef is not configured — set `clef` in hatk.config.ts', acceptEncoding))
+        const body = JSON.parse((await request.text()) || '{}')
+        const running = getScanProgress()
+        if (running?.running) return withCors(jsonError(409, 'A scan is already running', acceptEncoding))
+        runScan({ classifier: body.classifier, force: body.force === true, limit: body.limit })
+          .then(() => invalidateAdminStats())
+          .catch(() => {})
+        return withCors(json({ ok: true, started: true }, 202, acceptEncoding))
+      }
+
+      // GET /admin/review/subject/:did — everything needed to judge one subject
+      if (url.pathname.startsWith('/admin/review/subject/')) {
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
+        const did = decodeURIComponent(url.pathname.slice('/admin/review/subject/'.length))
+        if (!did.startsWith('did:')) return withCors(jsonError(400, 'Expected a DID', acceptEncoding))
+        const [records, counts, handle, status, labels] = await Promise.all([
+          getRecordsByDid(did, collections, 6),
+          getRecordCountsByDid(did, collections),
+          getRepoHandle(did),
+          getRepoStatus(did),
+          queryLabelsForUris([did]),
+        ])
+        return withCors(json({ did, handle, status, records, counts, labels }, 200, acceptEncoding))
+      }
+
+      // POST /admin/review/act — resolve the report and act, in one step
+      if (url.pathname === '/admin/review/act' && request.method === 'POST') {
+        const denied = requireAdmin(viewer, acceptEncoding)
+        if (denied) return denied
+        const { did, uri, action, label } = JSON.parse(await request.text())
+        const subjectUri = uri || did
+        if (!subjectUri || !action) return withCors(jsonError(400, 'Missing subject or action', acceptEncoding))
+        if (!['takedown', 'label', 'dismiss'].includes(action))
+          return withCors(jsonError(400, 'Action must be takedown, label or dismiss', acceptEncoding))
+
+        if (action === 'takedown') {
+          if (!did) return withCors(jsonError(400, 'Takedown needs a did', acceptEncoding))
+          await setRepoStatus(did, 'takendown')
+        } else if (action === 'label') {
+          if (!label) return withCors(jsonError(400, 'Label action needs a label', acceptEncoding))
+          await insertLabels([{ src: 'admin', uri: subjectUri, val: label }])
+        }
+
+        // Close whatever the classifier filed, so the subject leaves the queue
+        // whichever way it was decided.
+        for (const id of await findOpenReportsForSubject(subjectUri)) {
+          await resolveReport(id, action === 'dismiss' ? 'dismissed' : 'resolved', viewer!.did)
         }
         invalidateAdminStats()
         return withCors(json({ ok: true }, 200, acceptEncoding))

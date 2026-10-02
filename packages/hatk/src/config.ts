@@ -187,11 +187,27 @@ export interface HatkConfig {
   push: PushConfig | null // push notification delivery (null to disable)
   admins: string[] // DIDs allowed to access /admin/* endpoints
   spaces: SpacesConfig | null // permissioned-space indexing (null to disable)
+  clef: ClefConfig | null // Clef on Workers AI for classifiers (null to disable)
+}
+
+/**
+ * Clef access for the classifier system, through Workers AI. Without it,
+ * classifiers load but no scan can run. The account and token are read from
+ * `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_AI_TOKEN` in preference to the config
+ * file, so neither need be committed. The token needs Workers AI access and
+ * nothing else; `CLOUDFLARE_API_TOKEN` is deliberately not read, since on a host
+ * that also manages DNS it is the token with zone write.
+ */
+export interface ClefConfig {
+  accountId: string
+  apiToken: string
+  /** `clef` or `clef-flash`. Thresholds tuned on one do not carry to the other. */
+  model: 'clef' | 'clef-flash'
 }
 
 /** Input type for defineConfig — fields that have defaults are optional. */
 export type HatkConfigInput = Partial<
-  Omit<HatkConfig, 'oauth' | 'backfill' | 'push' | 'cdn' | 'jetstream' | 'spaces'>
+  Omit<HatkConfig, 'oauth' | 'backfill' | 'push' | 'cdn' | 'jetstream' | 'spaces' | 'clef'>
 > & {
   cdn?: CdnConfig | null
   oauth?: (Partial<OAuthConfig> & { clients: OAuthClientConfig[] }) | null
@@ -199,6 +215,7 @@ export type HatkConfigInput = Partial<
   push?: PushConfig | null
   jetstream?: JetstreamConfig | null
   spaces?: SpacesConfig | null
+  clef?: Partial<ClefConfig> | null
 }
 
 /** Identity function that provides type inference for hatk config files. */
@@ -268,6 +285,13 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
     oauth: null,
     push: parsed.push || null,
     admins: env.ADMINS ? env.ADMINS.split(',').map((s) => s.trim()) : parsed.admins || [],
+    clef: (() => {
+      const raw = parsed.clef
+      const accountId = env.CLOUDFLARE_ACCOUNT_ID || raw?.accountId
+      const apiToken = env.CLOUDFLARE_AI_TOKEN || raw?.apiToken
+      if (!accountId || !apiToken) return null
+      return { accountId, apiToken, model: (env.CLEF_MODEL as ClefConfig['model']) || raw?.model || 'clef' }
+    })(),
     spaces: parsed.spaces
       ? {
           types: parsed.spaces.types || [],

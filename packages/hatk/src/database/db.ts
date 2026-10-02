@@ -212,6 +212,45 @@ export async function initDatabase(
   await run(`CREATE INDEX IF NOT EXISTS idx_reports_status ON _reports(status)`)
   await run(`CREATE INDEX IF NOT EXISTS idx_reports_subject_uri ON _reports(subject_uri)`)
 
+  // Classifier scores. One row per (subject, classifier); a rescan replaces it.
+  // `fingerprint` hashes the state that was scored, so an unchanged subject is
+  // skipped on the next scan instead of being paid for again.
+  if (dialect.supportsSequences) {
+    await run(`CREATE SEQUENCE IF NOT EXISTS _classifications_seq START 1`)
+    await run(`CREATE TABLE IF NOT EXISTS _classifications (
+      id INTEGER PRIMARY KEY DEFAULT nextval('_classifications_seq'),
+      subject_uri TEXT NOT NULL,
+      subject_did TEXT NOT NULL,
+      classifier TEXT NOT NULL,
+      signals ${dialect.jsonType} NOT NULL,
+      state ${dialect.jsonType},
+      top_signal TEXT,
+      top_score DOUBLE NOT NULL DEFAULT 0,
+      fingerprint TEXT NOT NULL,
+      model TEXT,
+      scanned_at ${dialect.timestampType} NOT NULL
+    )`)
+  } else {
+    await run(`CREATE TABLE IF NOT EXISTS _classifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      subject_uri TEXT NOT NULL,
+      subject_did TEXT NOT NULL,
+      classifier TEXT NOT NULL,
+      signals TEXT NOT NULL,
+      state TEXT,
+      top_signal TEXT,
+      top_score REAL NOT NULL DEFAULT 0,
+      fingerprint TEXT NOT NULL,
+      model TEXT,
+      scanned_at TEXT NOT NULL
+    )`)
+  }
+  await run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_classifications_subject ON _classifications(subject_uri, classifier)`,
+  )
+  await run(`CREATE INDEX IF NOT EXISTS idx_classifications_score ON _classifications(top_score)`)
+  await run(`CREATE INDEX IF NOT EXISTS idx_classifications_did ON _classifications(subject_did)`)
+
   // Push notification tokens
   await run(`CREATE TABLE IF NOT EXISTS _push_tokens (
     did TEXT NOT NULL,
@@ -2135,4 +2174,265 @@ export async function getOpenReportCount(): Promise<number> {
     `SELECT ${dialect.countAsInteger} as count FROM _reports WHERE status = 'open'`,
   )
   return Number(rows[0]?.count || 0)
+}
+
+// ── Classifications ────────────────────────────────────────────────────────
+
+export interface ClassificationRow {
+  subjectUri: string
+  subjectDid: string
+  classifier: string
+  signals: Record<string, { score: number; type: string; choice?: string; confidence?: number }>
+  /** The state the model was shown, kept so a reviewer sees what it judged. */
+  state: Record<string, unknown>
+  topSignal: string | null
+  topScore: number
+  fingerprint: string
+  model: string | null
+}
+
+/** Replace this subject's score for this classifier. */
+export async function upsertClassification(row: ClassificationRow): Promise<void> {
+  await run(`DELETE FROM _classifications WHERE subject_uri = $1 AND classifier = $2`, [row.subjectUri, row.classifier])
+  await run(
+    `INSERT INTO _classifications
+       (subject_uri, subject_did, classifier, signals, state, top_signal, top_score, fingerprint, model, scanned_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
+      row.subjectUri,
+      row.subjectDid,
+      row.classifier,
+      JSON.stringify(row.signals),
+      JSON.stringify(row.state),
+      row.topSignal,
+      row.topScore,
+      row.fingerprint,
+      row.model,
+      new Date().toISOString(),
+    ],
+  )
+}
+
+/**
+ * Fingerprints of everything already scored by this classifier, so a rescan can
+ * skip subjects whose state has not changed since.
+ */
+export async function getClassificationFingerprints(classifier: string): Promise<Map<string, string>> {
+  const rows = await all<{ subject_uri: string; fingerprint: string }>(
+    `SELECT subject_uri, fingerprint FROM _classifications WHERE classifier = $1`,
+    [classifier],
+  )
+  return new Map(rows.map((r) => [r.subject_uri, r.fingerprint]))
+}
+
+/** An open report already filed against this subject with this label, if any. */
+export async function findOpenReport(subjectUri: string, label: string): Promise<number | null> {
+  const rows = await all<{ id: number }>(
+    `SELECT id FROM _reports WHERE subject_uri = $1 AND label = $2 AND status = 'open' LIMIT 1`,
+    [subjectUri, label],
+  )
+  return rows.length ? rows[0].id : null
+}
+
+/**
+ * The review queue: one entry per subject, not per classifier.
+ *
+ * A subject scored by three classifiers has three rows in `_classifications`,
+ * and returning them separately puts the same account in the queue three times.
+ * The signals are merged instead, each tagged with the classifier it came from,
+ * so one card carries everything known about the account.
+ */
+export async function queryClassifications(opts: {
+  classifier?: string
+  signal?: string
+  minScore?: number
+  /** `pending` is what still needs a decision; see the state filter below. */
+  state?: 'all' | 'pending' | 'actioned'
+  limit?: number
+  offset?: number
+}): Promise<{ rows: any[]; total: number }> {
+  const conditions: string[] = []
+  const params: unknown[] = []
+  let idx = 1
+
+  if (opts.classifier) {
+    conditions.push(`c.classifier = $${idx++}`)
+    params.push(opts.classifier)
+  }
+  if (opts.signal) {
+    conditions.push(`c.top_signal = $${idx++}`)
+    params.push(opts.signal)
+  }
+  if (opts.minScore != null) {
+    conditions.push(`c.top_score >= $${idx++}`)
+    params.push(opts.minScore)
+  }
+  // Pending means a report is open against the subject: something crossed a
+  // threshold and nobody has decided it. A high score on a question carrying no
+  // threshold is context rather than queue — browsable under `all`.
+  if (opts.state === 'pending') {
+    conditions.push(`(rp.status IS NULL OR rp.status = 'active')`)
+    conditions.push(`EXISTS (SELECT 1 FROM _reports x WHERE x.subject_uri = c.subject_uri AND x.status = 'open')`)
+  } else if (opts.state === 'actioned') {
+    conditions.push(
+      `(rp.status = 'takendown'
+        OR (EXISTS (SELECT 1 FROM _reports x WHERE x.subject_uri = c.subject_uri AND x.status <> 'open')
+            AND NOT EXISTS (SELECT 1 FROM _reports x WHERE x.subject_uri = c.subject_uri AND x.status = 'open')))`,
+    )
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+  const from = `FROM _classifications c LEFT JOIN _repos rp ON c.subject_did = rp.did`
+  const limit = opts.limit ?? 50
+  const offset = opts.offset ?? 0
+
+  const countRows = await all<{ count: number }>(
+    `SELECT ${dialect.countAsInteger} as count FROM (SELECT c.subject_uri ${from} ${where} GROUP BY c.subject_uri) g`,
+    params,
+  )
+
+  const page = await all<{ subject_uri: string; subject_did: string; score: number }>(
+    `SELECT c.subject_uri, c.subject_did, MAX(c.top_score) AS score
+     ${from} ${where}
+     GROUP BY c.subject_uri, c.subject_did
+     ORDER BY score DESC LIMIT $${idx++} OFFSET $${idx++}`,
+    [...params, limit, offset],
+  )
+  if (!page.length) return { rows: [], total: Number(countRows[0]?.count || 0) }
+
+  const uris = page.map((p) => p.subject_uri)
+  const placeholders = uris.map((_, i) => `$${i + 1}`).join(',')
+  const detail = await all(
+    `SELECT c.*, rp.handle, rp.status AS repo_status,
+            (SELECT x.id FROM _reports x WHERE x.subject_uri = c.subject_uri AND x.status = 'open' LIMIT 1) AS report_id,
+            (SELECT x.status FROM _reports x WHERE x.subject_uri = c.subject_uri ORDER BY x.created_at DESC LIMIT 1) AS report_status
+     FROM _classifications c LEFT JOIN _repos rp ON c.subject_did = rp.did
+     WHERE c.subject_uri IN (${placeholders})`,
+    uris,
+  )
+
+  const byUri = new Map<string, any>()
+  for (const row of detail as any[]) {
+    for (const col of ['signals', 'state']) {
+      if (typeof row[col] === 'string') {
+        try {
+          row[col] = JSON.parse(row[col])
+        } catch {}
+      }
+    }
+    let entry = byUri.get(row.subject_uri)
+    if (!entry) {
+      entry = {
+        subject_uri: row.subject_uri,
+        subject_did: row.subject_did,
+        handle: row.handle,
+        repo_status: row.repo_status,
+        report_id: row.report_id,
+        report_status: row.report_status,
+        classifiers: [] as string[],
+        signals: {} as Record<string, any>,
+        state: {} as Record<string, unknown>,
+        top_signal: null as string | null,
+        top_score: 0,
+        scanned_at: row.scanned_at,
+      }
+      byUri.set(row.subject_uri, entry)
+    }
+    entry.classifiers.push(row.classifier)
+    // Every classifier builds its own view of the subject; show the richest.
+    if (Object.keys(row.state || {}).length > Object.keys(entry.state).length) entry.state = row.state
+    for (const [name, sig] of Object.entries<any>(row.signals || {})) {
+      entry.signals[name] = { ...sig, classifier: row.classifier }
+      if (sig.score > entry.top_score) {
+        entry.top_score = sig.score
+        entry.top_signal = name
+      }
+    }
+  }
+
+  const rows = page.map((p) => byUri.get(p.subject_uri)).filter(Boolean)
+  return { rows, total: Number(countRows[0]?.count || 0) }
+}
+
+/** Rollups for the review tab header. */
+export async function getClassificationStats(): Promise<{
+  total: number
+  pending: number
+  byClassifier: Record<string, number>
+  lastScan: string | null
+}> {
+  const [totalRows, pendingRows, byRows, lastRows] = await Promise.all([
+    all<{ count: number }>(
+      `SELECT ${dialect.countAsInteger} as count FROM (SELECT subject_uri FROM _classifications GROUP BY subject_uri) g`,
+    ),
+    // Distinct subjects, not rows: the queue shows one card per account, so a
+    // row count would overstate it by the number of classifiers.
+    all<{ count: number }>(
+      `SELECT ${dialect.countAsInteger} as count FROM (
+         SELECT c.subject_uri FROM _classifications c
+         WHERE EXISTS (SELECT 1 FROM _reports x WHERE x.subject_uri = c.subject_uri AND x.status = 'open')
+         GROUP BY c.subject_uri
+       ) g`,
+    ),
+    all<{ classifier: string; count: number }>(
+      `SELECT classifier, ${dialect.countAsInteger} as count FROM _classifications GROUP BY classifier`,
+    ),
+    all<{ scanned_at: string }>(`SELECT scanned_at FROM _classifications ORDER BY scanned_at DESC LIMIT 1`),
+  ])
+  const byClassifier: Record<string, number> = {}
+  for (const r of byRows) byClassifier[r.classifier] = Number(r.count)
+  return {
+    total: Number(totalRows[0]?.count || 0),
+    pending: Number(pendingRows[0]?.count || 0),
+    byClassifier,
+    lastScan: lastRows[0]?.scanned_at ?? null,
+  }
+}
+
+/**
+ * A sample of one repo's records across the given collections, newest first.
+ *
+ * Feeds the review queue's inline context: judging an account means seeing what
+ * it actually posted, not just its DID.
+ */
+export async function getRecordsByDid(
+  did: string,
+  collections: string[],
+  perCollection = 6,
+): Promise<Record<string, any[]>> {
+  const out: Record<string, any[]> = {}
+  for (const collection of collections) {
+    const schema = schemas.get(collection)
+    if (!schema) continue
+    const rows = await all(`SELECT * FROM ${schema.tableName} WHERE did = $1 ORDER BY indexed_at DESC LIMIT $2`, [
+      did,
+      perCollection,
+    ])
+    if (rows.length) out[collection] = rows.map((r) => reshapeRow(r)).filter(Boolean)
+  }
+  return out
+}
+
+/** Row counts per collection for one repo. */
+export async function getRecordCountsByDid(did: string, collections: string[]): Promise<Record<string, number>> {
+  const out: Record<string, number> = {}
+  for (const collection of collections) {
+    const schema = schemas.get(collection)
+    if (!schema) continue
+    const rows = await all<{ count: number }>(
+      `SELECT ${dialect.countAsInteger} as count FROM ${schema.tableName} WHERE did = $1`,
+      [did],
+    )
+    const n = Number(rows[0]?.count || 0)
+    if (n) out[collection] = n
+  }
+  return out
+}
+
+/** Open report ids filed against a subject, whatever the label. */
+export async function findOpenReportsForSubject(subjectUri: string): Promise<number[]> {
+  const rows = await all<{ id: number }>(`SELECT id FROM _reports WHERE subject_uri = $1 AND status = 'open'`, [
+    subjectUri,
+  ])
+  return rows.map((r) => r.id)
 }

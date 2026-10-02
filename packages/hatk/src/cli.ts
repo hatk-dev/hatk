@@ -471,6 +471,7 @@ if (command === 'new') {
     out += `export { defineSetup } from '@hatk/hatk/setup'\n`
     out += `export { defineHook } from '@hatk/hatk/hooks'\n`
     out += `export { defineLabel } from '@hatk/hatk/labels'\n`
+    out += `export { defineClassifier } from '@hatk/hatk/classifiers'\n`
     out += `export { defineOG } from '@hatk/hatk/opengraph'\n`
     out += `export { defineRenderer } from '@hatk/hatk/renderer'\n`
     out += `export type Ctx<K extends keyof XrpcSchema & keyof Registry> = XrpcContext<\n`

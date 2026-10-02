@@ -935,6 +935,132 @@
         border-radius: 10px;
         background: var(--bg);
       }
+      /* ── Review queue ── */
+      .review-card {
+        border-bottom: 1px solid var(--border);
+        padding: 0.9rem 1rem 0.9rem 0.75rem;
+        border-left: 3px solid transparent;
+        transition:
+          background 0.1s,
+          border-color 0.1s;
+      }
+      .review-card:last-child {
+        border-bottom: none;
+      }
+      .review-card.selected {
+        background: #faf8f6;
+        border-left-color: var(--accent);
+      }
+      .review-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.75rem;
+      }
+      .review-handle {
+        font-weight: 650;
+        font-size: 0.95rem;
+        color: var(--text);
+      }
+      .review-score {
+        font-family: var(--mono);
+        font-size: 0.8rem;
+        font-weight: 700;
+        padding: 0.15rem 0.45rem;
+        border-radius: 6px;
+        flex-shrink: 0;
+        background: var(--bg);
+        color: var(--text-2);
+      }
+      .review-score.high {
+        background: #fdeaea;
+        color: #b4242a;
+      }
+      .review-score.mid {
+        background: #fdf3e3;
+        color: #9a6412;
+      }
+      .signal-row {
+        display: flex;
+        gap: 0.3rem;
+        flex-wrap: wrap;
+        margin-top: 0.45rem;
+      }
+      .signal-chip {
+        font-family: var(--mono);
+        font-size: 0.7rem;
+        padding: 0.1rem 0.4rem;
+        border-radius: 5px;
+        background: var(--bg);
+        color: var(--text-3);
+        border: 1px solid var(--border);
+      }
+      .signal-chip.crossed {
+        background: #fdeaea;
+        color: #b4242a;
+        border-color: #f3c9c9;
+      }
+      .review-state {
+        font-size: 0.85rem;
+        color: var(--text-2);
+        margin-top: 0.45rem;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .review-state .k {
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        color: var(--text-3);
+      }
+      .review-thumbs {
+        display: flex;
+        gap: 0.35rem;
+        flex-wrap: wrap;
+        margin-top: 0.55rem;
+      }
+      .review-thumbs img {
+        width: 72px;
+        height: 72px;
+        object-fit: cover;
+        border-radius: 8px;
+        background: var(--bg);
+      }
+      .review-actions {
+        display: flex;
+        gap: 0.3rem;
+        align-items: center;
+        margin-top: 0.6rem;
+        flex-wrap: wrap;
+      }
+      .scan-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+        padding: 0.6rem 1rem;
+        border-bottom: 1px solid var(--border);
+        font-size: 0.82rem;
+        color: var(--text-2);
+      }
+      .kbd {
+        font-family: var(--mono);
+        font-size: 0.68rem;
+        padding: 0.05rem 0.3rem;
+        border: 1px solid var(--border);
+        border-bottom-width: 2px;
+        border-radius: 4px;
+        color: var(--text-3);
+        background: #fff;
+      }
+      .review-hint {
+        font-size: 0.75rem;
+        color: var(--text-3);
+        padding: 0.5rem 1rem;
+        display: flex;
+        gap: 0.7rem;
+        flex-wrap: wrap;
+        align-items: center;
+      }
       .blob-link {
         font-family: var(--mono);
         font-size: 0.72rem;
@@ -1213,6 +1339,7 @@
           <button class="tab active" data-tab="overview">Overview</button>
           <button class="tab" data-tab="repos">Repos</button>
           <button class="tab" data-tab="content">Content</button>
+          <button class="tab" data-tab="review">Review</button>
           <button class="tab" data-tab="reports">Reports</button>
         </nav>
 
@@ -1289,6 +1416,28 @@
         </div>
 
         <!-- Reports -->
+        <div class="tab-panel" id="panel-review">
+          <div class="search-bar">
+            <select class="search-input" id="review-classifier" style="max-width: 200px">
+              <option value="">All classifiers</option>
+            </select>
+            <select class="search-input" id="review-state" style="max-width: 180px">
+              <option value="pending">Needs review</option>
+              <option value="actioned">Actioned</option>
+              <option value="all">All scored</option>
+            </select>
+            <select class="search-input" id="review-min" style="max-width: 160px">
+              <option value="0.5">Score &ge; 0.50</option>
+              <option value="0.6">Score &ge; 0.60</option>
+              <option value="0.7">Score &ge; 0.70</option>
+              <option value="0.8">Score &ge; 0.80</option>
+              <option value="0">Any score</option>
+            </select>
+            <button class="btn btn-sm" id="review-scan-btn">Scan</button>
+          </div>
+          <div id="review-results"></div>
+        </div>
+
         <div class="tab-panel" id="panel-reports">
           <div class="search-bar">
             <select class="search-input" id="reports-status" style="max-width: 200px">
@@ -1310,6 +1459,7 @@
           <button class="bnav-btn active" data-tab="overview">Overview</button>
           <button class="bnav-btn" data-tab="repos">Repos</button>
           <button class="bnav-btn" data-tab="content">Content</button>
+          <button class="bnav-btn" data-tab="review">Review</button>
           <button class="bnav-btn" data-tab="reports">Reports</button>
         </div>
       </div>
@@ -1502,6 +1652,7 @@
         if (tab === 'overview') loadOverview()
         if (tab === 'repos') loadRepos()
         if (tab === 'content') loadContent()
+        if (tab === 'review') loadReview()
         if (tab === 'reports') loadReports()
         if (push) pushURL({ tab, status: '', q: '', offset: 0, cq: '' })
       }
@@ -2166,6 +2317,330 @@
       document.getElementById('reports-label-filter').addEventListener('change', () => {
         reportsPage.offset = 0
         loadReports()
+      })
+
+      // ── Review queue ──
+      //
+      // The queue exists so nobody has to look at every account. Each card
+      // carries the state the model was shown and the score it returned, so a
+      // decision can be made from the list without opening anything.
+
+      const review = { items: [], index: 0, total: 0, offset: 0, limit: 25, thumbs: new Map() }
+      let reviewClassifiersLoaded = false
+      let scanPoll = null
+
+      function scoreClass(v) {
+        return v >= 0.8 ? 'high' : v >= 0.6 ? 'mid' : ''
+      }
+
+      async function loadReview() {
+        const container = document.getElementById('review-results')
+        if (!reviewClassifiersLoaded) {
+          try {
+            const stats = await api('/admin/review/stats')
+            const sel = document.getElementById('review-classifier')
+            for (const name of stats.classifiers || []) {
+              const o = document.createElement('option')
+              o.value = o.textContent = name
+              sel.appendChild(o)
+            }
+            reviewClassifiersLoaded = true
+          } catch (e) {
+            container.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`
+            return
+          }
+        }
+        const classifier = document.getElementById('review-classifier').value
+        const state = document.getElementById('review-state').value
+        const minScore = document.getElementById('review-min').value
+        container.innerHTML = '<div class="loading">Loading</div>'
+        try {
+          let url = `/admin/review?state=${state}&minScore=${minScore}&limit=${review.limit}&offset=${review.offset}`
+          if (classifier) url += `&classifier=${encodeURIComponent(classifier)}`
+          const result = await api(url)
+          review.items = result.rows || []
+          review.total = result.total
+          review.index = 0
+          renderReview()
+        } catch (e) {
+          container.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`
+        }
+      }
+
+      function renderScanBar(stats) {
+        const el = document.getElementById('review-scan-status')
+        if (!el) return
+        if (!stats.configured) {
+          el.textContent = 'Clef not configured — set `clef` in hatk.config.ts'
+          return
+        }
+        const scan = stats.scan
+        if (scan?.running) {
+          el.textContent = `Scanning… ${scan.scored} scored, ${scan.skipped} skipped, ${scan.filed} filed`
+        } else if (scan) {
+          const cost = ((scan.inputTokens / 1e6) * 0.042).toFixed(3)
+          el.textContent = `Last scan: ${scan.scored} scored, ${scan.skipped} unchanged, ${scan.filed} filed, $${cost}`
+        } else {
+          el.textContent = `${stats.total} scored · ${stats.pending} awaiting review`
+        }
+      }
+
+      // Render the model's state as short "key: value" lines. Long values are
+      // clipped rather than dropped: the reason an account looks wrong is often
+      // the first few words of its bio.
+      function renderState(state) {
+        if (!state || typeof state !== 'object') return ''
+        const parts = []
+        for (const [k, v] of Object.entries(state)) {
+          if (v == null || v === '') continue
+          let text
+          if (typeof v === 'string') text = v
+          else if (Array.isArray(v)) {
+            text = v
+              .map((x) => (typeof x === 'string' ? x : x?.title || x?.text || JSON.stringify(x)))
+              .filter(Boolean)
+              .slice(0, 3)
+              .join(' · ')
+          } else if (typeof v === 'object') {
+            text = Object.entries(v)
+              .filter(([, n]) => n)
+              .map(([n, val]) => `${n} ${val}`)
+              .join(', ')
+          } else text = String(v)
+          if (!text) continue
+          if (text.length > 180) text = text.slice(0, 180) + '…'
+          parts.push(`<span class="k">${escapeHtml(k)}</span> ${escapeHtml(text)}`)
+        }
+        return parts.join('<br>')
+      }
+
+      function renderReview() {
+        const container = document.getElementById('review-results')
+        const labelOptions = labelDefinitions
+          .map((d) => `<option value="${d.identifier}">${d.identifier}</option>`)
+          .join('')
+
+        if (!review.items.length) {
+          container.innerHTML = `
+            <div class="scan-bar"><span id="review-scan-status"></span></div>
+            <div class="empty-state">Nothing awaiting review</div>`
+          api('/admin/review/stats')
+            .then(renderScanBar)
+            .catch(() => {})
+          return
+        }
+
+        const showPagination = review.total > review.limit
+        container.innerHTML = `
+          <div class="card">
+            <div class="scan-bar"><span id="review-scan-status"></span></div>
+            <div class="review-hint">
+              <span><span class="kbd">j</span><span class="kbd">k</span> move</span>
+              <span><span class="kbd">t</span> takedown</span>
+              <span><span class="kbd">l</span> label</span>
+              <span><span class="kbd">d</span> dismiss</span>
+            </div>
+            ${review.items
+              .map((r, i) => {
+                const signals = Object.entries(r.signals || {}).sort((a, b) => b[1].score - a[1].score)
+                const top = Number(r.top_score || 0)
+                const handle = r.handle ? '@' + escapeHtml(r.handle) : escapeHtml(r.subject_did)
+                const takendown = r.repo_status === 'takendown'
+                return `<div class="review-card${i === review.index ? ' selected' : ''}" data-review-index="${i}">
+                  <div class="review-top">
+                    <div style="min-width:0">
+                      <div class="review-handle">${handle}${takendown ? ' <span class="label-tag">taken down</span>' : ''}</div>
+                      <div class="record-uri" title="${escapeHtml(r.subject_uri)}">${escapeHtml(r.subject_uri)}</div>
+                    </div>
+                    <div class="review-score ${scoreClass(top)}">${top.toFixed(2)}</div>
+                  </div>
+                  <div class="signal-row">
+                    ${signals
+                      .map(
+                        ([name, sig]) =>
+                          `<span class="signal-chip${sig.score >= 0.5 ? ' crossed' : ''}" title="${escapeHtml(sig.classifier || '')}">${escapeHtml(name)} ${sig.score.toFixed(2)}${
+                            sig.choice ? ' · ' + escapeHtml(String(sig.choice)) : ''
+                          }</span>`,
+                      )
+                      .join('')}
+                  </div>
+                  <div class="review-state">${renderState(r.state)}</div>
+                  <div class="review-thumbs" data-thumbs-for="${escapeHtml(r.subject_did)}"></div>
+                  <div class="review-actions">
+                    <button class="btn btn-sm" data-review-act="takedown" data-i="${i}" style="background:#b4242a;color:white">Takedown</button>
+                    <select class="search-input" data-review-label="${i}" style="max-width:150px;font-size:0.8rem;padding:0.25rem 0.5rem">
+                      ${labelOptions}
+                    </select>
+                    <button class="btn btn-sm" data-review-act="label" data-i="${i}">Apply label</button>
+                    <button class="btn btn-sm" data-review-act="dismiss" data-i="${i}">Dismiss</button>
+                    <a class="btn btn-sm" href="/admin?tab=repos&q=${encodeURIComponent(r.subject_did)}">Open in Repos</a>
+                  </div>
+                </div>`
+              })
+              .join('')}
+            ${
+              showPagination
+                ? `<div class="pagination">
+                    <span>${review.offset + 1}–${Math.min(review.offset + review.limit, review.total)} of ${review.total.toLocaleString()}</span>
+                    <div class="pagination-buttons">
+                      <button class="btn btn-sm" data-review-page="prev" ${review.offset === 0 ? 'disabled' : ''}>Prev</button>
+                      <button class="btn btn-sm" data-review-page="next" ${review.offset + review.limit >= review.total ? 'disabled' : ''}>Next</button>
+                    </div>
+                  </div>`
+                : ''
+            }
+          </div>`
+
+        api('/admin/review/stats')
+          .then(renderScanBar)
+          .catch(() => {})
+        wireReview()
+        loadReviewThumbs()
+      }
+
+      // Thumbnails come from a second request per subject, so they are fetched
+      // after the cards are on screen and cached — the queue stays useful
+      // whether or not they arrive.
+      async function loadReviewThumbs() {
+        for (const r of review.items) {
+          const holder = document.querySelector(`[data-thumbs-for="${CSS.escape(r.subject_did)}"]`)
+          if (!holder || holder.dataset.done) continue
+          holder.dataset.done = '1'
+          try {
+            let ctx = review.thumbs.get(r.subject_did)
+            if (!ctx) {
+              ctx = await api(`/admin/review/subject/${encodeURIComponent(r.subject_did)}`)
+              review.thumbs.set(r.subject_did, ctx)
+            }
+            const blobs = []
+            for (const records of Object.values(ctx.records || {})) {
+              for (const rec of records) {
+                for (const b of findBlobs(rec.value || rec)) {
+                  if (b.cid && (b.mimeType || '').startsWith('image/')) blobs.push(b)
+                }
+              }
+            }
+            holder.innerHTML = blobs
+              .slice(0, 6)
+              .map((b) => `<img src="${blobUrl(r.subject_did, b.cid)}" loading="lazy" alt="">`)
+              .join('')
+          } catch {
+            /* context is a nicety; the score and state already carry the decision */
+          }
+        }
+      }
+
+      function selectReview(i) {
+        if (!review.items.length) return
+        review.index = Math.max(0, Math.min(review.items.length - 1, i))
+        document.querySelectorAll('.review-card').forEach((el, n) => {
+          el.classList.toggle('selected', n === review.index)
+          if (n === review.index) el.scrollIntoView({ block: 'nearest' })
+        })
+      }
+
+      async function actOnReview(i, action) {
+        const item = review.items[i]
+        if (!item) return
+        const body = { did: item.subject_did, uri: item.subject_uri, action }
+        if (action === 'label') {
+          const sel = document.querySelector(`[data-review-label="${i}"]`)
+          body.label = sel?.value
+          if (!body.label) return toast('Pick a label first', 'error')
+        }
+        try {
+          await api('/admin/review/act', { method: 'POST', body: JSON.stringify(body) })
+          toast(action === 'dismiss' ? 'Dismissed' : action === 'takedown' ? 'Taken down' : 'Label applied')
+          review.items.splice(i, 1)
+          review.total = Math.max(0, review.total - 1)
+          if (review.index >= review.items.length) review.index = Math.max(0, review.items.length - 1)
+          renderReview()
+        } catch (e) {
+          toast(e.message, 'error')
+        }
+      }
+
+      function wireReview() {
+        document.querySelectorAll('[data-review-index]').forEach((el) => {
+          el.addEventListener('click', (e) => {
+            if (e.target.closest('button,select,a')) return
+            selectReview(Number(el.dataset.reviewIndex))
+          })
+        })
+        document.querySelectorAll('[data-review-act]').forEach((b) => {
+          b.addEventListener('click', () => actOnReview(Number(b.dataset.i), b.dataset.reviewAct))
+        })
+        document.querySelectorAll('[data-review-page]').forEach((b) => {
+          b.addEventListener('click', () => {
+            review.offset += b.dataset.reviewPage === 'next' ? review.limit : -review.limit
+            review.offset = Math.max(0, review.offset)
+            loadReview()
+          })
+        })
+      }
+
+      document.getElementById('review-classifier').addEventListener('change', () => {
+        review.offset = 0
+        loadReview()
+      })
+      document.getElementById('review-state').addEventListener('change', () => {
+        review.offset = 0
+        loadReview()
+      })
+      document.getElementById('review-min').addEventListener('change', () => {
+        review.offset = 0
+        loadReview()
+      })
+
+      document.getElementById('review-scan-btn').addEventListener('click', async () => {
+        const classifier = document.getElementById('review-classifier').value
+        try {
+          await api('/admin/review/scan', {
+            method: 'POST',
+            body: JSON.stringify(classifier ? { classifier } : {}),
+          })
+          toast('Scan started')
+          if (scanPoll) clearInterval(scanPoll)
+          scanPoll = setInterval(async () => {
+            try {
+              const stats = await api('/admin/review/stats')
+              renderScanBar(stats)
+              if (!stats.scan?.running) {
+                clearInterval(scanPoll)
+                scanPoll = null
+                loadReview()
+              }
+            } catch {
+              clearInterval(scanPoll)
+              scanPoll = null
+            }
+          }, 2000)
+        } catch (e) {
+          toast(e.message, 'error')
+        }
+      })
+
+      document.addEventListener('keydown', (e) => {
+        const panel = document.getElementById('panel-review')
+        if (!panel?.classList.contains('active')) return
+        if (e.target.matches('input,select,textarea')) return
+        const key = e.key.toLowerCase()
+        if (key === 'j' || e.key === 'ArrowDown') {
+          e.preventDefault()
+          selectReview(review.index + 1)
+        } else if (key === 'k' || e.key === 'ArrowUp') {
+          e.preventDefault()
+          selectReview(review.index - 1)
+        } else if (key === 't') {
+          e.preventDefault()
+          actOnReview(review.index, 'takedown')
+        } else if (key === 'l') {
+          e.preventDefault()
+          actOnReview(review.index, 'label')
+        } else if (key === 'd' || key === 'x') {
+          e.preventDefault()
+          actOnReview(review.index, 'dismiss')
+        }
       })
 
       async function loadReports() {

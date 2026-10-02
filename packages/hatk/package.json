@@ -26,7 +26,8 @@
     "./config": "./dist/config.js",
     "./vite-plugin": "./dist/vite-plugin.js",
     "./renderer": "./dist/renderer.js",
-    "./spaces": "./dist/spaces/index.js"
+    "./spaces": "./dist/spaces/index.js",
+    "./classifiers": "./dist/classifiers.js"
   },
   "scripts": {
     "clean": "rm -rf dist",
