@@ -14,6 +14,7 @@ import { listXrpc } from '../src/xrpc.ts'
 import { getLabelDefinitions } from '../src/labels.ts'
 import { buildOgMeta } from '../src/opengraph.ts'
 import { getRenderer } from '../src/renderer.ts'
+import { listClassifiers } from '../src/classifiers.ts'
 import { fireOnCommitHooks } from '../src/hooks.ts'
 import { setupFixtureDatabase } from './fixture.ts'
 
@@ -187,6 +188,22 @@ describe('initServer', () => {
 
     await expect(initServer(root)).resolves.toBeUndefined()
     expect(listFeeds().map((f) => f.name)).toContain('trending')
+  })
+
+  test('registers a classifier under its basename, and skips one that cannot score', async () => {
+    // The name is what a classifier's scores and filed reports carry, so
+    // server/classifiers/spam.ts must register as `spam`.
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    writeModule(
+      'classifiers/spam.ts',
+      `export default { __type: 'classifiers', subject: 'account', questions: { q: { type: 'noul', instructions: 'Spam?' } }, async buildState() { return {} } }\n`,
+    )
+    writeModule('classifiers/broken.ts', `export default { __type: 'classifiers', subject: 'account' }\n`)
+    await initServer(root)
+
+    expect(listClassifiers()).toEqual(['spam'])
+    expect(log.mock.calls.flat()).toContain('[classifiers] skipped broken: needs buildState plus questions or classify')
+    expect(log.mock.calls.map((c) => c.join(' '))).toContain('  Classifiers: spam')
   })
 
   test('summarizes what it registered', async () => {

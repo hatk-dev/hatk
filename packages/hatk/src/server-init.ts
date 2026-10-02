@@ -8,6 +8,7 @@ import { registerOgHandler } from './opengraph.ts'
 import { registerHook } from './hooks.ts'
 import { runSetupHandler } from './setup.ts'
 import { registerRenderer } from './renderer.ts'
+import { registerClassifier, clearClassifiers, listClassifiers } from './classifiers.ts'
 
 /**
  * Scan the server/ directory and register all discovered handlers.
@@ -53,12 +54,24 @@ export async function initServer(serverDir: string, opts?: { skipSetup?: boolean
     registerLabelModule(entry.name, entry.mod)
   }
 
-  // 6. Register OG handlers
+  // 6. Register classifiers under their basename, which is the name their scores
+  // and filed reports carry (clear first for hot-reload)
+  clearClassifiers()
+  for (const entry of scanned.classifiers) {
+    const name = entry.name.split('/').pop()!
+    if (!entry.mod.buildState || !(entry.mod.questions || entry.mod.classify)) {
+      log(`[classifiers] skipped ${name}: needs buildState plus questions or classify`)
+      continue
+    }
+    registerClassifier(name, entry.mod)
+  }
+
+  // 7. Register OG handlers
   for (const entry of scanned.og) {
     registerOgHandler(entry.mod)
   }
 
-  // 7. Register renderer
+  // 8. Register renderer
   if (scanned.renderer) {
     registerRenderer(scanned.renderer.mod.handler)
   }
@@ -73,4 +86,5 @@ export async function initServer(serverDir: string, opts?: { skipSetup?: boolean
   )
   log(`  XRPC: ${listXrpc().join(', ') || 'none'}`)
   log(`  Labels: ${getLabelDefinitions().length} definitions`)
+  log(`  Classifiers: ${listClassifiers().join(', ') || 'none'}`)
 }

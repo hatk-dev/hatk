@@ -39,6 +39,7 @@ beforeAll(() => {
   write('hooks.ts', tagged('hook'))
   write('setup.ts', tagged('setup'))
   write('labels.ts', tagged('labels'))
+  write('classifiers/spam.ts', tagged('classifiers'))
   write('og.ts', tagged('og'))
   write('renderer.ts', tagged('renderer'))
   // Skipped for various reasons:
@@ -69,6 +70,7 @@ test('sorts tagged default exports into their buckets and names them by path', a
   expect(result.hooks.map((m) => m.name)).toEqual(['hooks'])
   expect(result.setup.map((m) => m.name)).toEqual(['setup'])
   expect(result.labels.map((m) => m.name)).toEqual(['labels'])
+  expect(result.classifiers.map((m) => m.name)).toEqual(['classifiers/spam'])
   expect(result.og.map((m) => m.name)).toEqual(['og'])
   expect(result.renderer?.name).toBe('renderer')
 
@@ -111,6 +113,7 @@ test('a missing server directory yields empty buckets rather than an error', asy
     hooks: [],
     setup: [],
     labels: [],
+    classifiers: [],
     og: [],
     renderer: null,
   })

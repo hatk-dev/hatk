@@ -15,6 +15,7 @@ export interface ScanResult {
   hooks: ScannedModule[]
   setup: ScannedModule[]
   labels: ScannedModule[]
+  classifiers: ScannedModule[]
   og: ScannedModule[]
   renderer: ScannedModule | null
 }
@@ -48,6 +49,7 @@ export async function scanServerDir(serverDir: string): Promise<ScanResult> {
     hooks: [],
     setup: [],
     labels: [],
+    classifiers: [],
     og: [],
     renderer: null,
   }
@@ -86,6 +88,9 @@ export async function scanServerDir(serverDir: string): Promise<ScanResult> {
         break
       case 'labels':
         result.labels.push(entry)
+        break
+      case 'classifiers':
+        result.classifiers.push(entry)
         break
       case 'og':
         result.og.push(entry)
