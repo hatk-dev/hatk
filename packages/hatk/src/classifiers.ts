@@ -44,6 +44,7 @@ import {
   setCursor,
   upsertClassification,
   getClassificationFingerprints,
+  getClassificationFingerprint,
   findOpenReport,
   insertReport,
 } from './database/db.ts'
@@ -370,7 +371,6 @@ const dbCtx = {
   run: (sql: string, ...params: any[]) => runSQL(sql, params).then(() => undefined),
 }
 
-/** Every subject a classifier applies to, as `{uri, did, handle, value}`. */
 const TID_CHARS = '234567abcdefghijklmnopqrstuvwxyz'
 
 /** When a TID record key was minted, or null if the key is not a TID. */
@@ -442,21 +442,124 @@ async function enumerateSubjects(c: LoadedClassifier, since?: string): Promise<C
     )) as Record<string, any>[]
     for (const row of rows) {
       if (since && !isNewSince(row.uri, since)) continue
-      const value: Record<string, any> = {}
-      for (const col of schema.columns) {
-        let v = row[col.name]
-        if (v === null || v === undefined) continue
-        if (col.isJson && typeof v === 'string') {
-          try {
-            v = JSON.parse(v)
-          } catch {}
-        }
-        value[col.originalName] = v
-      }
-      out.push({ uri: row.uri, did: row.did, collection, value })
+      out.push({ uri: row.uri, did: row.did, collection, value: rowValue(schema, row) })
     }
   }
   return out
+}
+
+/** A table row back in the record's own field names, JSON columns parsed. */
+function rowValue(schema: NonNullable<ReturnType<typeof getSchema>>, row: Record<string, any>): Record<string, any> {
+  const value: Record<string, any> = {}
+  for (const col of schema.columns) {
+    let v = row[col.name]
+    if (v === null || v === undefined) continue
+    if (col.isJson && typeof v === 'string') {
+      try {
+        v = JSON.parse(v)
+      } catch {}
+    }
+    value[col.originalName] = v
+  }
+  return value
+}
+
+/**
+ * The questions are part of what produced a score, so a fingerprint covers them
+ * as well as the state: rewording a classifier's criteria, or changing which
+ * images it sends, invalidates every score written under the old version.
+ */
+function classifierHash(c: LoadedClassifier): string {
+  return createHash('sha256')
+    .update(JSON.stringify(c.questions ?? c.classify?.toString() ?? ''))
+    .update(c.images?.toString() ?? '')
+    .digest('hex')
+    .slice(0, 16)
+}
+
+type Outcome = { outcome: 'skipped' } | { outcome: 'scored'; filed: boolean; inputTokens: number }
+
+/**
+ * Score one subject: build its state, skip it if that state was already scored
+ * (`known` is the stored fingerprint), otherwise ask the model, store the
+ * result, and file a report if a signal crosses its threshold. Throws on a
+ * failure, for the caller to count or retry.
+ */
+async function scoreSubject(
+  c: LoadedClassifier,
+  subject: ClassifierSubject,
+  hash: string,
+  known: string | undefined,
+  signal?: AbortSignal,
+): Promise<Outcome> {
+  const state = await c.buildState({ db: dbCtx, subject })
+  if (!state) return { outcome: 'skipped' }
+  const fingerprint = createHash('sha256').update(hash).update(JSON.stringify(state)).digest('hex').slice(0, 32)
+  if (known === fingerprint) return { outcome: 'skipped' }
+
+  let answers: Record<string, Signal>
+  let model: string
+  let inputTokens = 0
+  if (c.classify) {
+    const raw = await c.classify(state, { db: dbCtx, subject })
+    answers = Object.fromEntries(
+      Object.entries(raw).map(([k, v]) => [k, typeof v === 'number' ? { score: v, type: 'local' } : v]),
+    )
+    model = `local:${c.name}`
+  } else {
+    const urls = c.images ? (await c.images(state, { db: dbCtx, subject })).slice(0, MAX_IMAGES) : []
+    const images = await Promise.all(urls.map((u) => embedImage(u, signal)))
+    const res = await askClef(state, c.questions!, { images, signal })
+    answers = res.answers
+    model = res.model
+    inputTokens = res.inputTokens
+  }
+
+  let topSignal: string | null = null
+  let topScore = 0
+  for (const [name, sig] of Object.entries(answers)) {
+    if (sig.score > topScore) {
+      topScore = sig.score
+      topSignal = name
+    }
+  }
+
+  await upsertClassification({
+    subjectUri: subject.uri,
+    subjectDid: subject.did,
+    classifier: c.name,
+    signals: answers,
+    state,
+    topSignal,
+    topScore,
+    fingerprint,
+    model,
+  })
+
+  // File on the highest-scoring signal that crosses its own threshold — a
+  // second report for the same subject would only split the review.
+  let crossing: { signal: string; score: number } | null = null
+  for (const [name, sig] of Object.entries(answers)) {
+    const t = thresholdFor(c, name)
+    if (t != null && sig.score >= t && (!crossing || sig.score > crossing.score)) {
+      crossing = { signal: name, score: sig.score }
+    }
+  }
+  let filed = false
+  if (crossing) {
+    const label = labelFor(c, crossing.signal, crossing.score)
+    if (!(await findOpenReport(subject.uri, label))) {
+      await insertReport({
+        subjectUri: subject.uri,
+        subjectDid: subject.did,
+        label,
+        reason: `${c.name}: ${crossing.signal} ${crossing.score.toFixed(2)}`,
+        reportedBy: `system:${c.name}`,
+      })
+      filed = true
+    }
+  }
+  return { outcome: 'scored', filed, inputTokens }
 }
 
 let current: ScanProgress | null = null
@@ -508,15 +611,7 @@ export async function runScan(
     for (const c of selected) {
       const subjects = await enumerateSubjects(c, opts.since)
       const seen = opts.force ? new Map<string, string>() : await getClassificationFingerprints(c.name)
-      // The questions are part of what produced a score, so the fingerprint
-      // covers them as well as the state: rewording a classifier's criteria,
-      // or changing which images it sends, invalidates every score written
-      // under the old version.
-      const questionsHash = createHash('sha256')
-        .update(JSON.stringify(c.questions ?? c.classify?.toString() ?? ''))
-        .update(c.images?.toString() ?? '')
-        .digest('hex')
-        .slice(0, 16)
+      const hash = classifierHash(c)
       const queue = opts.limit ? subjects.slice(0, opts.limit) : subjects
       const concurrency = opts.concurrency ?? 8
 
@@ -527,82 +622,14 @@ export async function runScan(
           const subject = queue[cursor++]
           progress.scanned++
           try {
-            const state = await c.buildState({ db: dbCtx, subject })
-            if (!state) {
+            const res = await scoreSubject(c, subject, hash, seen.get(subject.uri), opts.signal)
+            if (res.outcome === 'skipped') {
               progress.skipped++
               continue
             }
-            const fingerprint = createHash('sha256')
-              .update(questionsHash)
-              .update(JSON.stringify(state))
-              .digest('hex')
-              .slice(0, 32)
-            if (seen.get(subject.uri) === fingerprint) {
-              progress.skipped++
-              continue
-            }
-
-            let answers: Record<string, Signal>
-            let model: string
-            if (c.classify) {
-              const raw = await c.classify(state, { db: dbCtx, subject })
-              answers = Object.fromEntries(
-                Object.entries(raw).map(([k, v]) => [k, typeof v === 'number' ? { score: v, type: 'local' } : v]),
-              )
-              model = `local:${c.name}`
-            } else {
-              const urls = c.images ? (await c.images(state, { db: dbCtx, subject })).slice(0, MAX_IMAGES) : []
-              const images = await Promise.all(urls.map((u) => embedImage(u, opts.signal)))
-              const res = await askClef(state, c.questions!, { images, signal: opts.signal })
-              answers = res.answers
-              model = res.model
-              progress.inputTokens += res.inputTokens
-            }
-
-            let topSignal: string | null = null
-            let topScore = 0
-            for (const [name, sig] of Object.entries(answers)) {
-              if (sig.score > topScore) {
-                topScore = sig.score
-                topSignal = name
-              }
-            }
-
-            await upsertClassification({
-              subjectUri: subject.uri,
-              subjectDid: subject.did,
-              classifier: c.name,
-              signals: answers,
-              state,
-              topSignal,
-              topScore,
-              fingerprint,
-              model,
-            })
             progress.scored++
-
-            // File on the highest-scoring signal that crosses its own threshold —
-            // a second report for the same subject would only split the review.
-            let crossing: { signal: string; score: number } | null = null
-            for (const [name, sig] of Object.entries(answers)) {
-              const t = thresholdFor(c, name)
-              if (t != null && sig.score >= t && (!crossing || sig.score > crossing.score)) {
-                crossing = { signal: name, score: sig.score }
-              }
-            }
-            if (crossing) {
-              const label = labelFor(c, crossing.signal, crossing.score)
-              if (!(await findOpenReport(subject.uri, label))) {
-                await insertReport({
-                  subjectUri: subject.uri,
-                  subjectDid: subject.did,
-                  label,
-                  reason: `${c.name}: ${crossing.signal} ${crossing.score.toFixed(2)}`,
-                  reportedBy: `system:${c.name}`,
-                })
-                progress.filed++
-              }
-            }
+            progress.inputTokens += res.inputTokens
+            if (res.filed) progress.filed++
           } catch (err: any) {
             if (err?.name === 'AbortError') return
             progress.errors++
@@ -631,39 +658,176 @@ export async function runScan(
   return progress
 }
 
-// ── Scheduled scans ────────────────────────────────────────────────────────
+// ── Scoring on index ───────────────────────────────────────────────────────
 
-/** Where the scheduled scans' starting point is kept, so a restart keeps it. */
+/** Where scoring's starting point is kept, so a restart keeps it. */
 const SINCE_CURSOR = 'classifiers:since'
 
-let schedule: ReturnType<typeof setInterval> | null = null
+/**
+ * How long an account waits after its last write before it is scored. An import
+ * writes hundreds of photos in a row, and an account's state counts them, so
+ * scoring on every write would ask the model once per photo; waiting for the
+ * account to settle asks once.
+ */
+const ACCOUNT_SETTLE_MS = 60_000
+const LIVE_CONCURRENCY = 4
+const MAX_ATTEMPTS = 5
+
+interface Pending {
+  classifier: LoadedClassifier
+  /** For a record, its collection; the row is read when the item is scored. */
+  collection?: string
+  uri: string
+  did: string
+  attempts: number
+}
+
+let since: string | null = null
+const pending = new Map<string, Pending>()
+const settling = new Map<string, ReturnType<typeof setTimeout>>()
+let inFlight = 0
 
 /**
- * Score new content on a timer, from the moment scheduling was first switched
- * on. What existed before then is never scored by the timer — a full pass over
- * the existing library is a deliberate, manual scan from /admin.
+ * Score new content as it is indexed, from the moment this was first switched
+ * on. What existed before then is never scored here — a pass over the existing
+ * library is a deliberate, manual scan from /admin.
  *
- * Each pass enumerates everything new since that moment, and the fingerprint
- * skips what has already been scored, so only content that is new or changed
- * since the last pass costs a model call. A pass still running when the next is
- * due is left to finish; so is a manual scan.
+ * Starts with one catch-up pass over everything new since that moment, which
+ * picks up what a restart dropped from the queue; anything already scored is
+ * skipped on its fingerprint before it costs a model call.
  */
-export async function startScheduledScans(intervalSeconds: number): Promise<void> {
-  stopScheduledScans()
-  let since = await getCursor(SINCE_CURSOR)
+export async function startScoringOnIndex(): Promise<void> {
+  since = await getCursor(SINCE_CURSOR)
   if (!since) {
     since = new Date().toISOString()
     await setCursor(SINCE_CURSOR, since)
   }
-  log(`[classifiers] scanning every ${intervalSeconds}s, for content new since ${since}`)
-  schedule = setInterval(() => {
-    if (current?.running || !classifiers.length) return
-    runScan({ since: since! }).catch((err) => emit('classifiers', 'scheduled_scan_error', { error: err.message }))
-  }, intervalSeconds * 1000)
-  schedule.unref?.()
+  log(`[classifiers] scoring on index, for content new since ${since}`)
+  runScan({ since }).catch((err) => emit('classifiers', 'catch_up_error', { error: err.message }))
 }
 
-export function stopScheduledScans(): void {
-  if (schedule) clearInterval(schedule)
-  schedule = null
+export function stopScoringOnIndex(): void {
+  since = null
+  pending.clear()
+  for (const t of settling.values()) clearTimeout(t)
+  settling.clear()
+}
+
+/**
+ * Called by the indexer with each batch it applied. Queues every new record for
+ * the record classifiers that cover its collection, and its author for the
+ * account classifiers once the author has settled. Returns immediately: the
+ * indexer never waits on a model.
+ */
+export function noteIndexed(
+  items: Array<{ action: 'create' | 'delete'; collection: string; uri: string; authorDid: string }>,
+): void {
+  if (!since || !classifiers.length) return
+  for (const item of items) {
+    if (item.action !== 'create' || !isNewSince(item.uri, since)) continue
+    for (const c of classifiers) {
+      if (c.subject === 'record' && c.collections?.includes(item.collection)) {
+        enqueue({ classifier: c, collection: item.collection, uri: item.uri, did: item.authorDid, attempts: 0 })
+      }
+    }
+    if (!classifiers.some((c) => c.subject === 'account')) continue
+    clearTimeout(settling.get(item.authorDid))
+    const did = item.authorDid
+    const timer = setTimeout(() => {
+      settling.delete(did)
+      for (const c of classifiers) {
+        if (c.subject === 'account') enqueue({ classifier: c, uri: did, did, attempts: 0 })
+      }
+    }, ACCOUNT_SETTLE_MS)
+    timer.unref?.()
+    settling.set(did, timer)
+  }
+}
+
+/**
+ * Called by the indexer when a repo backfill lands. Its rows were written
+ * without passing through {@link noteIndexed} — a new account's first posts
+ * arrive this way — so queue whatever in it is new.
+ */
+export function noteBackfilled(did: string): void {
+  if (!since || !classifiers.length) return
+  const from = since
+  void (async () => {
+    const items: Parameters<typeof noteIndexed>[0] = []
+    // Every collection, not only the record classifiers': a write anywhere is
+    // what queues the account for the account classifiers.
+    for (const schema of listSchemas()) {
+      const collection = schema.collection
+      const rows = (await querySQL(`SELECT uri FROM ${schema.tableName} WHERE did = $1 AND space IS NULL`, [did])) as {
+        uri: string
+      }[]
+      for (const r of rows)
+        if (isNewSince(r.uri, from)) items.push({ action: 'create', collection, uri: r.uri, authorDid: did })
+    }
+    noteIndexed(items)
+  })().catch((err) => emit('classifiers', 'backfill_queue_error', { did, error: err.message }))
+}
+
+function enqueue(item: Pending): void {
+  pending.set(`${item.classifier.name}|${item.uri}`, item)
+  pump()
+}
+
+function pump(): void {
+  while (inFlight < LIVE_CONCURRENCY && pending.size) {
+    const [key, item] = pending.entries().next().value as [string, Pending]
+    pending.delete(key)
+    inFlight++
+    scorePending(item)
+      .catch((err) => {
+        item.attempts++
+        if (item.attempts >= MAX_ATTEMPTS || !since) {
+          emit('classifiers', 'live_dropped', {
+            classifier: item.classifier.name,
+            subject: item.uri,
+            error: err.message,
+          })
+          return
+        }
+        const retry = setTimeout(() => enqueue(item), 2 ** item.attempts * 5_000)
+        retry.unref?.()
+      })
+      .finally(() => {
+        inFlight--
+        pump()
+      })
+  }
+}
+
+/** Read the subject as it stands now, and score it if it is still in scope. */
+async function scorePending(item: Pending): Promise<void> {
+  const c = item.classifier
+  let subject: ClassifierSubject
+  if (item.collection) {
+    const schema = getSchema(item.collection)
+    if (!schema) return
+    const [row] = (await querySQL(
+      `SELECT t.* FROM ${schema.tableName} t
+         JOIN _repos r ON r.did = t.did AND r.status = 'active'
+        WHERE t.uri = $1 AND t.space IS NULL`,
+      [item.uri],
+    )) as Record<string, any>[]
+    // Deleted, taken down, or in a space since it was queued.
+    if (!row) return
+    subject = { uri: row.uri, did: row.did, collection: item.collection, value: rowValue(schema, row) }
+  } else {
+    const [repo] = (await querySQL(`SELECT did, handle FROM _repos WHERE did = $1 AND status = 'active'`, [
+      item.did,
+    ])) as { did: string; handle: string | null }[]
+    if (!repo) return
+    subject = { uri: repo.did, did: repo.did, handle: repo.handle }
+  }
+
+  const res = await scoreSubject(c, subject, classifierHash(c), await getClassificationFingerprint(c.name, subject.uri))
+  if (res.outcome === 'scored' && res.filed) log(`[classifiers] ${c.name} filed a report on ${subject.uri}`)
+}
+
+/** Items waiting to be scored, for tests and the admin view. */
+export function pendingCount(): number {
+  return pending.size + inFlight
 }

@@ -2230,6 +2230,18 @@ export async function getClassificationFingerprints(classifier: string): Promise
   return new Map(rows.map((r) => [r.subject_uri, r.fingerprint]))
 }
 
+/** The stored fingerprint for one subject under one classifier, if it was scored. */
+export async function getClassificationFingerprint(
+  classifier: string,
+  subjectUri: string,
+): Promise<string | undefined> {
+  const rows = await all<{ fingerprint: string }>(
+    `SELECT fingerprint FROM _classifications WHERE classifier = $1 AND subject_uri = $2`,
+    [classifier, subjectUri],
+  )
+  return rows[0]?.fingerprint
+}
+
 /** An open report already filed against this subject with this label, if any. */
 export async function findOpenReport(subjectUri: string, label: string): Promise<number | null> {
   const rows = await all<{ id: number }>(

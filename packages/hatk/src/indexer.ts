@@ -22,6 +22,7 @@ import { rebuildAllIndexes } from './database/fts.ts'
 import { log, emit, timer } from './logger.ts'
 import { runLabelRules } from './labels.ts'
 import { fireOnCommitHooks } from './hooks.ts'
+import { noteIndexed, noteBackfilled } from './classifiers.ts'
 import { getLexiconArray } from './database/schema.ts'
 import { validateRecord } from '@bigmoves/lexicon'
 
@@ -173,6 +174,8 @@ async function flushBuffer(): Promise<void> {
   // Fire on-commit hooks for everything the batch applied, in the order it was
   // applied (async, non-blocking)
   fireOnCommitHooks(applied)
+  // Queue what is new for the classifiers (non-blocking: never waits on a model)
+  noteIndexed(applied)
 
   // Aggregate collection counts and unique DIDs for wide event
   const collections: Record<string, number> = {}
@@ -479,6 +482,9 @@ export async function triggerAutoBackfill(did: string, attempt = 0): Promise<voi
       replayErrors++
     }
   }
+  // The writes above, and the repo export before them, skipped the flush the
+  // classifiers listen on. An account's first posts land here, so queue them.
+  if (status === 'success') noteBackfilled(did)
 
   // Schedule retry if failed and under maxRetries
   const retryInfo = status === 'error' ? await getRepoRetryInfo(did) : null

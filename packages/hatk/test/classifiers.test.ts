@@ -8,8 +8,11 @@ import {
   runScan,
   getScanProgress,
   tidTime,
-  startScheduledScans,
-  stopScheduledScans,
+  startScoringOnIndex,
+  stopScoringOnIndex,
+  noteIndexed,
+  noteBackfilled,
+  pendingCount,
 } from '../src/classifiers.ts'
 import {
   getRepoStatus,
@@ -399,17 +402,146 @@ test('a scan since a moment covers records written after it, not ones merely re-
   await runSQL(`DELETE FROM "${PUBLIC_COLLECTION}"`)
 })
 
-test('scheduled scans start from when they were first switched on, across restarts', async () => {
+/** Wait for the boot catch-up pass and the index-time queue to go quiet. */
+async function settled() {
+  for (let i = 0; i < 200; i++) {
+    if (!getScanProgress()?.running && pendingCount() === 0) return
+    await new Promise((r) => setTimeout(r, 10))
+  }
+  throw new Error('classifiers never settled')
+}
+
+test('scoring on index starts from when it was first switched on, across restarts', async () => {
+  vi.stubGlobal('fetch', mockModel({}))
   await runSQL(`DELETE FROM _cursor WHERE key = 'classifiers:since'`)
-  await startScheduledScans(3600)
+  await startScoringOnIndex()
   const first = await getCursor('classifiers:since')
   expect(first).toBeTruthy()
-  stopScheduledScans()
+  await settled()
+  stopScoringOnIndex()
 
   await new Promise((r) => setTimeout(r, 5))
-  await startScheduledScans(3600)
+  await startScoringOnIndex()
   expect(await getCursor('classifiers:since')).toBe(first)
-  stopScheduledScans()
+  await settled()
+  stopScoringOnIndex()
+})
+
+test('a record is scored as it is indexed; a re-indexed old one and a delete are not', async () => {
+  registerClassifier('records', {
+    subject: 'record',
+    collections: [PUBLIC_COLLECTION],
+    label: 'spam',
+    threshold: 0.5,
+    questions: { looks_like_spam: { type: 'noul', instructions: 'Is this spam?' } },
+    async buildState({ subject }) {
+      return { text: subject.value?.text }
+    },
+  })
+  const asked: string[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url: string, init: any) => {
+      asked.push(JSON.parse(init.body).state.text)
+      return clefResponse({ answers: { looks_like_spam: { type: 'noul', noul: 0.9 } }, usage: {} })
+    }),
+  )
+  await runSQL(`DELETE FROM _cursor WHERE key = 'classifiers:since'`)
+  await startScoringOnIndex()
+  await settled()
+
+  const fresh = tidAt(new Date(Date.now() + 1000))
+  const old = tidAt(new Date('2025-01-01T00:00:00Z'))
+  const uri = (k: string) => `at://${REGULAR}/${PUBLIC_COLLECTION}/${k}`
+  for (const k of [fresh, old]) {
+    await insertRecord(PUBLIC_COLLECTION, uri(k), `cid-${k}`, REGULAR, { $type: PUBLIC_COLLECTION, text: k })
+  }
+  noteIndexed([
+    { action: 'create', collection: PUBLIC_COLLECTION, uri: uri(fresh), authorDid: REGULAR },
+    { action: 'create', collection: PUBLIC_COLLECTION, uri: uri(old), authorDid: REGULAR },
+    { action: 'delete', collection: PUBLIC_COLLECTION, uri: uri('gone'), authorDid: REGULAR },
+  ])
+  await settled()
+
+  expect(asked).toEqual([fresh])
+  const { reports } = await queryReports({ status: 'open' })
+  expect(reports.map((r: any) => r.subject_uri)).toEqual([uri(fresh)])
+  stopScoringOnIndex()
+  await runSQL(`DELETE FROM "${PUBLIC_COLLECTION}"`)
+})
+
+test('a new account’s posts are scored when its backfill lands', async () => {
+  registerClassifier('records', {
+    subject: 'record',
+    collections: [PUBLIC_COLLECTION],
+    questions: { looks_like_spam: { type: 'noul', instructions: 'Is this spam?' } },
+    async buildState({ subject }) {
+      return { text: subject.value?.text }
+    },
+  })
+  const asked: string[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url: string, init: any) => {
+      asked.push(JSON.parse(init.body).state.text)
+      return clefResponse({ answers: { looks_like_spam: { type: 'noul', noul: 0.1 } }, usage: {} })
+    }),
+  )
+  await runSQL(`DELETE FROM _cursor WHERE key = 'classifiers:since'`)
+  await startScoringOnIndex()
+  await settled()
+
+  // Written straight to the table, as a backfill does, with no noteIndexed.
+  const fresh = tidAt(new Date(Date.now() + 1000))
+  const old = tidAt(new Date('2025-01-01T00:00:00Z'))
+  for (const k of [fresh, old]) {
+    await insertRecord(PUBLIC_COLLECTION, `at://${REGULAR}/${PUBLIC_COLLECTION}/${k}`, `cid-${k}`, REGULAR, {
+      $type: PUBLIC_COLLECTION,
+      text: k,
+    })
+  }
+  noteBackfilled(REGULAR)
+  await new Promise((r) => setTimeout(r, 20))
+  await settled()
+
+  expect(asked).toEqual([fresh])
+  stopScoringOnIndex()
+  await runSQL(`DELETE FROM "${PUBLIC_COLLECTION}"`)
+})
+
+test('an account is scored once its writes settle, not once per write', async () => {
+  spamClassifier()
+  const model = mockModel({ 'regular.test': 0.1 })
+  vi.stubGlobal('fetch', model)
+  await runSQL(`DELETE FROM _cursor WHERE key = 'classifiers:since'`)
+  await startScoringOnIndex()
+  await settled()
+  model.mockClear()
+
+  vi.useFakeTimers()
+  try {
+    for (let i = 0; i < 3; i++) {
+      const k = tidAt(new Date(Date.now() + 1000 + i))
+      noteIndexed([
+        {
+          action: 'create',
+          collection: PUBLIC_COLLECTION,
+          uri: `at://${REGULAR}/${PUBLIC_COLLECTION}/${k}`,
+          authorDid: REGULAR,
+        },
+      ])
+      await vi.advanceTimersByTimeAsync(10_000)
+    }
+    expect(model).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(60_000)
+  } finally {
+    vi.useRealTimers()
+  }
+  await settled()
+
+  expect(model).toHaveBeenCalledTimes(1)
+  expect(JSON.parse(model.mock.calls[0][1].body).state.handle).toBe('regular.test')
+  stopScoringOnIndex()
 })
 
 test('review endpoints are gated like the rest of /admin', async () => {
