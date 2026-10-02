@@ -381,7 +381,14 @@ async function enumerateSubjects(c: LoadedClassifier): Promise<ClassifierSubject
   for (const collection of c.collections ?? []) {
     const schema = getSchema(collection)
     if (!schema) continue
-    const rows = (await querySQL(`SELECT * FROM ${schema.tableName}`)) as Record<string, any>[]
+    // The same population as an account scan: active repos only, so content an
+    // administrator already took down is not filed again. Space rows are left
+    // out entirely; they are members' permissioned data, not public posts.
+    const rows = (await querySQL(
+      `SELECT t.* FROM ${schema.tableName} t
+         JOIN _repos r ON r.did = t.did AND r.status = 'active'
+        WHERE t.space IS NULL`,
+    )) as Record<string, any>[]
     for (const row of rows) {
       const value: Record<string, any> = {}
       for (const col of schema.columns) {

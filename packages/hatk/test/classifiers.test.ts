@@ -2,7 +2,14 @@ import { afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest'
 import sharp from 'sharp'
 import { createHandler } from '../src/server.ts'
 import { clearClassifiers, configureClef, registerClassifier, runScan, getScanProgress } from '../src/classifiers.ts'
-import { getRepoStatus, queryReports, runSQL, setRepoStatus, queryClassifications } from '../src/database/db.ts'
+import {
+  getRepoStatus,
+  insertRecord,
+  queryReports,
+  runSQL,
+  setRepoStatus,
+  queryClassifications,
+} from '../src/database/db.ts'
 import { setupFixtureDatabase, PUBLIC_COLLECTION, PRIVATE_COLLECTION } from './fixture.ts'
 
 // A classifier turns a model's probabilities into review queue entries. Nothing
@@ -281,6 +288,41 @@ test('a model error reported inside a successful response is counted, not stored
   const progress = await runScan({ concurrency: 1 })
   expect(progress.errors).toBe(4)
   expect(progress.scored).toBe(0)
+})
+
+test('a record scan covers public records from active repos only', async () => {
+  const rec = (did: string, key: string) =>
+    insertRecord(PUBLIC_COLLECTION, `at://${did}/${PUBLIC_COLLECTION}/${key}`, `cid-${key}`, did, {
+      $type: PUBLIC_COLLECTION,
+      text: key,
+    })
+  await rec(REGULAR, 'kept')
+  await rec(SPAMMER, 'takendown')
+  await rec(REGULAR, 'inspace')
+  await runSQL(`UPDATE "${PUBLIC_COLLECTION}" SET space = 'ats://did:plc:owner/space/1' WHERE uri LIKE '%/inspace'`)
+  await setRepoStatus(SPAMMER, 'takendown')
+
+  registerClassifier('records', {
+    subject: 'record',
+    collections: [PUBLIC_COLLECTION],
+    threshold: 0.5,
+    questions: { looks_like_spam: { type: 'noul', instructions: 'Is this spam?' } },
+    async buildState({ subject }) {
+      return { text: subject.value?.text }
+    },
+  })
+  const asked: string[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url: string, init: any) => {
+      asked.push(JSON.parse(init.body).state.text)
+      return clefResponse({ answers: { looks_like_spam: { type: 'noul', noul: 0.9 } }, usage: {} })
+    }),
+  )
+
+  await runScan({})
+  expect(asked).toEqual(['kept'])
+  await runSQL(`DELETE FROM "${PUBLIC_COLLECTION}"`)
 })
 
 test('review endpoints are gated like the rest of /admin', async () => {
