@@ -39,6 +39,9 @@ import {
   querySQL,
   runSQL,
   getSchema,
+  listSchemas,
+  getCursor,
+  setCursor,
   upsertClassification,
   getClassificationFingerprints,
   findOpenReport,
@@ -368,13 +371,60 @@ const dbCtx = {
 }
 
 /** Every subject a classifier applies to, as `{uri, did, handle, value}`. */
-async function enumerateSubjects(c: LoadedClassifier): Promise<ClassifierSubject[]> {
+const TID_CHARS = '234567abcdefghijklmnopqrstuvwxyz'
+
+/** When a TID record key was minted, or null if the key is not a TID. */
+export function tidTime(rkey: string): Date | null {
+  if (rkey.length !== 13) return null
+  let n = 0n
+  for (const ch of rkey) {
+    const i = TID_CHARS.indexOf(ch)
+    if (i < 0) return null
+    n = n * 32n + BigInt(i)
+  }
+  return new Date(Number(n >> 10n) / 1000)
+}
+
+/**
+ * Whether a row is new since `since`: written into its repo after then, not
+ * merely indexed after then.
+ *
+ * Index time alone is not enough. A repo backfilled again rewrites every row
+ * with a fresh `indexed_at`, so old content would read as new. `createdAt` is no
+ * better: an import of an old archive carries the photos' original dates. The
+ * record key is minted when the record is written, so for a TID key that is the
+ * answer; a key that is not a TID (`self`) falls back to the index time the
+ * caller has already filtered on.
+ */
+function isNewSince(uri: string, since: string): boolean {
+  const t = tidTime(uri.slice(uri.lastIndexOf('/') + 1))
+  return t === null || t.toISOString() >= since
+}
+
+/** Active DIDs with any public record new since `since`, in any collection. */
+async function activeSince(since: string): Promise<Set<string>> {
+  const dids = new Set<string>()
+  for (const schema of listSchemas()) {
+    const rows = (await querySQL(`SELECT uri, did FROM ${schema.tableName} WHERE indexed_at >= $1 AND space IS NULL`, [
+      since,
+    ])) as { uri: string; did: string }[]
+    for (const r of rows) if (isNewSince(r.uri, since)) dids.add(r.did)
+  }
+  return dids
+}
+
+/**
+ * Every subject a classifier applies to. With `since`, only what is new after
+ * it: records written after then, and accounts that wrote one.
+ */
+async function enumerateSubjects(c: LoadedClassifier, since?: string): Promise<ClassifierSubject[]> {
   if (c.subject === 'account') {
     const rows = (await querySQL(`SELECT did, handle FROM _repos WHERE status = 'active'`)) as {
       did: string
       handle: string | null
     }[]
-    return rows.map((r) => ({ uri: r.did, did: r.did, handle: r.handle }))
+    const recent = since ? await activeSince(since) : null
+    return rows.filter((r) => !recent || recent.has(r.did)).map((r) => ({ uri: r.did, did: r.did, handle: r.handle }))
   }
 
   const out: ClassifierSubject[] = []
@@ -387,9 +437,11 @@ async function enumerateSubjects(c: LoadedClassifier): Promise<ClassifierSubject
     const rows = (await querySQL(
       `SELECT t.* FROM ${schema.tableName} t
          JOIN _repos r ON r.did = t.did AND r.status = 'active'
-        WHERE t.space IS NULL`,
+        WHERE t.space IS NULL${since ? ' AND t.indexed_at >= $1' : ''}`,
+      since ? [since] : [],
     )) as Record<string, any>[]
     for (const row of rows) {
+      if (since && !isNewSince(row.uri, since)) continue
       const value: Record<string, any> = {}
       for (const col of schema.columns) {
         let v = row[col.name]
@@ -428,6 +480,8 @@ export async function runScan(
     limit?: number
     concurrency?: number
     signal?: AbortSignal
+    /** Only subjects new after this ISO time; see {@link enumerateSubjects}. */
+    since?: string
   } = {},
 ): Promise<ScanProgress> {
   if (current?.running) throw new Error('A scan is already running')
@@ -452,7 +506,7 @@ export async function runScan(
 
   try {
     for (const c of selected) {
-      const subjects = await enumerateSubjects(c)
+      const subjects = await enumerateSubjects(c, opts.since)
       const seen = opts.force ? new Map<string, string>() : await getClassificationFingerprints(c.name)
       // The questions are part of what produced a score, so the fingerprint
       // covers them as well as the state: rewording a classifier's criteria,
@@ -565,11 +619,51 @@ export async function runScan(
   } finally {
     progress.running = false
     progress.finishedAt = new Date().toISOString()
-    log(
-      `[classifiers] scan: ${progress.scored} scored, ${progress.skipped} skipped, ` +
-        `${progress.filed} filed, ${progress.errors} errors, ${progress.inputTokens} tokens`,
-    )
+    // A scheduled pass that found nothing new is the common case, every few
+    // minutes; only a pass that did something is worth a line.
+    if (!opts.since || progress.scored || progress.errors)
+      log(
+        `[classifiers] scan: ${progress.scored} scored, ${progress.skipped} skipped, ` +
+          `${progress.filed} filed, ${progress.errors} errors, ${progress.inputTokens} tokens`,
+      )
   }
 
   return progress
+}
+
+// ── Scheduled scans ────────────────────────────────────────────────────────
+
+/** Where the scheduled scans' starting point is kept, so a restart keeps it. */
+const SINCE_CURSOR = 'classifiers:since'
+
+let schedule: ReturnType<typeof setInterval> | null = null
+
+/**
+ * Score new content on a timer, from the moment scheduling was first switched
+ * on. What existed before then is never scored by the timer — a full pass over
+ * the existing library is a deliberate, manual scan from /admin.
+ *
+ * Each pass enumerates everything new since that moment, and the fingerprint
+ * skips what has already been scored, so only content that is new or changed
+ * since the last pass costs a model call. A pass still running when the next is
+ * due is left to finish; so is a manual scan.
+ */
+export async function startScheduledScans(intervalSeconds: number): Promise<void> {
+  stopScheduledScans()
+  let since = await getCursor(SINCE_CURSOR)
+  if (!since) {
+    since = new Date().toISOString()
+    await setCursor(SINCE_CURSOR, since)
+  }
+  log(`[classifiers] scanning every ${intervalSeconds}s, for content new since ${since}`)
+  schedule = setInterval(() => {
+    if (current?.running || !classifiers.length) return
+    runScan({ since: since! }).catch((err) => emit('classifiers', 'scheduled_scan_error', { error: err.message }))
+  }, intervalSeconds * 1000)
+  schedule.unref?.()
+}
+
+export function stopScheduledScans(): void {
+  if (schedule) clearInterval(schedule)
+  schedule = null
 }

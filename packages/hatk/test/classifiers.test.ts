@@ -1,9 +1,19 @@
 import { afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest'
 import sharp from 'sharp'
 import { createHandler } from '../src/server.ts'
-import { clearClassifiers, configureClef, registerClassifier, runScan, getScanProgress } from '../src/classifiers.ts'
+import {
+  clearClassifiers,
+  configureClef,
+  registerClassifier,
+  runScan,
+  getScanProgress,
+  tidTime,
+  startScheduledScans,
+  stopScheduledScans,
+} from '../src/classifiers.ts'
 import {
   getRepoStatus,
+  getCursor,
   insertRecord,
   queryReports,
   runSQL,
@@ -323,6 +333,83 @@ test('a record scan covers public records from active repos only', async () => {
   await runScan({})
   expect(asked).toEqual(['kept'])
   await runSQL(`DELETE FROM "${PUBLIC_COLLECTION}"`)
+})
+
+/** A TID record key minted at `at`, as a client creating a record would. */
+function tidAt(at: Date): string {
+  const chars = '234567abcdefghijklmnopqrstuvwxyz'
+  let n = BigInt(at.getTime()) * 1000n * 1024n
+  let out = ''
+  for (let i = 0; i < 13; i++) {
+    out = chars[Number(n % 32n)] + out
+    n /= 32n
+  }
+  return out
+}
+
+test('a TID record key reads back as the moment it was minted', () => {
+  const at = new Date('2026-10-02T21:39:32.000Z')
+  expect(tidTime(tidAt(at))?.toISOString()).toBe(at.toISOString())
+  expect(tidTime('self')).toBeNull()
+  expect(tidTime('3mwnsasw3witw')?.getUTCFullYear()).toBe(2026)
+})
+
+test('a scan since a moment covers records written after it, not ones merely re-indexed', async () => {
+  const since = new Date('2026-10-01T00:00:00Z')
+  const rec = (did: string, rkey: string) =>
+    insertRecord(PUBLIC_COLLECTION, `at://${did}/${PUBLIC_COLLECTION}/${rkey}`, `cid-${rkey}`, did, {
+      $type: PUBLIC_COLLECTION,
+      text: rkey,
+    })
+  // All three are indexed now. Only the key says which were written before.
+  const fresh = tidAt(new Date('2026-10-02T12:00:00Z'))
+  const reindexed = tidAt(new Date('2025-01-01T00:00:00Z'))
+  await rec(REGULAR, fresh)
+  await rec(REGULAR, reindexed)
+  await rec(ADMIN, 'self')
+
+  registerClassifier('records', {
+    subject: 'record',
+    collections: [PUBLIC_COLLECTION],
+    questions: { looks_like_spam: { type: 'noul', instructions: 'Is this spam?' } },
+    async buildState({ subject }) {
+      return { text: subject.value?.text }
+    },
+  })
+  registerClassifier('accounts', {
+    subject: 'account',
+    questions: { looks_like_spam: { type: 'noul', instructions: 'Is this spam?' } },
+    async buildState({ subject }) {
+      return { handle: subject.handle }
+    },
+  })
+  const asked: string[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url: string, init: any) => {
+      const state = JSON.parse(init.body).state
+      asked.push(state.text ?? state.handle)
+      return clefResponse({ answers: { looks_like_spam: { type: 'noul', noul: 0.1 } }, usage: {} })
+    }),
+  )
+
+  await runScan({ since: since.toISOString() })
+  // The re-indexed record is left out, and so is SPAMMER, who wrote nothing.
+  expect(asked.sort()).toEqual([fresh, 'admin.test', 'regular.test', 'self'].sort())
+  await runSQL(`DELETE FROM "${PUBLIC_COLLECTION}"`)
+})
+
+test('scheduled scans start from when they were first switched on, across restarts', async () => {
+  await runSQL(`DELETE FROM _cursor WHERE key = 'classifiers:since'`)
+  await startScheduledScans(3600)
+  const first = await getCursor('classifiers:since')
+  expect(first).toBeTruthy()
+  stopScheduledScans()
+
+  await new Promise((r) => setTimeout(r, 5))
+  await startScheduledScans(3600)
+  expect(await getCursor('classifiers:since')).toBe(first)
+  stopScheduledScans()
 })
 
 test('review endpoints are gated like the rest of /admin', async () => {

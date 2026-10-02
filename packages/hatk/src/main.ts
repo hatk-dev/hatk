@@ -20,7 +20,7 @@ import { initFeeds, listFeeds } from './feeds.ts'
 import { initXrpc, listXrpc, configureRelay, configureCdn, configureOAuth, callXrpc } from './xrpc.ts'
 import { initOpengraph } from './opengraph.ts'
 import { initLabels, getLabelDefinitions } from './labels.ts'
-import { initClassifiers, listClassifiers, configureClef } from './classifiers.ts'
+import { initClassifiers, listClassifiers, configureClef, startScheduledScans } from './classifiers.ts'
 import { auxCursorKey, jetstreamCursorKey, startAuxIndexer, startIndexer, sweepReferences } from './indexer.ts'
 import { startJetstreamIndexer } from './jetstream.ts'
 import { rebuildAllIndexes } from './database/fts.ts'
@@ -138,6 +138,7 @@ configureClef(
     endpoint: `https://api.cloudflare.com/client/v4/accounts/${config.clef.accountId}/ai/run/@cf/cloudflare/${config.clef.model}`,
   },
 )
+if (config.clef?.scanInterval && listClassifiers().length) await startScheduledScans(config.clef.scanInterval)
 setPrivateCollections(config.privateCollections)
 registerCoreHandlers(collections, config.oauth)
 configureOAuth(config.oauth)

@@ -1729,6 +1729,11 @@ export function getSchema(collection: string): TableSchema | undefined {
   return schemas.get(collection)
 }
 
+/** Every registered collection's table schema. */
+export function listSchemas(): TableSchema[] {
+  return [...schemas.values()]
+}
+
 export async function countByField(collection: string, field: string, value: string): Promise<number> {
   const schema = schemas.get(collection)
   if (!schema) return 0

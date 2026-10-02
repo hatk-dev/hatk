@@ -203,6 +203,12 @@ export interface ClefConfig {
   apiToken: string
   /** `clef` or `clef-flash`. Thresholds tuned on one do not carry to the other. */
   model: 'clef' | 'clef-flash'
+  /**
+   * Seconds between scheduled scans, or null for none. Scheduled scans score
+   * only content new since scheduling was first switched on; the library that
+   * existed before then is left to a manual scan.
+   */
+  scanInterval: number | null
 }
 
 /** Input type for defineConfig — fields that have defaults are optional. */
@@ -290,7 +296,13 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
       const accountId = env.CLOUDFLARE_ACCOUNT_ID || raw?.accountId
       const apiToken = env.CLOUDFLARE_AI_TOKEN || raw?.apiToken
       if (!accountId || !apiToken) return null
-      return { accountId, apiToken, model: (env.CLEF_MODEL as ClefConfig['model']) || raw?.model || 'clef' }
+      const interval = parseInt(env.CLEF_SCAN_INTERVAL || '') || raw?.scanInterval || null
+      return {
+        accountId,
+        apiToken,
+        model: (env.CLEF_MODEL as ClefConfig['model']) || raw?.model || 'clef',
+        scanInterval: interval && interval > 0 ? interval : null,
+      }
     })(),
     spaces: parsed.spaces
       ? {
