@@ -186,6 +186,7 @@ export interface HatkConfig {
   oauth: OAuthConfig | null
   push: PushConfig | null // push notification delivery (null to disable)
   admins: string[] // DIDs allowed to access /admin/* endpoints
+  adminToken: { token: string; actor: string } | null // a service's way into /admin (null to disable)
   spaces: SpacesConfig | null // permissioned-space indexing (null to disable)
   clef: ClefConfig | null // Clef on Workers AI for classifiers (null to disable)
 }
@@ -213,7 +214,7 @@ export interface ClefConfig {
 
 /** Input type for defineConfig — fields that have defaults are optional. */
 export type HatkConfigInput = Partial<
-  Omit<HatkConfig, 'oauth' | 'backfill' | 'push' | 'cdn' | 'jetstream' | 'spaces' | 'clef'>
+  Omit<HatkConfig, 'oauth' | 'backfill' | 'push' | 'cdn' | 'jetstream' | 'spaces' | 'clef' | 'adminToken'>
 > & {
   cdn?: CdnConfig | null
   oauth?: (Partial<OAuthConfig> & { clients: OAuthClientConfig[] }) | null
@@ -291,6 +292,9 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
     oauth: null,
     push: parsed.push || null,
     admins: env.ADMINS ? env.ADMINS.split(',').map((s) => s.trim()) : parsed.admins || [],
+    // Read from the environment only: it is a secret, and has no place in a
+    // committed config file.
+    adminToken: env.ADMIN_API_TOKEN ? { token: env.ADMIN_API_TOKEN, actor: env.ADMIN_API_ACTOR || 'admin-api' } : null,
     clef: (() => {
       const raw = parsed.clef
       const accountId = env.CLOUDFLARE_ACCOUNT_ID || raw?.accountId

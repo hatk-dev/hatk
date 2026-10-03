@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, extname } from 'node:path'
@@ -414,6 +414,24 @@ export interface SpaceHandlerConfig {
   publicUrl?: string
 }
 
+/**
+ * Admits a service to the /admin API without an account: a request carrying
+ * `Authorization: Bearer <token>` is treated as an admin named `actor`, which
+ * is what a report it resolves records as `resolved_by`. `actor` must not be a
+ * DID, so no signed-in account can claim it.
+ */
+export interface AdminTokenConfig {
+  token: string
+  actor: string
+}
+
+function bearerMatches(header: string | null, token: string): boolean {
+  if (!header?.startsWith('Bearer ')) return false
+  const given = Buffer.from(header.slice('Bearer '.length))
+  const want = Buffer.from(token)
+  return given.length === want.length && timingSafeEqual(given, want)
+}
+
 export interface HandlerConfig {
   collections: string[]
   publicDir: string | null
@@ -424,6 +442,8 @@ export interface HandlerConfig {
   onResync?: () => void
   /** Permissioned-space notice delivery. Absent on an instance that indexes none. */
   spaces?: SpaceHandlerConfig
+  /** A bearer token that admits a service to /admin as `actor`. See {@link AdminTokenConfig}. */
+  adminToken?: AdminTokenConfig | null
 }
 
 /**
@@ -435,9 +455,13 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
   const devMode = process.env.DEV_MODE === '1'
   const coreXrpc = (method: string) => `/xrpc/dev.hatk.${method}`
 
+  const adminToken = config.adminToken ?? null
+  if (adminToken?.actor.startsWith('did:')) throw new Error('adminToken.actor must not be a DID')
+
   function requireAdmin(viewer: { did: string } | null, acceptEncoding: string | null): Response | null {
     if (!viewer) return withCors(jsonError(401, 'Authentication required', acceptEncoding))
-    if (!devMode && !admins.includes(viewer.did))
+    // The token's actor is never a DID, so no signed-in account can be it.
+    if (!devMode && !admins.includes(viewer.did) && viewer.did !== adminToken?.actor)
       return withCors(jsonError(403, 'Admin access required', acceptEncoding))
     return null // auth OK
   }
@@ -490,6 +514,11 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
 
     // Authenticate viewer (optional — unauthenticated requests still work)
     let viewer: { did: string; handle?: string } | null = config.resolveViewer?.(request) ?? null
+    // The admin token reaches /admin and nothing else: on an XRPC route it is
+    // not a viewer, so a service holding it cannot act as an account.
+    if (!viewer && isAdmin && adminToken && bearerMatches(request.headers.get('authorization'), adminToken.token)) {
+      viewer = { did: adminToken.actor }
+    }
     if (!viewer && oauth) {
       try {
         viewer = await authenticate(

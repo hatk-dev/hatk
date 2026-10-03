@@ -218,6 +218,7 @@ const handler = createHandler({
   publicDir: config.publicDir,
   oauth: config.oauth,
   admins: config.admins,
+  adminToken: config.adminToken,
   onResync: runBackfillAndRestart,
   ...(config.spaces?.serviceDid
     ? {
