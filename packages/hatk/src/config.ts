@@ -70,6 +70,14 @@ export interface BackfillConfig {
   parallelism: number
   fetchTimeout: number // seconds
   maxRetries: number // max retry attempts for failed repos (default 5)
+  /**
+   * PDS hosts whose repos are never imported. A repo hosted on one is marked
+   * active with its handle and no records, so nothing queues it again, and
+   * whatever it writes from then on still arrives through the stream. For a
+   * bridge such as Bridgy Fed (`atproto.brid.gy`), whose repos mirror another
+   * network and can run to tens of thousands of records apiece.
+   */
+  skipPds?: string[]
 }
 
 export interface ApnsPushConfig {
@@ -283,6 +291,7 @@ export async function loadConfig(configPath: string): Promise<HatkConfig> {
       parallelism: parseInt(env.BACKFILL_PARALLELISM || '') || backfillRaw.parallelism || 3,
       fetchTimeout: parseInt(env.BACKFILL_FETCH_TIMEOUT || '') || backfillRaw.fetchTimeout || 300,
       maxRetries: parseInt(env.BACKFILL_MAX_RETRIES || '') || backfillRaw.maxRetries || 5,
+      skipPds: backfillRaw.skipPds || undefined,
     },
     ftsRebuildInterval: parseInt(env.FTS_REBUILD_INTERVAL || '') || parsed.ftsRebuildInterval || 5000,
     cdn:

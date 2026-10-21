@@ -29,7 +29,7 @@ import { setPrivateCollections } from './private-collections.ts'
 import { serve } from './adapter.ts'
 import { validateLexicons } from '@bigmoves/lexicon'
 import { relayHttpUrl } from './config.ts'
-import { runBackfill, configurePlc } from './backfill.ts'
+import { runBackfill, configurePlc, configureSkipPds } from './backfill.ts'
 import { initOAuth } from './oauth/server.ts'
 import { parseSessionCookie, getSessionCookieName } from './oauth/session.ts'
 import { loadOnLoginHook } from './hooks.ts'
@@ -48,6 +48,7 @@ registerHatkResolveHook()
 const config = await loadConfig(configPath)
 configureRelay(config.relay)
 configurePlc(config.plc)
+configureSkipPds(config.backfill.skipPds)
 // Space reads resolve authorities too, and ctx.spaceCredential works without
 // `spaces` indexing being configured.
 configureSpaceIdentity(config.plc)

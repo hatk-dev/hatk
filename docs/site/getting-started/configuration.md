@@ -156,14 +156,15 @@ export default defineConfig({
 
 The `backfill` object controls how the server catches up on historical data from the AT Protocol network.
 
-| Option                       | Type       | Default | Env                      | Description                                                                                              |
-| ---------------------------- | ---------- | ------- | ------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `backfill.parallelism`       | `number`   | `3`     | `BACKFILL_PARALLELISM`   | Number of concurrent repo fetches.                                                                       |
-| `backfill.fetchTimeout`      | `number`   | `300`   | `BACKFILL_FETCH_TIMEOUT` | Timeout per repo fetch in seconds.                                                                       |
-| `backfill.maxRetries`        | `number`   | `5`     | `BACKFILL_MAX_RETRIES`   | Max retry attempts for failed repo fetches.                                                              |
-| `backfill.fullNetwork`       | `boolean`  | `false` | `BACKFILL_FULL_NETWORK`  | Backfill the entire network (not just repos that interact with your collections).                        |
-| `backfill.repos`             | `string[]` | --      | `BACKFILL_REPOS`         | Pin specific DIDs to always backfill. Env var is comma-separated.                                        |
-| `backfill.signalCollections` | `string[]` | --      | --                       | Collections that trigger a backfill when a new record appears. Defaults to your top-level `collections`. |
+| Option                       | Type       | Default | Env                      | Description                                                                                                                                                                                                             |
+| ---------------------------- | ---------- | ------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `backfill.parallelism`       | `number`   | `3`     | `BACKFILL_PARALLELISM`   | Number of concurrent repo fetches.                                                                                                                                                                                      |
+| `backfill.fetchTimeout`      | `number`   | `300`   | `BACKFILL_FETCH_TIMEOUT` | Timeout per repo fetch in seconds.                                                                                                                                                                                      |
+| `backfill.maxRetries`        | `number`   | `5`     | `BACKFILL_MAX_RETRIES`   | Max retry attempts for failed repo fetches.                                                                                                                                                                             |
+| `backfill.skipPds`           | `string[]` | --      | --                       | PDS hosts whose repos are never imported (e.g. `atproto.brid.gy`). The repo is marked active with no records; its later writes still arrive through the stream.                                                         |
+| `backfill.fullNetwork`       | `boolean`  | `false` | `BACKFILL_FULL_NETWORK`  | Backfill the entire network (not just repos that interact with your collections).                                                                                                                                       |
+| `backfill.repos`             | `string[]` | --      | `BACKFILL_REPOS`         | Pin specific DIDs to always backfill. Env var is comma-separated.                                                                                                                                                       |
+| `backfill.signalCollections` | `string[]` | --      | --                       | Collections that trigger a backfill when a new record appears. Defaults to your top-level `collections`.                                                                                                                |
 | `backfill.references`        | `object[]` | --      | --                       | Records that name other repos to track: `{ collection, field }`, where `field` is a dot path to a DID in the record, or `$rkey`. A roster's `member` records bring the members' own repos in, wherever they are hosted. |
 
 ## Full-text search

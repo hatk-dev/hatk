@@ -81,6 +81,24 @@ export function configurePlc(url: string): void {
   plcUrl = url
 }
 
+let skippedPdsHosts = new Set<string>()
+
+/** Set the PDS hosts whose repos {@link backfillRepo} leaves unimported; see
+ *  `BackfillConfig.skipPds`. Matched on hostname, so a trailing slash or a
+ *  scheme in the DID document makes no difference. */
+export function configureSkipPds(hosts: string[] | undefined): void {
+  skippedPdsHosts = new Set((hosts ?? []).map((h) => h.toLowerCase()))
+}
+
+function isSkippedPds(pdsUrl: string): boolean {
+  if (!skippedPdsHosts.size) return false
+  try {
+    return skippedPdsHosts.has(new URL(pdsUrl).hostname.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
 const pdsCache = new Map<string, string>()
 
 /** A repo's PDS endpoint, cached for the process. For serving blobs, where a
@@ -234,6 +252,11 @@ export async function backfillRepo(did: string, collections: Set<string>, fetchT
     const { pds: pdsUrl, handle } = await resolvePds(did)
     resolvedPds = pdsUrl
     resolvedHandle = handle
+    if (isSkippedPds(pdsUrl)) {
+      status = 'skipped'
+      await setRepoStatus(did, 'active', undefined, { handle })
+      return 0
+    }
     timeout = setTimeout(() => controller.abort(), fetchTimeout * 1000)
     let lastRev = await getRepoRev(did)
     const baseUrl = `${resolvedPds}/xrpc/com.atproto.sync.getRepo?did=${encodeURIComponent(did)}`
@@ -446,6 +469,7 @@ async function runWorkerPool<T>(items: T[], parallelism: number, fn: (item: T) =
 export async function runBackfill(opts: BackfillOpts): Promise<number> {
   const { pdsUrl, collections, config } = opts
   plcUrl = opts.plcUrl
+  configureSkipPds(config.skipPds)
   const signalCollections = config.signalCollections || [...collections]
   const elapsed = timer()
 

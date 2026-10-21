@@ -22,7 +22,7 @@ import { createHandler, registerCoreHandlers } from './server.ts'
 import { setPrivateCollections } from './private-collections.ts'
 import { auxCursorKey, startAuxIndexer, startIndexer, sweepReferences } from './indexer.ts'
 import { getCursor } from './database/db.ts'
-import { runBackfill, configurePlc } from './backfill.ts'
+import { runBackfill, configurePlc, configureSkipPds } from './backfill.ts'
 import { configureSpaceIdentity } from './spaces/identity.ts'
 import { rebuildAllIndexes } from './database/fts.ts'
 import { relayHttpUrl } from './config.ts'
@@ -40,6 +40,7 @@ const configDir = dirname(resolve(configPath))
 const config = await loadConfig(configPath)
 configureRelay(config.relay)
 configurePlc(config.plc)
+configureSkipPds(config.backfill.skipPds)
 // Space reads resolve authorities too, and ctx.spaceCredential works without
 // `spaces` indexing being configured.
 configureSpaceIdentity(config.plc)

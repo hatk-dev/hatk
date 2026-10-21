@@ -1,5 +1,12 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
-import { backfillRepo, configurePlc, pdsFor, purgeableCollections, runBackfill } from '../src/backfill.ts'
+import {
+  backfillRepo,
+  configurePlc,
+  configureSkipPds,
+  pdsFor,
+  purgeableCollections,
+  runBackfill,
+} from '../src/backfill.ts'
 import { unfilteredQuerySQL } from '../src/spaces/guard.ts'
 import { getRepoRetryInfo, getRepoStatus, insertRecord, querySQL, runSQL, setRepoStatus } from '../src/database/db.ts'
 import { storeLexicons } from '../src/database/schema.ts'
@@ -32,7 +39,6 @@ interface Call {
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 }
-
 
 /**
  * A network where every DID in `repos` resolves to PDS with the handle
@@ -96,6 +102,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  configureSkipPds(undefined)
 })
 
 test('private collections are never purged by a full import', () => {
@@ -121,6 +128,31 @@ describe('backfillRepo', () => {
       DID,
     ])) as any[]
     expect(repo).toMatchObject({ status: 'active', rev: 'rev-1', handle: 'alice.test', retry_count: 0 })
+  })
+
+  test('a repo on a skipped PDS is marked active with its handle and never fetched', async () => {
+    // The DID document's endpoint is a URL with a scheme, and the configured
+    // host differs in case; it matches on hostname anyway.
+    configureSkipPds(['PDS.example.com'])
+    const calls = stubNetwork({
+      [DID]: buildRepoCar(DID, 'rev-1', [{ collection: PUBLIC_COLLECTION, rkey: 'self', record: profile('mirrored') }]),
+    })
+
+    expect(await backfillRepo(DID, COLLECTIONS, 30)).toBe(0)
+
+    expect(getRepoCalls(calls)).toEqual([])
+    expect(await publicRows()).toEqual([])
+    const [repo] = (await querySQL('SELECT status, rev, handle FROM _repos WHERE did = $1', [DID])) as any[]
+    expect(repo).toMatchObject({ status: 'active', rev: null, handle: 'alice.test' })
+  })
+
+  test('a skip list naming other hosts imports as usual', async () => {
+    configureSkipPds(['atproto.brid.gy'])
+    stubNetwork({
+      [DID]: buildRepoCar(DID, 'rev-1', [{ collection: PUBLIC_COLLECTION, rkey: 'self', record: profile('hello') }]),
+    })
+
+    expect(await backfillRepo(DID, COLLECTIONS, 30)).toBe(1)
   })
 
   test('records in other collections are not imported or counted', async () => {
@@ -219,9 +251,10 @@ describe('backfillRepo', () => {
 
     expect(await backfillRepo(DID, COLLECTIONS, 30)).toBe(1)
 
-    const rows = (await unfilteredQuerySQL(`SELECT uri, space FROM "${PUBLIC_COLLECTION}" WHERE did = $1 ORDER BY uri`, [
-      DID,
-    ])) as { uri: string; space: string | null }[]
+    const rows = (await unfilteredQuerySQL(
+      `SELECT uri, space FROM "${PUBLIC_COLLECTION}" WHERE did = $1 ORDER BY uri`,
+      [DID],
+    )) as { uri: string; space: string | null }[]
     expect(rows.map((r) => r.uri)).toEqual([`at://${DID}/${PUBLIC_COLLECTION}/self`, inSpace])
     expect(rows[1].space).toBe('at://did:plc:club/space/xyz.test.space/self')
   })
