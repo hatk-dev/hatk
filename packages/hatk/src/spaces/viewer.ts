@@ -130,10 +130,12 @@ async function resolveNow(oauth: OAuthConfig, viewerDid: string): Promise<Entry>
 /**
  * The spaces this viewer may be shown, as the scope for a request.
  *
- * Empty for a signed-out visitor, always: obtaining a credential begins with a
- * delegation token from the reader's own PDS, so there is no anonymous read
- * path into a space at all. `readableBy: ["public"]` means any authenticated
- * reader, never anyone.
+ * Empty for a signed-out visitor, always. The question asked is whether the
+ * authority admits this viewer, which takes a delegation token from their own
+ * PDS; a space with a public read policy admits any viewer who asks, but the
+ * index does not serve its rows to someone it cannot ask about. An app that
+ * wants a public space for signed-out visitors reads it with
+ * `publicSpaceCredential`.
  */
 export async function readableSpacesFor(oauth: OAuthConfig | null, viewer: { did: string } | null): Promise<string[]> {
   if (!oauth || !viewer) return []

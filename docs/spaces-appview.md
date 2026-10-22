@@ -58,11 +58,12 @@ index; what it needs is one server-side request per page instead of
 
 Verified in the reference PDS and pds.js, not from the lexicon prose alone.
 
-- **No anonymous read path exists.** A credential starts with a delegation token
-  from the reader's own PDS. `readableBy: ["public"]` means any authenticated
-  DID. An indexer that served space rows to a signed-out visitor would widen
-  access past what the protocol permits. hatk must never serve space rows
-  without a viewer.
+- **Only a public space has an anonymous read path.** A credential normally
+  starts with a delegation token from the reader's own PDS. A space whose read
+  policy is `public` issues one to a request with no token; any other space
+  answers such a request `SpaceNotFound`, so as not to disclose that it exists.
+  The index still serves space rows only to a viewer the authority admitted by
+  name.
 - **Only the authority decides.** Repo hosts check that the credential is
   signed by the space's authority and that the request is signed by the key it
   is bound to, for an audience they answer for, nothing else. Membership is evaluated once, at `getSpaceCredential`, and for the
@@ -72,15 +73,26 @@ Verified in the reference PDS and pds.js, not from the lexicon prose alone.
   key from the issuer's DID document; nothing requires the issuer to be a
   person or the token to have come from an XRPC call. A did:web with an ES256
   key in its document can sign its own. Lifetime is 60 seconds, single-use
-  `jti`, `aud` = `<authority>#atproto_space_host`.
+  `jti`, `aud` = `<authority>#atproto_pds`. Space tokens are always signed with
+  `#atproto`; there is no separate space key or space host entry.
 - **Credentials last 10 minutes** (an hour at most), carry no `aud`, and are
-  bound via `cnf.kid` to the P-256 did:key that signed the exchange. Every read
-  carries an RFC 9421 signature over `Authorization` and
+  bound via `cnf.kid` to the P-256 did:key the exchange names as
+  `credentialKid`. The exchange itself is unsigned: `{ space, credentialKid,
+delegationToken? }` in the body. Every read presents
+  `Authorization: Atproto-Space-Credential <jwt>` with an RFC 9421 signature
+  (label and tag `atproto-space-credential`) over `Authorization` and
   `Atproto-Space-Audience` — the `repo` being read, or the authority — so a
   signature is reusable for one credential and one audience.
-- **Notices are one-shot.** The reference PDS forwards `notifyWrite` from an
-  in-memory background queue with one try and a log line on failure. pds.js is
-  the same. A reconcile sweep against `listRepos` is mandatory, not a nicety.
+- **Commits are MACed, not signed.** A commit is `{ver, repo, space, rev,
+data}`, `data` the sha256 of the repo's LtHash state. A syncer sends
+  `Atproto-Space-Want-Mac` with a fresh P-256 key share per request; the host
+  derives a secret against the account's `#atproto_kem` key (DHKEM P-256,
+  HKDF-SHA256) and answers `Atproto-Space-Mac` over the commit or record. With
+  a credential it is required on `getRecord`, `getRepo`, `getLatestCommit` and
+  `listRepoOps` (`BadSpaceMac` otherwise).
+- **Notices are best-effort.** A missed `notifyWrite` is recovered only by the
+  next sweep, so a reconcile sweep against `listRepos` is mandatory, not a
+  nicety.
 - **The forwarded notice has the shape the user described.** `iss` is the
   authority DID, `aud` is the registered service identifier verbatim including
   its fragment, `lxm` is `com.atproto.space.notifyWrite`, `exp` is 60 seconds.
@@ -91,9 +103,9 @@ Verified in the reference PDS and pds.js, not from the lexicon prose alone.
   admitted. The service's delivery endpoint is resolved from its DID document.
 - **The oplog has no history guarantee.** `listRepoOps` may be compacted or
   dropped and does not survive account migration. Initial sync and any gap
-  recovery must use `getRepo`, a CAR with two roots (signed commit, then a
-  DRISL index) that `@atproto/space` can verify. `@atproto/space` is Node-only,
-  which is fine for hatk.
+  recovery must use `getRepo`, a STAR-lite archive (the commit as metadata,
+  then one path/record pair per record in path order) that `@atproto/space`
+  verifies. `@atproto/space` is Node-only, which is fine for hatk.
 - **Ops carry no action.** An op is `{rev, collection, rkey, cid, prev, value?}`.
   Create, update, and delete are inferred from `cid` and `prev` nullability.
   `value` is inlined only when it is still the current record.
@@ -343,16 +355,21 @@ nothing rather than showing a stranger everything.
 **Credentials** (`spaces/credential.ts`). hatk is admitted to no space and does
 not ask to be. It borrows a signed-in member's delegation — `getDelegationToken`
 on their PDS through the existing proxy, exchanged at the authority for a
-DPoP-bound credential on a per-process key. Candidates are the stored OAuth
+credential bound to a fresh P-256 key. Candidates are the stored OAuth
 sessions, the last one that worked first. A refusal about the reader moves to
-the next; a refusal about the space stops the walk.
+the next; a refusal about the space stops the walk. When nobody can read it,
+the space is asked for public access last.
 
 **The engine** (`spaces/engine.ts`). `listRepos` at the authority for the writer
-set, `listRepoOps since=rev` per writer, falling back to `getLatestCommit` plus
-`listRecords` when there is no rev or the op log has been compacted past it.
-Ops carry no action, so create/update/delete is inferred from `cid` and `prev`,
-last-op-wins per rkey within a page, and an op whose value was superseded is
-fetched rather than guessed. Writers the authority stops naming have their rows
+set, `listRepoOps since=rev` per writer, falling back to `getRepo` when there is
+no position or the op log has been compacted past it. Everything is verified
+with `@atproto/space` before it is indexed: the archive against its MACed
+commit (`verifyRepoStarFull`); ops folded into the LtHash state kept in
+`_space_repos.set_hash` and checked against the head commit, with each inlined
+value checked against its cid; a fetched record against its own MAC. Ops that
+do not add up send the writer to a full read. Ops carry no action, so
+create/update/delete is inferred from `cid` and `prev`, last-op-wins per rkey,
+and an op whose value was superseded is fetched rather than guessed. Writers the authority stops naming have their rows
 dropped, which is what ejection looks like from here. Failures are recorded per
 space so one unreachable host does not stop the sweep.
 
@@ -364,7 +381,7 @@ implementation of somebody else's authorization, drifting from it in exactly
 the cases that matter. It is the real check: mint a credential as that viewer
 and take the answer, which is the same call their own browser would make. The
 answer is cached for five minutes, so revocation lags by that much; the space
-host already lets a minted credential outlive a revocation by up to two hours.
+host already lets a minted credential outlive a revocation by up to ten minutes.
 
 **Blobs** (`spaces/blob.ts`, `GET /space-blob`). A space blob has no public URL
 by design, so it is fetched from the repo that holds it with the viewer's own
@@ -431,10 +448,8 @@ nothing, so there is no key to publish or to steal.
 - **Raw SQL is opt-in.** A feed or query handler writing its own SQL must apply
   `ctx.spaceFilter`; nothing can inject a predicate into a string somebody else
   wrote. Only matters once `spaces` is configured.
-- **No verification.** The alpha signs a commit over the repo's LtHash state and
-  a syncer can check it. hatk does not check the equivalent on the firehose path
-  either, so checking here alone would claim a guarantee the rest of the index
-  does not make. Worth adding to both paths at once, via `@atproto/space`.
+- **The firehose path is not verified.** Space sync checks every commit and
+  record it reads; records from the relay are still trusted as relayed.
 - **Search pagination is approximate** over space rows: FTS ranks before the
   gate filters, so a page can come back short. No leak, and it costs nothing
   until spaces are configured.

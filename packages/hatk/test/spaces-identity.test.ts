@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 const pdsFor = vi.fn()
 vi.mock('../src/backfill.ts', () => ({ pdsFor: (...args: unknown[]) => pdsFor(...args) }))
 
-const { atprotoSigningKey, clearSpaceIdentityCache, configureSpaceIdentity, repoEndpoint, spaceHostEndpoint } =
+const { atprotoSigningKey, clearSpaceIdentityCache, configureSpaceIdentity, kemKey, repoEndpoint, spaceHostEndpoint } =
   await import('../src/spaces/identity.ts')
 
 const AUTHORITY = 'did:plc:authority'
@@ -25,20 +25,13 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-test('a dedicated space host entry is preferred', async () => {
+test('an authority is reached at its PDS', async () => {
   fetchMock.mockImplementation(
     didDoc([
       { id: '#atproto_pds', serviceEndpoint: 'https://pds.test' },
-      { id: '#atproto_space_host', serviceEndpoint: 'https://spaces.test' },
+      { id: '#something_else', serviceEndpoint: 'https://elsewhere.test' },
     ]),
   )
-  expect(await spaceHostEndpoint(AUTHORITY)).toBe('https://spaces.test')
-})
-
-test('an authority publishing no space host is reached at its PDS', async () => {
-  // Which is every community host built on the reference implementation: the
-  // fragment names the audience, not the address.
-  fetchMock.mockImplementation(didDoc([{ id: '#atproto_pds', serviceEndpoint: 'https://pds.test' }]))
   expect(await spaceHostEndpoint(AUTHORITY)).toBe('https://pds.test')
 })
 
@@ -69,7 +62,7 @@ test('a document is fetched once and reused', async () => {
 
 test('an authority with no usable service entry is an error', async () => {
   fetchMock.mockImplementation(didDoc([{ id: '#something_else', serviceEndpoint: 'https://nope.test' }]))
-  await expect(spaceHostEndpoint(AUTHORITY)).rejects.toThrow('No space host or PDS endpoint')
+  await expect(spaceHostEndpoint(AUTHORITY)).rejects.toThrow('No PDS endpoint')
 })
 
 test('an unresolvable authority is an error, not a silent default', async () => {
@@ -81,7 +74,7 @@ test('a directory that cannot be reached is an error', async () => {
   fetchMock.mockImplementation(async () => {
     throw new Error('offline')
   })
-  await expect(spaceHostEndpoint(AUTHORITY)).rejects.toThrow('No space host or PDS endpoint')
+  await expect(spaceHostEndpoint(AUTHORITY)).rejects.toThrow('No PDS endpoint')
 })
 
 test('a writer repo is resolved the way every other repo is', async () => {
@@ -106,6 +99,8 @@ function keyDoc(methods: { id: string; publicKeyMultibase?: string }[]) {
 // A real secp256k1 key, multicodec-prefixed and base58btc-encoded — the shape
 // a did:plc document actually publishes.
 const SECP_KEY = 'zQ3shokFTS3brHcDQrn82RUDfCZESWL1ZdCEJwekUDPQiYBme'
+// A real P-256 key, as a did:plc document publishes `#atproto_kem`.
+const P256_KEY = 'zDnaeom73UoWgcWzuG9cvbcsqTw21EeFXBoXkYNmq5QcpLKPc'
 
 test('the atproto signing key is read from the DID document', async () => {
   fetchMock.mockImplementation(keyDoc([{ id: '#atproto', publicKeyMultibase: SECP_KEY }]))
@@ -114,14 +109,35 @@ test('the atproto signing key is read from the DID document', async () => {
   expect(key?.bytes).toHaveLength(33)
 })
 
-test('a dedicated space-signing key is preferred over the account key', async () => {
+test('the signing key is #atproto and nothing else', async () => {
+  fetchMock.mockImplementation(keyDoc([{ id: '#atproto_kem', publicKeyMultibase: P256_KEY }]))
+  expect(await atprotoSigningKey(AUTHORITY)).toBeNull()
+})
+
+// --- KEM keys ---
+
+test('the KEM key is read as a P-256 did:key', async () => {
   fetchMock.mockImplementation(
     keyDoc([
       { id: '#atproto', publicKeyMultibase: SECP_KEY },
-      { id: '#atproto_space', publicKeyMultibase: SECP_KEY },
+      { id: '#atproto_kem', publicKeyMultibase: P256_KEY },
     ]),
   )
-  expect((await atprotoSigningKey(AUTHORITY))?.curve).toBe('secp256k1')
+  expect(await kemKey(AUTHORITY)).toBe(`did:key:${P256_KEY}`)
+})
+
+test('a KEM key on another curve is no KEM key', async () => {
+  fetchMock.mockImplementation(keyDoc([{ id: '#atproto_kem', publicKeyMultibase: SECP_KEY }]))
+  expect(await kemKey(AUTHORITY)).toBeNull()
+})
+
+test('a document cached before its KEM key was added is fetched again', async () => {
+  // Hosts add the key to accounts that predate it, after we may have cached them.
+  fetchMock.mockImplementationOnce(keyDoc([{ id: '#atproto', publicKeyMultibase: SECP_KEY }]))
+  expect(await atprotoSigningKey(AUTHORITY)).not.toBeNull()
+  fetchMock.mockImplementation(keyDoc([{ id: '#atproto_kem', publicKeyMultibase: P256_KEY }]))
+  expect(await kemKey(AUTHORITY)).toBe(`did:key:${P256_KEY}`)
+  expect(fetchMock).toHaveBeenCalledTimes(2)
 })
 
 test('a document with no usable key answers null rather than guessing', async () => {

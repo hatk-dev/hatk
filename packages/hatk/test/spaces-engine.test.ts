@@ -18,6 +18,7 @@ vi.mock('../src/indexer.ts', () => indexer)
 vi.mock('../src/spaces/identity.ts', () => ({
   spaceHostEndpoint: async () => AUTHORITY_HOST,
   repoEndpoint: async (did: string) => `https://${did.replace(/[^a-z0-9]/gi, '')}.test`,
+  kemKey: async (did: string) => writers[did]?.kemDid() ?? null,
   configureSpaceIdentity: vi.fn(),
   clearSpaceIdentityCache: vi.fn(),
 }))
@@ -50,38 +51,66 @@ const {
   setupFixtureDatabase,
 } = await import('./fixture.ts')
 const { setPrivateCollections } = await import('../src/private-collections.ts')
+const { FakeWriter } = await import('./space-host.ts')
 
 const AUTHORITY_HOST = 'https://authority.test'
 const ALICE = 'did:plc:alice'
 const BOB = 'did:plc:bob'
 const oauth = { issuer: 'https://appview.test', scopes: ['atproto'], clients: [] }
 
-type Handler = (params: URLSearchParams) => unknown
+type Handler = (params: URLSearchParams, headers: Headers) => unknown
 let routes: Record<string, Handler | Handler[]>
-let calls: { nsid: string; params: Record<string, string> }[]
+let calls: { nsid: string; params: Record<string, string>; headers: Headers }[]
+let writers: Record<string, Awaited<ReturnType<typeof FakeWriter.create>>>
+
+/** The writer a request names, as its own host would answer for them. */
+const writerOf = (p: URLSearchParams) => writers[p.get('repo')!]
+
+/** What every writer's host answers unless a test says otherwise. */
+function hostRoutes(): Record<string, Handler> {
+  return {
+    getRepo: (p, h) => writerOf(p).getRepo(h),
+    listRepoOps: (p, h) => writerOf(p).listRepoOps(h, p),
+    getRecord: (p, h) => writerOf(p).getRecord(h, p),
+  }
+}
 
 /**
  * A credential whose fetch answers from `routes` — one handler per XRPC
  * method, or a queue of handlers when a test needs successive pages.
  */
-function fakeCredential(readerDid = ALICE) {
+function fakeCredential(readerDid: string | null = ALICE) {
   return {
     space: SPACE_URI,
     readerDid,
     expiresAt: Date.now() + 3600_000,
-    fetch: async (input: string | URL) => {
+    fetch: async (input: string | URL, init?: RequestInit) => {
       const url = new URL(input.toString())
+      const headers = new Headers(init?.headers)
       // Routed by the method name alone; every one of these is com.atproto.space.*
       const nsid = url.pathname.split('/').pop()!.replace('com.atproto.space.', '')
-      calls.push({ nsid, params: Object.fromEntries(url.searchParams) })
+      calls.push({ nsid, params: Object.fromEntries(url.searchParams), headers })
       const route = routes[nsid]
       const handler = Array.isArray(route) ? route.shift() : route
       if (!handler) return Response.json({ error: 'MethodNotImplemented' }, { status: 501 })
-      const out = handler(url.searchParams)
+      const out = await handler(url.searchParams, headers)
       if (out instanceof Response) return out
       return Response.json(out as Record<string, unknown>)
     },
   }
+}
+
+/** Hold `writer` as read to where they are now, the way a full read leaves them. */
+async function readTo(writer: Awaited<ReturnType<typeof FakeWriter.create>>) {
+  const { RepoCommit } = await import('@atproto/space')
+  const state = RepoCommit.fromRecords([...writer.records.values()] as any).setHash.state()
+  await putSpaceRepo({
+    space: SPACE_URI,
+    did: writer.did,
+    pds: null,
+    rev: writer.rev,
+    setHash: Buffer.from(state).toString('base64'),
+  })
 }
 
 const spaceRecord = (writer: string, collection: string, rkey: string) => `${SPACE_URI}/${writer}/${collection}/${rkey}`
@@ -117,7 +146,11 @@ beforeEach(async () => {
   await runSQL(`DELETE FROM "${PUBLIC_COLLECTION}"`)
   await runSQL(`DELETE FROM "${PRIVATE_COLLECTION}"`)
   calls = []
-  routes = {}
+  writers = {
+    [ALICE]: await FakeWriter.create(ALICE, SPACE_URI),
+    [BOB]: await FakeWriter.create(BOB, SPACE_URI),
+  }
+  routes = hostRoutes()
   getSpaceCredential.mockReset()
   getSpaceCredential.mockImplementation(async () => fakeCredential())
   forgetSpaceCredential.mockReset()
@@ -154,102 +187,97 @@ test('something that is not a space ref is refused', async () => {
 // --- First read ---
 
 test('a space with no local state is read whole', async () => {
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
-    getLatestCommit: () => ({ commit: { rev: '3a' } }),
-    listRecords: (p) =>
-      p.get('collection') === PUBLIC_COLLECTION
-        ? { records: [{ rkey: 'one', cid: 'cid-one', value: { text: 'hello' } }] }
-        : { records: [] },
-  }
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'one', { text: 'hello' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
 
   await watchSpace(SPACE_URI)
 
   expect(await indexedUris()).toEqual([spaceRecord(ALICE, PUBLIC_COLLECTION, 'one')])
-  expect((await getSpaceRepo(SPACE_URI, ALICE))?.rev).toBe('3a')
+  expect((await getSpaceRepo(SPACE_URI, ALICE))?.rev).toBe(writers[ALICE].rev)
+  expect(calls.map((c) => c.nsid)).toContain('getRepo')
 })
 
-test('the revision is taken before the read, not after', async () => {
-  // A write landing mid-read is then re-read on the next sweep rather than
-  // skipped, which is the direction to be wrong in.
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
-    getLatestCommit: () => ({ commit: { rev: '3a' } }),
-    listRecords: () => ({ records: [] }),
-  }
+test('every read of a repo asks for a MAC with a key share of its own', async () => {
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'one', { text: 'hello' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
   await watchSpace(SPACE_URI)
-  const order = calls.map((c) => c.nsid)
-  expect(order.indexOf('getLatestCommit')).toBeLessThan(order.indexOf('listRecords'))
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'two', { text: 'again' })
+  await reconcileSpace({ ...watch })
+
+  const asked = calls.filter((c) => c.nsid !== 'listRepos').map((c) => c.headers.get('atproto-space-want-mac'))
+  expect(asked).toHaveLength(2)
+  expect(asked[0]).toMatch(/^type="atproto-space-repo", ver=1, key_share="did:key:zDn/)
+  expect(asked[0]).not.toBe(asked[1])
+})
+
+test('a repo whose archive does not match its MAC is not indexed', async () => {
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'one', { text: 'hello' })
+  const other = await FakeWriter.create(ALICE, SPACE_URI)
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
+  // Answered with a MAC from a key that is not the one ALICE publishes.
+  routes.getRepo = (_p, h) => {
+    for (const [k, v] of writers[ALICE].records) other.records.set(k, v)
+    other.rev = writers[ALICE].rev
+    return other.getRepo(h)
+  }
+
+  await expect(watchSpace(SPACE_URI)).rejects.toThrow('commit failed verification')
+  expect(await indexedUris()).toEqual([])
+})
+
+test('an archive missing a record the commit covers is not indexed', async () => {
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'one', { text: 'hello' })
+  const commit = writers[ALICE].commit()
+  await writers[ALICE].del(PUBLIC_COLLECTION, 'one')
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: commit.rev }] })
+  routes.getRepo = (_p, h) => writers[ALICE].getRepo(h, commit)
+
+  await expect(watchSpace(SPACE_URI)).rejects.toThrow('records do not match the commit data')
 })
 
 test('a record the lexicon refuses is skipped, not indexed', async () => {
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
-    getLatestCommit: () => ({ commit: { rev: '3a' } }),
-    listRecords: (p) =>
-      p.get('collection') === PUBLIC_COLLECTION
-        ? {
-            records: [
-              { rkey: 'good', cid: 'c1', value: { text: 'fine' } },
-              { rkey: 'bad', cid: 'c2', value: { notText: 1 } },
-            ],
-          }
-        : { records: [] },
-  }
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'good', { text: 'fine' })
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'bad', { notText: 1 })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
   await watchSpace(SPACE_URI)
   expect(await indexedUris()).toEqual([spaceRecord(ALICE, PUBLIC_COLLECTION, 'good')])
 })
 
 test('a writer the authority names but whose host holds no repo is not an error', async () => {
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
-    getLatestCommit: () => Response.json({ error: 'RepoNotFound' }, { status: 404 }),
-  }
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: '3a' }] })
+  routes.getRepo = () => Response.json({ error: 'RepoNotFound' }, { status: 400 })
   await watchSpace(SPACE_URI)
   expect(await indexedUris()).toEqual([])
   expect(await getSpaceRepo(SPACE_URI, ALICE)).toBeNull()
 })
 
-test('a collection the writer has never written is not a failure', async () => {
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
-    getLatestCommit: () => ({ commit: { rev: '3a' } }),
-    listRecords: [
-      () => ({ records: [{ rkey: 'one', cid: 'c1', value: { text: 'hi' } }] }),
-      () => Response.json({ error: 'RepoNotFound' }, { status: 404 }),
-    ],
-  }
+test('a full read keeps the set hash the next forward read starts from', async () => {
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'one', { text: 'a' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
   await watchSpace(SPACE_URI)
-  expect(await indexedUris()).toHaveLength(1)
+  expect((await getSpaceRepo(SPACE_URI, ALICE))?.setHash).toMatch(/^[A-Za-z0-9+/]+=*$/)
 })
 
-test('a full read pages until the cursor runs out', async () => {
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
-    getLatestCommit: () => ({ commit: { rev: '3a' } }),
-    listRecords: (p) => {
-      if (p.get('collection') !== PUBLIC_COLLECTION) return { records: [] }
-      return p.get('cursor')
-        ? { records: [{ rkey: 'two', cid: 'c2', value: { text: 'b' } }] }
-        : { records: [{ rkey: 'one', cid: 'c1', value: { text: 'a' } }], cursor: 'next' }
-    },
-  }
+test('records of collections outside the space type are left out', async () => {
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'one', { text: 'a' })
+  await writers[ALICE].put('app.bsky.feed.unindexed', 'x', { text: 'x' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
   await watchSpace(SPACE_URI)
-  expect(await indexedUris()).toEqual([
-    spaceRecord(ALICE, PUBLIC_COLLECTION, 'one'),
-    spaceRecord(ALICE, PUBLIC_COLLECTION, 'two'),
-  ])
+  expect(await indexedUris()).toEqual([spaceRecord(ALICE, PUBLIC_COLLECTION, 'one')])
 })
 
 test('every writer the space names is handed to the indexer as a repo to track', async () => {
   // A member's public profile is what names them on everything they wrote
   // into the space, and nothing they write there is a signal collection.
   indexer.trackRepo.mockClear()
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '1' }, { did: BOB, repoRev: '1' }] }),
-    getLatestCommit: () => ({ commit: { rev: '1' } }),
-    listRecords: () => ({ records: [] }),
-  }
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'a', { text: 'a' })
+  await writers[BOB].put(PUBLIC_COLLECTION, 'b', { text: 'b' })
+  routes.listRepos = () => ({
+    repos: [
+      { did: ALICE, repoRev: writers[ALICE].rev },
+      { did: BOB, repoRev: writers[BOB].rev },
+    ],
+  })
   await reconcileSpace(watch)
   expect(indexer.trackRepo.mock.calls.map((c) => c[0]).sort()).toEqual([ALICE, BOB].sort())
 })
@@ -258,98 +286,105 @@ test('every writer the space names is handed to the indexer as a repo to track',
 
 test('a writer already read is advanced through the op log, not re-read whole', async () => {
   await putSpaceWatch({ space: SPACE_URI, authority: SPACE_AUTHORITY, spaceType: SPACE_TYPE })
-  await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3b' }] }),
-    listRepoOps: () => ({
-      ops: [{ rev: '3b', collection: PUBLIC_COLLECTION, rkey: 'new', cid: 'c1', prev: null, value: { text: 'new' } }],
-      commit: { rev: '3b' },
-    }),
-  }
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'old', { text: 'old' })
+  await readTo(writers[ALICE])
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'new', { text: 'new' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
 
   await reconcileSpace(watch)
 
-  expect(calls.map((c) => c.nsid)).not.toContain('listRecords')
+  expect(calls.map((c) => c.nsid)).not.toContain('getRepo')
   expect(await indexedUris()).toEqual([spaceRecord(ALICE, PUBLIC_COLLECTION, 'new')])
-  expect((await getSpaceRepo(SPACE_URI, ALICE))?.rev).toBe('3b')
+  expect((await getSpaceRepo(SPACE_URI, ALICE))?.rev).toBe(writers[ALICE].rev)
 })
 
 test('the op log is asked for everything after the revision we hold', async () => {
-  await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3b' }] }),
-    listRepoOps: () => ({ ops: [], commit: { rev: '3b' } }),
-  }
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'a', { text: 'a' })
+  await readTo(writers[ALICE])
+  const held = writers[ALICE].rev
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'b', { text: 'b' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
   await reconcileSpace(watch)
-  expect(calls.find((c) => c.nsid === 'listRepoOps')?.params.since).toBe('3a')
+  expect(calls.find((c) => c.nsid === 'listRepoOps')?.params.since).toBe(held)
+})
+
+test('a writer held without a set hash is read whole', async () => {
+  // Nothing to fold ops into, so nothing to check them against.
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'a', { text: 'a' })
+  await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
+  await reconcileSpace(watch)
+  expect(calls.map((c) => c.nsid)).toContain('getRepo')
+  expect(calls.map((c) => c.nsid)).not.toContain('listRepoOps')
 })
 
 test('an op with no cid is a delete', async () => {
   // Ops carry no action: a create has no prev, a delete no cid, an update both.
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'gone', { text: 'old' })
+  await readTo(writers[ALICE])
   await insertRecord(PUBLIC_COLLECTION, spaceRecord(ALICE, PUBLIC_COLLECTION, 'gone'), 'c0', ALICE, { text: 'old' })
-  await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3b' }] }),
-    listRepoOps: () => ({
-      ops: [{ rev: '3b', collection: PUBLIC_COLLECTION, rkey: 'gone', cid: null, prev: 'c0' }],
-      commit: { rev: '3b' },
-    }),
-  }
+  await writers[ALICE].del(PUBLIC_COLLECTION, 'gone')
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
 
   await reconcileSpace(watch)
 
   expect(await indexedUris()).toEqual([])
 })
 
-test('only the last op for a record in a page is applied', async () => {
-  await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3c' }] }),
-    listRepoOps: () => ({
-      ops: [
-        { rev: '3b', collection: PUBLIC_COLLECTION, rkey: 'x', cid: 'c1', prev: null, value: { text: 'first' } },
-        { rev: '3c', collection: PUBLIC_COLLECTION, rkey: 'x', cid: null, prev: 'c1' },
-      ],
-      commit: { rev: '3c' },
-    }),
-  }
+test('only the last op for a record is applied', async () => {
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'keep', { text: 'keep' })
+  await readTo(writers[ALICE])
+  const created = await writers[ALICE].put(PUBLIC_COLLECTION, 'x', { text: 'first' })
+  await writers[ALICE].del(PUBLIC_COLLECTION, 'x')
+  // Superseded, so served without its value.
+  delete created.value
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
 
   await reconcileSpace(watch)
 
   expect(await indexedUris()).toEqual([])
+  expect(calls.map((c) => c.nsid)).not.toContain('getRecord')
 })
 
-test('an op whose value was superseded is fetched rather than guessed', async () => {
-  // A value is inlined only while it is still current, so an op overtaken
-  // later in the same page arrives without one.
-  await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3b' }] }),
-    listRepoOps: () => ({
-      ops: [{ rev: '3b', collection: PUBLIC_COLLECTION, rkey: 'x', cid: 'c2', prev: 'c1' }],
-      commit: { rev: '3b' },
-    }),
-    getRecord: () => ({ value: { text: 'current' } }),
-  }
+test('an op whose value was superseded is fetched, MAC and all', async () => {
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'x', { text: 'old' })
+  await readTo(writers[ALICE])
+  const op = await writers[ALICE].put(PUBLIC_COLLECTION, 'x', { text: 'current' })
+  delete op.value
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
 
   await reconcileSpace(watch)
 
-  expect(calls.map((c) => c.nsid)).toContain('getRecord')
+  const fetched = calls.find((c) => c.nsid === 'getRecord')
+  expect(fetched?.headers.get('atproto-space-want-mac')).toMatch(/^type="atproto-space-record", ver=1/)
   const rows = (await querySQL(`SELECT text FROM "${PUBLIC_COLLECTION}"`)) as { text: string }[]
   expect(rows[0].text).toBe('current')
 })
 
+test('a fetched record whose MAC does not verify is not indexed', async () => {
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'x', { text: 'old' })
+  await readTo(writers[ALICE])
+  const op = await writers[ALICE].put(PUBLIC_COLLECTION, 'x', { text: 'current' })
+  delete op.value
+  const impostor = await FakeWriter.create(ALICE, SPACE_URI)
+  await impostor.put(PUBLIC_COLLECTION, 'x', { text: 'current' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
+  routes.getRecord = (p, h) => impostor.getRecord(h, p)
+  // The fallback full read is refused too, so the failure surfaces.
+  routes.getRepo = () => Response.json({ error: 'InternalServerError' }, { status: 500 })
+
+  await expect(reconcileSpace(watch)).rejects.toThrow()
+  expect(await indexedUris()).toEqual([])
+})
+
 test('an op whose record has since vanished becomes a delete', async () => {
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'x', { text: 'old' })
+  await readTo(writers[ALICE])
   await insertRecord(PUBLIC_COLLECTION, spaceRecord(ALICE, PUBLIC_COLLECTION, 'x'), 'c1', ALICE, { text: 'old' })
-  await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3b' }] }),
-    listRepoOps: () => ({
-      ops: [{ rev: '3b', collection: PUBLIC_COLLECTION, rkey: 'x', cid: 'c2', prev: 'c1' }],
-      commit: { rev: '3b' },
-    }),
-    getRecord: () => Response.json({ error: 'RecordNotFound' }, { status: 404 }),
-  }
+  const op = await writers[ALICE].put(PUBLIC_COLLECTION, 'x', { text: 'newer' })
+  delete op.value
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
+  routes.getRecord = () => Response.json({ error: 'RecordNotFound' }, { status: 400 })
 
   await reconcileSpace(watch)
 
@@ -357,72 +392,108 @@ test('an op whose record has since vanished becomes a delete', async () => {
 })
 
 test('ops for collections outside the space type are ignored', async () => {
-  await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3b' }] }),
-    listRepoOps: () => ({
-      ops: [
-        { rev: '3b', collection: 'app.bsky.feed.unindexed', rkey: 'x', cid: 'c1', prev: null, value: { text: 'x' } },
-      ],
-      commit: { rev: '3b' },
-    }),
-  }
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'a', { text: 'a' })
+  await readTo(writers[ALICE])
+  await writers[ALICE].put('app.bsky.feed.unindexed', 'x', { text: 'x' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
   await reconcileSpace(watch)
   expect(await indexedUris()).toEqual([])
+  expect((await getSpaceRepo(SPACE_URI, ALICE))?.rev).toBe(writers[ALICE].rev)
 })
 
 test('the op log is paged until it reaches the head', async () => {
-  await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3c' }] }),
-    listRepoOps: [
-      () => ({
-        ops: [{ rev: '3b', collection: PUBLIC_COLLECTION, rkey: 'one', cid: 'c1', prev: null, value: { text: 'a' } }],
-        cursor: 'more',
-      }),
-      () => ({
-        ops: [{ rev: '3c', collection: PUBLIC_COLLECTION, rkey: 'two', cid: 'c2', prev: null, value: { text: 'b' } }],
-        commit: { rev: '3c' },
-      }),
-    ],
-  }
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'zero', { text: '0' })
+  await readTo(writers[ALICE])
+  const one = await writers[ALICE].put(PUBLIC_COLLECTION, 'one', { text: 'a' })
+  const two = await writers[ALICE].put(PUBLIC_COLLECTION, 'two', { text: 'b' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
+  routes.listRepoOps = [
+    (p, h) => writers[ALICE].listRepoOps(h, p, { ops: [one], cursor: 'more' }),
+    (p, h) => writers[ALICE].listRepoOps(h, p, { ops: [two] }),
+  ]
 
   await reconcileSpace(watch)
 
   expect(await indexedUris()).toHaveLength(2)
-  expect((await getSpaceRepo(SPACE_URI, ALICE))?.rev).toBe('3c')
+  expect((await getSpaceRepo(SPACE_URI, ALICE))?.rev).toBe(writers[ALICE].rev)
+  const shares = calls.filter((c) => c.nsid === 'listRepoOps').map((c) => c.headers.get('atproto-space-want-mac'))
+  expect(new Set(shares).size).toBe(2)
+})
+
+test('ops that do not add up to the commit are not applied', async () => {
+  // A host that leaves an op out serves a repo the commit does not describe.
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'a', { text: 'a' })
+  await readTo(writers[ALICE])
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'b', { text: 'b' })
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'c', { text: 'c' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
+  routes.listRepoOps = (p, h) => writers[ALICE].listRepoOps(h, p, { ops: writers[ALICE].log.slice(-1) })
+
+  await reconcileSpace(watch)
+
+  // Read whole instead, so both arrive.
+  expect(calls.map((c) => c.nsid)).toContain('getRepo')
+  expect(await indexedUris()).toEqual([
+    spaceRecord(ALICE, PUBLIC_COLLECTION, 'a'),
+    spaceRecord(ALICE, PUBLIC_COLLECTION, 'b'),
+    spaceRecord(ALICE, PUBLIC_COLLECTION, 'c'),
+  ])
+})
+
+test('an inlined value that is not the record its cid names is refused', async () => {
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'a', { text: 'a' })
+  await readTo(writers[ALICE])
+  const op = await writers[ALICE].put(PUBLIC_COLLECTION, 'b', { text: 'real' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
+  routes.listRepoOps = (p, h) =>
+    writers[ALICE].listRepoOps(h, p, { ops: [{ ...op, value: { $type: PUBLIC_COLLECTION, text: 'forged' } }] })
+
+  await reconcileSpace(watch)
+
+  const rows = (await querySQL(`SELECT text FROM "${PUBLIC_COLLECTION}" ORDER BY uri`)) as { text: string }[]
+  expect(rows.map((r) => r.text)).toEqual(['a', 'real'])
+})
+
+test('a commit without a valid MAC is not trusted', async () => {
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'a', { text: 'a' })
+  await readTo(writers[ALICE])
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'b', { text: 'b' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
+  routes.listRepoOps = (p, h) => {
+    const res = writers[ALICE].listRepoOps(h, p)
+    const headers = new Headers(res.headers)
+    headers.delete('atproto-space-mac')
+    return new Response(res.body, { headers })
+  }
+
+  await reconcileSpace(watch)
+
+  // Fell back to the archive, which carries one.
+  expect(calls.map((c) => c.nsid)).toContain('getRepo')
 })
 
 test('an op log that cannot carry us forward falls back to a full read', async () => {
   // The log is a transport optimization with no history guarantee: a host may
   // compact past our position, and the answer then is a full read, not a gap.
-  await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3b' }] }),
-    listRepoOps: () => Response.json({ error: 'InvalidRequest', message: 'since too old' }, { status: 400 }),
-    getLatestCommit: () => ({ commit: { rev: '3b' } }),
-    listRecords: (p) =>
-      p.get('collection') === PUBLIC_COLLECTION
-        ? { records: [{ rkey: 'recovered', cid: 'c9', value: { text: 'whole' } }] }
-        : { records: [] },
-  }
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'recovered', { text: 'whole' })
+  await readTo(writers[ALICE])
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'later', { text: 'later' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
+  routes.listRepoOps = () => Response.json({ error: 'InvalidRequest', message: 'since too old' }, { status: 400 })
 
   await reconcileSpace(watch)
 
-  expect(await indexedUris()).toEqual([spaceRecord(ALICE, PUBLIC_COLLECTION, 'recovered')])
-  expect((await getSpaceRepo(SPACE_URI, ALICE))?.rev).toBe('3b')
+  expect(await indexedUris()).toEqual([
+    spaceRecord(ALICE, PUBLIC_COLLECTION, 'later'),
+    spaceRecord(ALICE, PUBLIC_COLLECTION, 'recovered'),
+  ])
+  expect((await getSpaceRepo(SPACE_URI, ALICE))?.rev).toBe(writers[ALICE].rev)
 })
 
 test('a full read replaces what the writer held rather than merging into it', async () => {
   await insertRecord(PUBLIC_COLLECTION, spaceRecord(ALICE, PUBLIC_COLLECTION, 'stale'), 'c0', ALICE, { text: 'old' })
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
-    getLatestCommit: () => ({ commit: { rev: '3a' } }),
-    listRecords: (p) =>
-      p.get('collection') === PUBLIC_COLLECTION
-        ? { records: [{ rkey: 'fresh', cid: 'c1', value: { text: 'new' } }] }
-        : { records: [] },
-  }
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'fresh', { text: 'new' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
 
   await reconcileSpace(watch)
 
@@ -433,7 +504,7 @@ test('a full read replaces what the writer held rather than merging into it', as
 
 test('a writer whose revision has not moved is not read again', async () => {
   await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
-  routes = { listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }) }
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: '3a' }] })
 
   await reconcileSpace(watch)
 
@@ -441,19 +512,17 @@ test('a writer whose revision has not moved is not read again', async () => {
 })
 
 test('the writer set is paged', async () => {
-  routes = {
-    listRepos: [
-      () => ({ repos: [{ did: ALICE, rev: '3a' }], cursor: 'more' }),
-      () => ({ repos: [{ did: BOB, rev: '3a' }] }),
-    ],
-    getLatestCommit: () => ({ commit: { rev: '3a' } }),
-    listRecords: () => ({ records: [] }),
-  }
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'a', { text: 'a' })
+  await writers[BOB].put(PUBLIC_COLLECTION, 'b', { text: 'b' })
+  routes.listRepos = [
+    () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }], cursor: 'more' }),
+    () => ({ repos: [{ did: BOB, repoRev: writers[BOB].rev }] }),
+  ]
 
   await reconcileSpace(watch)
 
   expect((await listSpaceRepos(SPACE_URI)).map((r) => r.did).sort()).toEqual([ALICE, BOB])
-  expect(calls.filter((c) => c.nsid === 'getLatestCommit')).toHaveLength(2)
+  expect(calls.filter((c) => c.nsid === 'getRepo')).toHaveLength(2)
 })
 
 test('a writer the space no longer names has their rows dropped', async () => {
@@ -462,7 +531,7 @@ test('a writer the space no longer names has their rows dropped', async () => {
   await insertRecord(PUBLIC_COLLECTION, spaceRecord(BOB, PUBLIC_COLLECTION, 'bye'), 'c1', BOB, { text: 'bob' })
   await putSpaceRepo({ space: SPACE_URI, did: BOB, pds: null, rev: '3a' })
   await putSpaceRepo({ space: SPACE_URI, did: ALICE, pds: null, rev: '3a' })
-  routes = { listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }) }
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: '3a' }] })
 
   await reconcileSpace(watch)
 
@@ -475,7 +544,7 @@ test('dropping a departed writer leaves their public repo records alone', async 
   await insertRecord(PUBLIC_COLLECTION, publicUri, 'c0', BOB, { text: 'public' })
   await insertRecord(PUBLIC_COLLECTION, spaceRecord(BOB, PUBLIC_COLLECTION, 'bye'), 'c1', BOB, { text: 'private' })
   await putSpaceRepo({ space: SPACE_URI, did: BOB, pds: null, rev: '3a' })
-  routes = { listRepos: () => ({ repos: [] }) }
+  routes.listRepos = () => ({ repos: [] })
 
   await reconcileSpace(watch)
 
@@ -485,7 +554,7 @@ test('dropping a departed writer leaves their public repo records alone', async 
 test('the reader that worked is remembered and tried first next time', async () => {
   await putSpaceWatch({ space: SPACE_URI, authority: SPACE_AUTHORITY, spaceType: SPACE_TYPE })
   getSpaceCredential.mockImplementation(async () => fakeCredential(BOB))
-  routes = { listRepos: () => ({ repos: [] }) }
+  routes.listRepos = () => ({ repos: [] })
 
   await reconcileSpace({ ...watch })
   expect((await getSpaceWatch(SPACE_URI))?.readerDid).toBe(BOB)
@@ -509,7 +578,7 @@ test('an expired credential is re-minted once and the read repeated', async () =
     }
     return fakeCredential()
   })
-  routes = { listRepos: () => ({ repos: [] }) }
+  routes.listRepos = () => ({ repos: [] })
 
   await reconcileSpace(watch)
 
@@ -532,7 +601,7 @@ test('a successful sweep clears the last failure', async () => {
   await putSpaceWatch({ space: SPACE_URI, authority: SPACE_AUTHORITY, spaceType: SPACE_TYPE })
   getSpaceCredential.mockRejectedValueOnce(new Error('boom'))
   await reconcileAll()
-  routes = { listRepos: () => ({ repos: [] }) }
+  routes.listRepos = () => ({ repos: [] })
   await reconcileAll()
   expect((await getSpaceWatch(SPACE_URI))?.lastError).toBeNull()
 })
@@ -545,7 +614,7 @@ test('one unreachable space does not stop the others', async () => {
     if (space === SPACE_URI) throw new Error('down')
     return fakeCredential()
   })
-  routes = { listRepos: () => ({ repos: [] }) }
+  routes.listRepos = () => ({ repos: [] })
 
   await reconcileAll()
 
@@ -586,14 +655,8 @@ test('unwatching a space never followed is harmless', async () => {
 // --- What a synced row is ---
 
 test('a synced record is stored under its space and served only in scope', async () => {
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
-    getLatestCommit: () => ({ commit: { rev: '3a' } }),
-    listRecords: (p) =>
-      p.get('collection') === PUBLIC_COLLECTION
-        ? { records: [{ rkey: 'one', cid: 'c1', value: { text: 'members only' } }] }
-        : { records: [] },
-  }
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'one', { text: 'members only' })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
   await watchSpace(SPACE_URI)
 
   const { getRecordByUri } = await import('../src/database/db.ts')
@@ -623,10 +686,8 @@ test('an instance that receives notices subscribes while it has a credential in 
   // reconcile rather than on its own.
   withService()
   await putSpaceWatch({ space: SPACE_URI, authority: SPACE_AUTHORITY, spaceType: SPACE_TYPE })
-  routes = {
-    registerNotify: () => ({ expiresAt: '2030-01-01T00:00:00.000Z' }),
-    listRepos: () => ({ repos: [] }),
-  }
+  routes.registerNotify = () => ({ expiresAt: '2030-01-01T00:00:00.000Z' })
+  routes.listRepos = () => ({ repos: [] })
 
   await reconcileSpace({ ...watch })
 
@@ -637,7 +698,7 @@ test('an instance that receives notices subscribes while it has a credential in 
 test('a registration still well inside its life is not renewed', async () => {
   withService()
   const far = new Date(Date.now() + 20 * 60 * 60 * 1000).toISOString()
-  routes = { listRepos: () => ({ repos: [] }) }
+  routes.listRepos = () => ({ repos: [] })
   await reconcileSpace({ ...watch, registeredUntil: far })
   expect(calls.map((c) => c.nsid)).not.toContain('registerNotify')
 })
@@ -647,43 +708,32 @@ test('a registration close to lapsing is renewed before it does', async () => {
   // nobody notices the latency went back up.
   withService()
   const soon = new Date(Date.now() + 10 * 60 * 1000).toISOString()
-  routes = {
-    registerNotify: () => ({ expiresAt: '2030-01-01T00:00:00.000Z' }),
-    listRepos: () => ({ repos: [] }),
-  }
+  routes.registerNotify = () => ({ expiresAt: '2030-01-01T00:00:00.000Z' })
+  routes.listRepos = () => ({ repos: [] })
   await reconcileSpace({ ...watch, registeredUntil: soon })
   expect(calls.map((c) => c.nsid)).toContain('registerNotify')
 })
 
 test('failing to subscribe costs latency, not the sweep', async () => {
   withService()
-  routes = {
-    registerNotify: () => Response.json({ error: 'ServiceNotResolvable' }, { status: 400 }),
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: '3a' }] }),
-    getLatestCommit: () => ({ commit: { rev: '3a' } }),
-    listRecords: () => ({ records: [] }),
-  }
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'a', { text: 'a' })
+  routes.registerNotify = () => Response.json({ error: 'ServiceNotResolvable' }, { status: 400 })
+  routes.listRepos = () => ({ repos: [{ did: ALICE, repoRev: writers[ALICE].rev }] })
 
   await reconcileSpace({ ...watch })
 
-  expect((await getSpaceRepo(SPACE_URI, ALICE))?.rev).toBe('3a')
+  expect((await getSpaceRepo(SPACE_URI, ALICE))?.rev).toBe(writers[ALICE].rev)
 })
 
 test('an instance that receives no notices never subscribes', async () => {
-  routes = { listRepos: () => ({ repos: [] }) }
+  routes.listRepos = () => ({ repos: [] })
   await reconcileSpace({ ...watch })
   expect(calls.map((c) => c.nsid)).not.toContain('registerNotify')
 })
 
 test('a notice reads the one repo it names', async () => {
   await putSpaceWatch({ space: SPACE_URI, authority: SPACE_AUTHORITY, spaceType: SPACE_TYPE })
-  routes = {
-    getLatestCommit: () => ({ commit: { rev: '3a' } }),
-    listRecords: (p) =>
-      p.get('collection') === PUBLIC_COLLECTION
-        ? { records: [{ rkey: 'fresh', cid: 'c1', value: { text: 'just written' } }] }
-        : { records: [] },
-  }
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'fresh', { text: 'just written' })
 
   expect(await handleWriteNotice({ space: SPACE_URI, repo: ALICE })).toBe(true)
 
@@ -703,10 +753,7 @@ test('a notice about a space this instance does not follow is ignored', async ()
 test('the revision a notice claims is not trusted as the new position', async () => {
   // It is read from the repo's own host, which is the source of truth.
   await putSpaceWatch({ space: SPACE_URI, authority: SPACE_AUTHORITY, spaceType: SPACE_TYPE })
-  routes = {
-    getLatestCommit: () => ({ commit: { rev: '3real' } }),
-    listRecords: () => ({ records: [] }),
-  }
+  await writers[ALICE].put(PUBLIC_COLLECTION, 'a', { text: 'a' })
   await handleWriteNotice({ space: SPACE_URI, repo: ALICE })
-  expect((await getSpaceRepo(SPACE_URI, ALICE))?.rev).toBe('3real')
+  expect((await getSpaceRepo(SPACE_URI, ALICE))?.rev).toBe(writers[ALICE].rev)
 })

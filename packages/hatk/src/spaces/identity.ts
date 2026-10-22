@@ -4,8 +4,8 @@
  * Two different endpoints matter, and they are usually but not always the same
  * host:
  *
- *   the authority's space host — issues credentials, enumerates writers
- *   each writer's own PDS       — holds that writer's records and blobs
+ *   the authority's PDS   — issues credentials, enumerates writers
+ *   each writer's own PDS — holds that writer's records and blobs
  *
  * A space is the aggregation of one repo per writer, each on the writer's own
  * server, so reading one means talking to every writer's host with a credential
@@ -56,16 +56,13 @@ function serviceEndpoint(doc: DidDocument | null, id: string): string | undefine
 }
 
 /**
- * Where to send credential and writer-set requests for a space.
- *
- * The authority may publish a dedicated `#atproto_space_host`; one that does
- * not is still reached at its `#atproto_pds`, which is the case for every
- * community host built on the reference implementation.
+ * Where to send credential and writer-set requests for a space: the
+ * authority's own PDS, as its DID document publishes it.
  */
 export async function spaceHostEndpoint(authority: string): Promise<string> {
   const doc = await fetchDidDoc(authority)
-  const endpoint = serviceEndpoint(doc, '#atproto_space_host') ?? serviceEndpoint(doc, '#atproto_pds')
-  if (!endpoint) throw new Error(`No space host or PDS endpoint in DID document for ${authority}`)
+  const endpoint = serviceEndpoint(doc, '#atproto_pds')
+  if (!endpoint) throw new Error(`No PDS endpoint in DID document for ${authority}`)
   return endpoint
 }
 
@@ -79,23 +76,47 @@ export function clearSpaceIdentityCache(): void {
   docCache.clear()
 }
 
+function verificationMethod(doc: DidDocument | null, id: string) {
+  return doc?.verificationMethod?.find((m) => m.id === id || m.id?.endsWith(id))
+}
+
 /**
  * An account's atproto signing key, as its DID document publishes it.
  *
  * Used to check that a write notice really came from the space authority it
- * claims to. `#atproto` is the entry every atproto DID document carries;
- * `#atproto_space` is the optional dedicated credential-signing key, preferred
- * when an authority publishes one.
+ * claims to: everything an authority signs for a space, it signs with
+ * `#atproto`.
  */
 export async function atprotoSigningKey(did: string): Promise<PublicKey | null> {
-  const doc = await fetchDidDoc(did)
-  const methods = doc?.verificationMethod ?? []
-  const named = (id: string) => methods.find((m) => m.id === id || m.id?.endsWith(id))
-  const method = named('#atproto_space') ?? named('#atproto')
+  const method = verificationMethod(await fetchDidDoc(did), '#atproto')
   if (!method?.publicKeyMultibase) return null
   try {
     return parseMultibaseKey(method.publicKeyMultibase)
   } catch {
     return null
   }
+}
+
+/**
+ * An account's `#atproto_kem` key as a P-256 did:key: what a syncer encrypts a
+ * request's key share against, so that only the account's own host can answer
+ * it with a MAC.
+ *
+ * Hosts add this key to accounts that predate it, so a document cached without
+ * one is fetched again once before the answer is no.
+ */
+export async function kemKey(did: string): Promise<string | null> {
+  let method = verificationMethod(await fetchDidDoc(did), '#atproto_kem')
+  if (!method) {
+    docCache.delete(did)
+    method = verificationMethod(await fetchDidDoc(did), '#atproto_kem')
+  }
+  const multibase = method?.publicKeyMultibase
+  if (!multibase) return null
+  try {
+    if (parseMultibaseKey(multibase).curve !== 'p256') return null
+  } catch {
+    return null
+  }
+  return `did:key:${multibase}`
 }

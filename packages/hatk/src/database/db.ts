@@ -140,9 +140,15 @@ export async function initDatabase(
     did TEXT NOT NULL,
     pds TEXT,
     rev TEXT,
+    set_hash TEXT,
     synced_at TEXT,
     PRIMARY KEY (space, did)
   )`)
+  // A row without a set hash has nothing to verify ops against, so its repo
+  // is read whole once and carries one from then on.
+  try {
+    await run(`ALTER TABLE _space_repos ADD COLUMN set_hash TEXT`)
+  } catch {}
   await run(`CREATE INDEX IF NOT EXISTS idx_space_repos_space ON _space_repos(space)`)
 
   // Labels table (atproto-compatible)

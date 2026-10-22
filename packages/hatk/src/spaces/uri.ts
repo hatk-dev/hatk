@@ -108,12 +108,9 @@ export function collectionFromRecordUri(uri: string): string | undefined {
 }
 
 /**
- * The audience a delegation token for this space is addressed to.
- *
- * An authority that publishes no `#atproto_space_host` entry is still reached
- * at its `#atproto_pds` endpoint — the fragment names the audience, not the
- * address.
+ * The audience a delegation token for this space is addressed to: the
+ * authority acting as the space's host, which is its own PDS.
  */
 export function spaceHostAud(authority: string): string {
-  return `${authority}#atproto_space_host`
+  return `${authority}#atproto_pds`
 }

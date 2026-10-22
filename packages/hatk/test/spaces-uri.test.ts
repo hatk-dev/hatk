@@ -98,6 +98,6 @@ test('a record uri missing its rkey is not a space record', () => {
   expect(parseSpaceRecordUri(`${SPACE}/${WRITER}/app.bsky.actor.profile`)).toBeNull()
 })
 
-test('the delegation audience names the space host entry, not the endpoint', () => {
-  expect(spaceHostAud(AUTHORITY)).toBe(`${AUTHORITY}#atproto_space_host`)
+test('the delegation audience names the authority PDS entry, not the endpoint', () => {
+  expect(spaceHostAud(AUTHORITY)).toBe(`${AUTHORITY}#atproto_pds`)
 })

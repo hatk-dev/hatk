@@ -24,6 +24,7 @@ vi.mock('../src/spaces/credential.ts', async () => {
 vi.mock('../src/spaces/identity.ts', () => ({
   spaceHostEndpoint: async () => AUTHORITY_HOST,
   repoEndpoint: async (did: string) => `https://${did.replace(/[^a-z0-9]/gi, '')}.test`,
+  kemKey: async (did: string) => writers[did]?.kemDid() ?? null,
   configureSpaceIdentity: vi.fn(),
   clearSpaceIdentityCache: vi.fn(),
 }))
@@ -48,6 +49,7 @@ import { withReadableSpaces } from '../src/spaces/visibility.ts'
 import { PUBLIC_COLLECTION, SPACE_AUTHORITY, SPACE_TYPE, SPACE_URI, fixtureLexicons } from './fixture.ts'
 import { setupFixtureDatabase } from './fixture.ts'
 import { buildRepoCar, carResponse } from './repo-car.ts'
+import { FakeWriter } from './space-host.ts'
 
 const PLC = 'http://plc.test'
 const PDS = 'https://pds.example.com'
@@ -70,28 +72,25 @@ function lexicons(): Map<string, any> {
   // A reply's `subject` is a ref to this; without it the validator cannot
   // resolve the ref and every such record is skipped as invalid.
   map.set('com.atproto.repo.strongRef', {
-    "lexicon": 1,
-    "id": "com.atproto.repo.strongRef",
-    "description": "A URI with a content-hash fingerprint.",
-    "defs": {
-      "main": {
-        "type": "object",
-        "required": [
-          "uri",
-          "cid"
-        ],
-        "properties": {
-          "uri": {
-            "type": "string",
-            "format": "at-uri"
+    lexicon: 1,
+    id: 'com.atproto.repo.strongRef',
+    description: 'A URI with a content-hash fingerprint.',
+    defs: {
+      main: {
+        type: 'object',
+        required: ['uri', 'cid'],
+        properties: {
+          uri: {
+            type: 'string',
+            format: 'at-uri',
           },
-          "cid": {
-            "type": "string",
-            "format": "cid"
-          }
-        }
-      }
-    }
+          cid: {
+            type: 'string',
+            format: 'cid',
+          },
+        },
+      },
+    },
   })
   map.set(ROSTER, {
     lexicon: 1,
@@ -131,8 +130,20 @@ const COLLECTIONS = new Set([PUBLIC_COLLECTION, ROSTER, REPLY])
 const profile = (text: string) => ({ $type: PUBLIC_COLLECTION, text })
 const REF_CID = 'bafyreih2dtcuctxfti4a4wzejehecpxyyde5y4vuiupxvacelowhmmrpbu'
 
-/** What the space host answers, per XRPC method. */
-let routes: Record<string, (params: URLSearchParams) => unknown>
+/** What the space's hosts answer, per XRPC method. */
+let routes: Record<string, (params: URLSearchParams, headers: Headers) => unknown>
+/** Each writer's repo in the space, served as their own host serves it. */
+let writers: Record<string, FakeWriter>
+
+async function writer(did: string): Promise<FakeWriter> {
+  writers[did] ??= await FakeWriter.create(did, SPACE_URI)
+  return writers[did]
+}
+
+/** The authority naming every writer at the rev their repo is at. */
+function writerSet() {
+  return { repos: Object.values(writers).map((w) => ({ did: w.did, repoRev: w.rev })) }
+}
 /** What each DID's PDS serves for `getRepo`. */
 let repos: Record<string, Uint8Array>
 
@@ -141,12 +152,13 @@ function fakeCredential() {
     space: SPACE_URI,
     readerDid: ALICE,
     expiresAt: Date.now() + 3600_000,
-    fetch: async (input: string | URL) => {
+    fetch: async (input: string | URL, init?: RequestInit) => {
       const url = new URL(input.toString())
       const nsid = url.pathname.split('/').pop()!.replace('com.atproto.space.', '')
       const handler = routes[nsid]
       if (!handler) return Response.json({ error: 'MethodNotImplemented' }, { status: 501 })
-      return Response.json(handler(url.searchParams) as Record<string, unknown>)
+      const out = await handler(url.searchParams, new Headers(init?.headers))
+      return out instanceof Response ? out : Response.json(out as Record<string, unknown>)
     },
   }
 }
@@ -223,10 +235,19 @@ beforeEach(async () => {
   await runSQL('DELETE FROM _repos')
   await runSQL('DELETE FROM _space_watch')
   await runSQL('DELETE FROM _space_repos')
-  configureSpaceEngine({ oauth: { issuer: 'https://appview.test' } as any, types: new Set([SPACE_TYPE]), collections: COLLECTIONS })
+  configureSpaceEngine({
+    oauth: { issuer: 'https://appview.test' } as any,
+    types: new Set([SPACE_TYPE]),
+    collections: COLLECTIONS,
+  })
   getSpaceCredential.mockReset()
   getSpaceCredential.mockImplementation(async () => fakeCredential())
-  routes = {}
+  writers = {}
+  routes = {
+    listRepos: () => writerSet(),
+    getRepo: (p, h) => writers[p.get('repo')!].getRepo(h),
+    listRepoOps: (p, h) => writers[p.get('repo')!].listRepoOps(h, p),
+  }
   repos = {}
   await configure()
   stubNetwork()
@@ -240,14 +261,7 @@ test('re-reading a repo whole leaves the rows its account wrote into a space', a
   // sync — whose revision had not moved — never put them back. The community's
   // roster vanished and every member was shown the door.
   await putSpaceWatch(watch)
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: 'space-1' }] }),
-    getLatestCommit: () => ({ commit: { rev: 'space-1' } }),
-    listRecords: (p) =>
-      p.get('collection') === PUBLIC_COLLECTION
-        ? { records: [{ rkey: 'in-space', cid: 'cid-space', value: profile('written into the space') }] }
-        : { records: [] },
-  }
+  await (await writer(ALICE)).put(PUBLIC_COLLECTION, 'in-space', profile('written into the space'))
   await reconcileSpace(watch)
 
   repos[ALICE] = buildRepoCar(ALICE, 'repo-1', [
@@ -281,11 +295,13 @@ test('a repo re-import leaves the space rows gated, not merely present', async (
   )) as { uri: string }[]
   expect(visitor.map((r) => r.uri)).toEqual([`at://${ALICE}/${PUBLIC_COLLECTION}/public`])
 
-  const member = await withReadableSpaces([SPACE_URI], async () =>
-    (await unfilteredQuerySQL(
-      `SELECT uri FROM "${PUBLIC_COLLECTION}" WHERE space IS NULL OR space = $1 ORDER BY uri`,
-      [SPACE_URI],
-    )) as { uri: string }[],
+  const member = await withReadableSpaces(
+    [SPACE_URI],
+    async () =>
+      (await unfilteredQuerySQL(
+        `SELECT uri FROM "${PUBLIC_COLLECTION}" WHERE space IS NULL OR space = $1 ORDER BY uri`,
+        [SPACE_URI],
+      )) as { uri: string }[],
   )
   expect(member).toHaveLength(2)
 })
@@ -300,9 +316,7 @@ test('a roster record on the live stream brings the named repo in', async () => 
   repos[CLUB] = buildRepoCar(CLUB, 'repo-1', [
     { collection: ROSTER, rkey: 'm1', record: { $type: ROSTER, member: BOB } },
   ])
-  repos[BOB] = buildRepoCar(BOB, 'repo-1', [
-    { collection: PUBLIC_COLLECTION, rkey: 'self', record: profile('bob') },
-  ])
+  repos[BOB] = buildRepoCar(BOB, 'repo-1', [{ collection: PUBLIC_COLLECTION, rkey: 'self', record: profile('bob') }])
 
   applyCommit(CLUB, [
     { action: 'create', collection: ROSTER, rkey: 'm1', cid: 'cid-m1', record: { $type: ROSTER, member: BOB } },
@@ -318,9 +332,7 @@ test('a roster record read out of a repo brings the named repo in', async () => 
   repos[CLUB] = buildRepoCar(CLUB, 'repo-1', [
     { collection: ROSTER, rkey: 'm1', record: { $type: ROSTER, member: BOB } },
   ])
-  repos[BOB] = buildRepoCar(BOB, 'repo-1', [
-    { collection: PUBLIC_COLLECTION, rkey: 'self', record: profile('bob') },
-  ])
+  repos[BOB] = buildRepoCar(BOB, 'repo-1', [{ collection: PUBLIC_COLLECTION, rkey: 'self', record: profile('bob') }])
 
   await backfillRepo(CLUB, COLLECTIONS, 30)
   await awaitBackfill(BOB)
@@ -332,17 +344,8 @@ test('a roster record read out of a space brings the named repo in', async () =>
   // The membership that decides who may read lives in the space, not the repo.
   await configure([{ collection: ROSTER, field: 'member' }])
   await putSpaceWatch(watch)
-  repos[BOB] = buildRepoCar(BOB, 'repo-1', [
-    { collection: PUBLIC_COLLECTION, rkey: 'self', record: profile('bob') },
-  ])
-  routes = {
-    listRepos: () => ({ repos: [{ did: CLUB, repoRev: 'space-1' }] }),
-    getLatestCommit: () => ({ commit: { rev: 'space-1' } }),
-    listRecords: (p) =>
-      p.get('collection') === ROSTER
-        ? { records: [{ rkey: 'm1', cid: 'cid-m1', value: { $type: ROSTER, member: BOB } }] }
-        : { records: [] },
-  }
+  repos[BOB] = buildRepoCar(BOB, 'repo-1', [{ collection: PUBLIC_COLLECTION, rkey: 'self', record: profile('bob') }])
+  await (await writer(CLUB)).put(ROSTER, 'm1', { $type: ROSTER, member: BOB })
 
   await reconcileSpace(watch)
   await awaitBackfill(BOB)
@@ -353,9 +356,7 @@ test('a roster record read out of a space brings the named repo in', async () =>
 test('the boot sweep brings in repos named by rows indexed before the reference existed', async () => {
   // The roster was indexed yesterday; the reference was configured today.
   await insertRecord(ROSTER, `at://${CLUB}/${ROSTER}/m1`, 'cid-m1', CLUB, { $type: ROSTER, member: BOB })
-  repos[BOB] = buildRepoCar(BOB, 'repo-1', [
-    { collection: PUBLIC_COLLECTION, rkey: 'self', record: profile('bob') },
-  ])
+  repos[BOB] = buildRepoCar(BOB, 'repo-1', [{ collection: PUBLIC_COLLECTION, rkey: 'self', record: profile('bob') }])
 
   await configure([{ collection: ROSTER, field: 'member' }])
   expect(await sweepReferences()).toBe(1)
@@ -402,14 +403,7 @@ test('a strongRef written through a space keeps the space URI it points at', asy
   // the reading have to survive that shape.
   const thread = spaceRecordUri(SPACE_URI, CLUB, PUBLIC_COLLECTION, 'thread')
   await putSpaceWatch(watch)
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: 'space-1' }] }),
-    getLatestCommit: () => ({ commit: { rev: 'space-1' } }),
-    listRecords: (p) =>
-      p.get('collection') === REPLY
-        ? { records: [{ rkey: 'r1', cid: 'cid-r1', value: { subject: { uri: thread, cid: REF_CID }, text: 'hi' } }] }
-        : { records: [] },
-  }
+  await (await writer(ALICE)).put(REPLY, 'r1', { subject: { uri: thread, cid: REF_CID }, text: 'hi' })
 
   await reconcileSpace(watch)
 
@@ -428,7 +422,8 @@ test('a space sync of one writer leaves another writer and the repo rows alone',
   // Re-reading one writer purges that writer's rows in the space before
   // re-inserting; the neighbours are not its business.
   await putSpaceWatch(watch)
-  await putSpaceRepo({ space: SPACE_URI, did: BOB, pds: null, rev: 'space-1' })
+  await (await writer(BOB)).put(PUBLIC_COLLECTION, 'bobs', profile('bob in the space'))
+  await putSpaceRepo({ space: SPACE_URI, did: BOB, pds: null, rev: writers[BOB].rev })
   await insertRecord(
     PUBLIC_COLLECTION,
     spaceRecordUri(SPACE_URI, BOB, PUBLIC_COLLECTION, 'bobs'),
@@ -437,14 +432,7 @@ test('a space sync of one writer leaves another writer and the repo rows alone',
     profile('bob in the space'),
   )
   await insertRecord(PUBLIC_COLLECTION, `at://${ALICE}/${PUBLIC_COLLECTION}/own`, 'cid-o', ALICE, profile('alice repo'))
-  routes = {
-    listRepos: () => ({ repos: [{ did: ALICE, repoRev: 'space-2' }, { did: BOB, repoRev: 'space-1' }] }),
-    getLatestCommit: () => ({ commit: { rev: 'space-2' } }),
-    listRecords: (p) =>
-      p.get('collection') === PUBLIC_COLLECTION && p.get('repo') === ALICE
-        ? { records: [{ rkey: 'alices', cid: 'cid-a', value: profile('alice in the space') }] }
-        : { records: [] },
-  }
+  await (await writer(ALICE)).put(PUBLIC_COLLECTION, 'alices', profile('alice in the space'))
 
   await reconcileSpace(watch)
 

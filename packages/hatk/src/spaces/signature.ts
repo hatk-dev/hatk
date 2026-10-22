@@ -1,98 +1,42 @@
 /**
  * The HTTP message signature a space credential travels with.
  *
- * RFC 9421, under the label `atproto-space`, signed ecdsa-p256-sha256 by a key
- * made for one credential and named by its did:key. Two shapes:
+ * A credential is bound to a P-256 key made for it alone and named by its
+ * did:key (the credential's `cnf.kid`). Every request that presents it signs
+ * the credential together with the DID the request is addressed to, under
+ * RFC 9421's label and tag `atproto-space-credential`, so a credential lifted
+ * off one request cannot be replayed at another account by anyone without the
+ * key.
  *
- *   exchange   the delegation token is signed alone, and the signature names
- *              its key — that key is what the authority binds the credential
- *              to (`cnf.kid`)
- *   use        the credential is signed together with the DID the request is
- *              addressed to, so a credential lifted off one request cannot be
- *              replayed at another account by anyone without the key
- *
- * The signature is the raw 64-byte r || s, normalized to low-S: the reference
- * verifier accepts either, but a stricter one (noble's default) only low-S.
+ * The signing itself is `@atproto/space`'s, so the headers match the reference
+ * verifier byte for byte.
  */
 
-import { signEs256 } from '../oauth/crypto.ts'
+import { P256Keypair } from '@atproto/crypto'
+import { createSpaceSigHeaders } from '@atproto/space'
 
-const LABEL = 'atproto-space'
+/** The Authorization scheme a space credential is presented under. */
+export const CREDENTIAL_SCHEME = 'Atproto-Space-Credential'
 
-const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+/** A credential's key: `did()` names it, and it is held in memory only. */
+export type SpaceSigKey = P256Keypair
 
-/** Encode base58btc. The inverse of `decodeBase58btc` in verify.ts. */
-export function encodeBase58btc(bytes: Uint8Array): string {
-  const digits = [0]
-  for (const byte of bytes) {
-    let carry = byte
-    for (let i = 0; i < digits.length; i++) {
-      carry += digits[i] << 8
-      digits[i] = carry % 58
-      carry = (carry / 58) | 0
-    }
-    while (carry) {
-      digits.push(carry % 58)
-      carry = (carry / 58) | 0
-    }
-  }
-  let out = ''
-  for (const byte of bytes) {
-    if (byte !== 0) break
-    out += '1'
-  }
-  for (let i = digits.length - 1; i >= 0; i--) out += B58[digits[i]]
-  return out
-}
-
-export interface SpaceSigKey {
-  /** The public key as a P-256 did:key. */
-  did: string
-  sign: (data: Uint8Array) => Promise<Uint8Array>
-}
-
-/** A fresh P-256 key, held in memory only and never exported. */
-export async function generateSpaceSigKey(): Promise<SpaceSigKey> {
-  const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify'])
-  // 0x04 || x || y. A did:key carries the compressed point behind the
-  // p256-pub multicodec prefix (0x1200, varint 0x80 0x24).
-  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey))
-  const compressed = new Uint8Array(33)
-  compressed[0] = raw[64] & 1 ? 0x03 : 0x02
-  compressed.set(raw.subarray(1, 33), 1)
-  return {
-    did: `did:key:z${encodeBase58btc(new Uint8Array([0x80, 0x24, ...compressed]))}`,
-    sign: (data) => signEs256(pair.privateKey, data),
-  }
+/** A fresh P-256 key, never exported. */
+export function generateSpaceSigKey(): Promise<SpaceSigKey> {
+  return P256Keypair.create()
 }
 
 /**
- * The bytes a signature covers: one line per covered field, then the
- * signature parameters, joined by LF with no trailing newline.
+ * Authorization, audience and signature headers presenting `credential` to
+ * `audience`: the repo a request names, or the space's authority.
  */
-export function signatureBase(authorization: string, params: string, audience?: string): Uint8Array {
-  const lines = [`"authorization": ${authorization}`]
-  if (audience !== undefined) lines.push(`"atproto-space-audience": ${audience}`)
-  lines.push(`"@signature-params": ${params}`)
-  return new TextEncoder().encode(lines.join('\n'))
-}
-
-/**
- * Authorization, audience and signature headers for a space request. Without
- * an audience this is the exchange; with one, a use of the credential.
- */
-export async function spaceSigHeaders(
+export function spaceSigHeaders(
   key: SpaceSigKey,
-  authorization: string,
-  audience?: string,
+  credential: string,
+  audience: string,
 ): Promise<Record<string, string>> {
-  const params =
-    audience === undefined ? `("authorization");keyid="${key.did}"` : '("authorization" "atproto-space-audience")'
-  const signature = await key.sign(signatureBase(authorization, params, audience))
-  return {
-    Authorization: authorization,
-    ...(audience !== undefined ? { 'Atproto-Space-Audience': audience } : {}),
-    'Signature-Input': `${LABEL}=${params}`,
-    Signature: `${LABEL}=:${Buffer.from(signature).toString('base64')}:`,
-  }
+  return createSpaceSigHeaders(key, {
+    authorization: `${CREDENTIAL_SCHEME} ${credential}`,
+    audience: audience as `did:${string}:${string}`,
+  })
 }

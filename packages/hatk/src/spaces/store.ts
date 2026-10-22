@@ -28,6 +28,11 @@ export interface SpaceRepo {
   pds: string | null
   /** The revision this writer's repo had been read to. */
   rev: string | null
+  /**
+   * The repo's set hash (LtHash state, base64) at `rev`, which the ops read
+   * forward from it are folded into and checked against the next commit.
+   */
+  setHash?: string | null
 }
 
 interface WatchRow {
@@ -44,7 +49,18 @@ interface RepoRow {
   did: string
   pds: string | null
   rev: string | null
+  set_hash: string | null
 }
+
+const toRepo = (row: RepoRow): SpaceRepo => ({
+  space: row.space,
+  did: row.did,
+  pds: row.pds,
+  rev: row.rev,
+  setHash: row.set_hash,
+})
+
+const REPO_COLS = 'space, did, pds, rev, set_hash'
 
 const toWatch = (row: WatchRow): SpaceWatch => ({
   space: row.space,
@@ -123,28 +139,25 @@ export async function deleteSpaceWatch(space: string): Promise<void> {
 }
 
 export async function listSpaceRepos(space: string): Promise<SpaceRepo[]> {
-  const rows = (await querySQL(`SELECT space, did, pds, rev FROM _space_repos WHERE space = $1 ORDER BY did`, [
+  const rows = (await querySQL(`SELECT ${REPO_COLS} FROM _space_repos WHERE space = $1 ORDER BY did`, [
     space,
   ])) as RepoRow[]
-  return rows
+  return rows.map(toRepo)
 }
 
 export async function getSpaceRepo(space: string, did: string): Promise<SpaceRepo | null> {
-  const rows = (await querySQL(`SELECT space, did, pds, rev FROM _space_repos WHERE space = $1 AND did = $2`, [
+  const rows = (await querySQL(`SELECT ${REPO_COLS} FROM _space_repos WHERE space = $1 AND did = $2`, [
     space,
     did,
   ])) as RepoRow[]
-  return rows[0] ?? null
+  return rows[0] ? toRepo(rows[0]) : null
 }
 
 export async function putSpaceRepo(input: SpaceRepo): Promise<void> {
-  await runSQL(`INSERT OR REPLACE INTO _space_repos (space, did, pds, rev, synced_at) VALUES ($1, $2, $3, $4, $5)`, [
-    input.space,
-    input.did,
-    input.pds,
-    input.rev,
-    new Date().toISOString(),
-  ])
+  await runSQL(
+    `INSERT OR REPLACE INTO _space_repos (space, did, pds, rev, set_hash, synced_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+    [input.space, input.did, input.pds, input.rev, input.setHash ?? null, new Date().toISOString()],
+  )
 }
 
 export async function deleteSpaceRepo(space: string, did: string): Promise<void> {

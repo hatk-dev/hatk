@@ -11,9 +11,9 @@
  * community's own web app makes from the browser —
  *
  *   the reader's PDS signs a delegation token   (60s, single-use, addressed to
- *                                                the authority's space host)
+ *                                                the authority's PDS)
  *   the authority checks it, checks the reader against the space's policy, and
- *   returns a credential bound to the key that signed the exchange   (10 min)
+ *   returns a credential bound to the key named in the request   (10 min)
  *
  * — and the credential is then presented to every writer's host in the space.
  * It carries no audience, which is why it must be bound to a key rather than
@@ -21,10 +21,13 @@
  * DID it is addressed to, so a host handed one to serve its own repo cannot
  * replay it against any other account. See signature.ts.
  *
- * The consequence to be honest about: a space is only readable while somebody
- * who can read it has a live session here. That is the same bound the data has
- * anyway — nobody outside the space's audience was ever entitled to this — but
- * it does mean indexing lapses when the last member logs out.
+ * A space whose read policy is public needs no delegation: the authority
+ * issues a credential to anyone who asks, so such a space is readable with no
+ * session at all ({@link mintPublicSpaceCredential}). Any other space is only
+ * readable while somebody who can read it has a live session here. That is the
+ * same bound the data has anyway — nobody outside the space's audience was
+ * ever entitled to this — but it does mean indexing lapses when the last
+ * member logs out.
  */
 
 import type { OAuthConfig } from '../config.ts'
@@ -52,7 +55,10 @@ export class SpaceCredentialError extends Error {
 
 /** A refusal about who is asking, rather than about the space or the network. */
 export function isNotAuthorized(err: unknown): boolean {
-  return err instanceof SpaceCredentialError && (err.code === 'UserNotAuthorized' || err.code === 'NotAuthorized')
+  return (
+    err instanceof SpaceCredentialError &&
+    (err.code === 'UserNotAuthorized' || err.code === 'NotAuthorized' || err.code === 'NotPublic')
+  )
 }
 
 export function isSpaceGone(err: unknown): boolean {
@@ -62,8 +68,8 @@ export function isSpaceGone(err: unknown): boolean {
 export interface SpaceCredential {
   /** The space this credential reads, and the only one it is accepted for. */
   space: string
-  /** The account whose delegation bought it. */
-  readerDid: string
+  /** The account whose delegation bought it, or null for public access. */
+  readerDid: string | null
   expiresAt: number
   /**
    * A fetch that presents the credential, signed for whoever the request is
@@ -84,24 +90,20 @@ function expiryOf(jwt: string): number {
 }
 
 /**
- * Exchange a delegation token for a credential at the authority, binding it to
- * `key` by signing the token with it.
+ * Ask the authority for a credential bound to `key`, for the reader the
+ * delegation token names — or, without one, for public access.
  */
 async function exchange(
   authorityHost: string,
   space: string,
-  delegationToken: string,
   key: SpaceSigKey,
+  delegationToken?: string,
 ): Promise<string> {
   const url = `${authorityHost}/xrpc/com.atproto.space.getSpaceCredential`
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      ...(await spaceSigHeaders(key, `Bearer ${delegationToken}`)),
-    },
-    body: JSON.stringify({ space }),
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ space, credentialKid: key.did(), ...(delegationToken ? { delegationToken } : {}) }),
   })
   const body = (await res.json().catch(() => ({}))) as { credential?: string; error?: string; message?: string }
   if (!res.ok || !body.credential) {
@@ -114,14 +116,42 @@ async function exchange(
   return body.credential
 }
 
+/** Exchange for a credential and wrap it in a fetch that presents it. */
+async function credentialFor(space: string, readerDid: string | null, delegationToken?: string) {
+  const ref = parseSpaceRef(space)
+  if (!ref) throw new SpaceCredentialError(400, 'InvalidRequest', `Not a space ref: ${space}`)
+
+  // A key per credential, held only as long as the credential is.
+  const key = await generateSpaceSigKey()
+  const authorityHost = await spaceHostEndpoint(ref.authority)
+  const credential = await exchange(authorityHost, space, key, delegationToken)
+
+  // Signatures depend only on the credential and the audience, so each is made
+  // once and reused for as long as the credential lives.
+  const signed = new Map<string, Promise<Record<string, string>>>()
+  const credentialFetch = async (input: string | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === 'string' ? input : input.toString()
+    const audience = new URL(url).searchParams.get('repo') ?? ref.authority
+    let sig = signed.get(audience)
+    if (!sig) {
+      sig = spaceSigHeaders(key, credential, audience)
+      signed.set(audience, sig)
+    }
+    const headers = new Headers(init?.headers)
+    for (const [name, value] of Object.entries(await sig)) headers.set(name, value)
+    return fetch(url, { ...init, headers })
+  }
+
+  return { space, readerDid, expiresAt: expiryOf(credential), fetch: credentialFetch }
+}
+
 /** Mint a credential for `space` using `readerDid`'s stored session. */
 export async function mintSpaceCredential(
   oauthConfig: OAuthConfig,
   space: string,
   readerDid: string,
 ): Promise<SpaceCredential> {
-  const ref = parseSpaceRef(space)
-  if (!ref) throw new SpaceCredentialError(400, 'InvalidRequest', `Not a space ref: ${space}`)
+  if (!parseSpaceRef(space)) throw new SpaceCredentialError(400, 'InvalidRequest', `Not a space ref: ${space}`)
 
   // The reader's own PDS signs this, under the whole-space read grant their
   // session carries. A session without that scope is refused here, before the
@@ -137,28 +167,25 @@ export async function mintSpaceCredential(
     throw new SpaceCredentialError(err?.status ?? 502, 'DelegationFailed', err?.message ?? 'delegation failed')
   }
 
-  // A key per credential, held only as long as the credential is.
-  const key = await generateSpaceSigKey()
-  const authorityHost = await spaceHostEndpoint(ref.authority)
-  const credential = await exchange(authorityHost, space, token, key)
+  return credentialFor(space, readerDid, token)
+}
 
-  // Signatures depend only on the credential and the audience, so each is made
-  // once and reused for as long as the credential lives.
-  const signed = new Map<string, Promise<Record<string, string>>>()
-  const credentialFetch = async (input: string | URL, init?: RequestInit): Promise<Response> => {
-    const url = typeof input === 'string' ? input : input.toString()
-    const audience = new URL(url).searchParams.get('repo') ?? ref.authority
-    let sig = signed.get(audience)
-    if (!sig) {
-      sig = spaceSigHeaders(key, `Atproto-Space ${credential}`, audience)
-      signed.set(audience, sig)
+/**
+ * Mint a credential for a space anyone may read, with no session behind it.
+ *
+ * An authority answers `SpaceNotFound` for a space that is not public rather
+ * than say it exists, so here that code means "not public", never "gone": it
+ * is reported as `NotPublic`. `SpaceDeleted` still means deleted.
+ */
+export async function mintPublicSpaceCredential(space: string): Promise<SpaceCredential> {
+  try {
+    return await credentialFor(space, null)
+  } catch (err) {
+    if (err instanceof SpaceCredentialError && err.code === 'SpaceNotFound') {
+      throw new SpaceCredentialError(err.status, 'NotPublic', err.message)
     }
-    const headers = new Headers(init?.headers)
-    for (const [name, value] of Object.entries(await sig)) headers.set(name, value)
-    return fetch(url, { ...init, headers })
+    throw err
   }
-
-  return { space, readerDid, expiresAt: expiryOf(credential), fetch: credentialFetch }
 }
 
 // --- Cache ---
@@ -175,7 +202,8 @@ function fresh(cred: SpaceCredential | undefined): cred is SpaceCredential {
  * Candidates are tried in order and the first that succeeds is cached. A
  * refusal about the reader — they were ejected, or never belonged — moves on to
  * the next candidate; a refusal about the space itself stops the whole attempt,
- * since no other reader would fare better.
+ * since no other reader would fare better. When no candidate can read it, the
+ * space is asked for public access last.
  */
 export async function getSpaceCredential(
   oauthConfig: OAuthConfig,
@@ -203,6 +231,16 @@ export async function getSpaceCredential(
         error: err instanceof Error ? err.message : String(err),
       })
     }
+  }
+  // Nobody signed in here can read it — or nobody is signed in. A public
+  // space needs nobody.
+  try {
+    const credential = await mintPublicSpaceCredential(space)
+    cache.set(space, credential)
+    return credential
+  } catch (err) {
+    if (isSpaceGone(err)) throw err
+    if (!(err instanceof SpaceCredentialError && err.code === 'NotPublic')) lastError ??= err
   }
   cache.delete(space)
   throw lastError ?? new SpaceCredentialError(403, 'NoReader', `No session on this instance can read ${space}`)
@@ -265,8 +303,28 @@ export function forgetReaderSpaceCredential(readerDid: string, space: string): v
   readerCache.delete(`${readerDid} ${space}`)
 }
 
+// --- Public ---
+
+const publicCache = new Map<string, SpaceCredential>()
+
+/**
+ * A credential for a space whose read policy is public, with no session behind
+ * it: for reads an app makes for a signed-out visitor, say. Cached until
+ * shortly before it expires. Throws a {@link SpaceCredentialError} with code
+ * `NotPublic` for a space that is not.
+ */
+export async function publicSpaceCredential(space: string, opts: { refresh?: boolean } = {}): Promise<SpaceCredential> {
+  const cached = publicCache.get(space)
+  if (!opts.refresh && fresh(cached)) return cached
+  publicCache.delete(space)
+  const credential = await mintPublicSpaceCredential(space)
+  publicCache.set(space, credential)
+  return credential
+}
+
 /** For tests: drop every cached credential. */
 export function resetSpaceCredentials(): void {
   cache.clear()
   readerCache.clear()
+  publicCache.clear()
 }

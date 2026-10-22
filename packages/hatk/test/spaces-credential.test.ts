@@ -20,12 +20,14 @@ const {
   getSpaceCredential,
   isNotAuthorized,
   isSpaceGone,
+  mintPublicSpaceCredential,
   mintSpaceCredential,
+  publicSpaceCredential,
   readerSpaceCredential,
   forgetReaderSpaceCredential,
   resetSpaceCredentials,
 } = await import('../src/spaces/credential.ts')
-const { parseMultibaseKey, verifySignature } = await import('../src/spaces/verify.ts')
+const { verifyCredentialSig } = await import('@atproto/space')
 
 const SPACE = 'at://did:plc:authority/space/test.hatk.board/self'
 const READER = 'did:plc:reader'
@@ -70,65 +72,52 @@ test('mints by trading a delegation token from the reader own PDS', async () => 
   expect(credential.space).toBe(SPACE)
 })
 
-/** The did:key a signature names, and whether it signed `base` over these headers. */
-function checkSignature(headers: Record<string, string>, base: string, keyDid: string): boolean {
-  const sig = headers.Signature.match(/^atproto-space=:(.+):$/)![1]
-  return verifySignature(
-    parseMultibaseKey(keyDid.slice('did:key:'.length)),
-    new Uint8Array(Buffer.from(sig, 'base64')),
-    new TextEncoder().encode(base),
-  )
+/** The body the exchange sent. */
+function exchangeBody(call = 0): Record<string, unknown> {
+  return JSON.parse((fetchMock.mock.calls[call][1] as RequestInit).body as string)
 }
 
-function exchangeKey(): string {
-  const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>
-  return headers['Signature-Input'].match(/keyid="([^"]+)"/)![1]
-}
-
-test('the exchange carries the delegation as a bearer token, signed by a fresh key', async () => {
+test('the exchange names the key to bind and carries the delegation in the body', async () => {
   await mintSpaceCredential(oauth as any, SPACE, READER)
   const init = fetchMock.mock.calls[0][1] as RequestInit
-  const headers = init.headers as Record<string, string>
-  expect(headers.Authorization).toBe('Bearer delegation-token')
-  const keyDid = exchangeKey()
-  expect(keyDid).toMatch(/^did:key:zDn/)
-  expect(headers['Signature-Input']).toBe(`atproto-space=("authorization");keyid="${keyDid}"`)
-  const base = [
-    '"authorization": Bearer delegation-token',
-    `"@signature-params": ("authorization");keyid="${keyDid}"`,
-  ].join('\n')
-  expect(checkSignature(headers, base, keyDid)).toBe(true)
-  expect(JSON.parse(init.body as string)).toEqual({ space: SPACE })
+  const body = exchangeBody()
+  expect(body).toEqual({
+    space: SPACE,
+    credentialKid: expect.stringMatching(/^did:key:zDn/),
+    delegationToken: 'delegation-token',
+  })
+  // Not signed and not bearer-authed: the token is in the body.
+  const headers = new Headers(init.headers)
+  expect(headers.get('authorization')).toBeNull()
+  expect(headers.get('signature')).toBeNull()
 })
 
 test('each credential is bound to a key of its own', async () => {
   await mintSpaceCredential(oauth as any, SPACE, READER)
-  const first = exchangeKey()
+  const first = exchangeBody().credentialKid
   fetchMock.mockClear()
   await mintSpaceCredential(oauth as any, SPACE, READER)
-  expect(exchangeKey()).not.toBe(first)
+  expect(exchangeBody().credentialKid).not.toBe(first)
 })
 
-test('a read is signed for the repo it names, with the exchange key', async () => {
+test('a read presents the credential signed for the repo it names, with the bound key', async () => {
   // One credential reads a whole space and is shown to every writer host in
   // it. Signed for one account, it cannot be replayed at another.
   const jwt = credentialJwt(inTenMinutes())
   fetchMock.mockImplementationOnce(async () => Response.json({ credential: jwt }))
   const credential = await mintSpaceCredential(oauth as any, SPACE, READER)
-  const keyDid = exchangeKey()
+  const keyDid = exchangeBody().credentialKid as `did:key:${string}`
   fetchMock.mockImplementationOnce(async () => Response.json({ records: [] }))
   await credential.fetch(`https://writer.test/xrpc/com.atproto.space.listRecords?space=x&repo=${OTHER_READER}`)
 
   const headers = Object.fromEntries(((fetchMock.mock.calls[1][1] as RequestInit).headers as Headers).entries())
-  expect(headers.authorization).toBe(`Atproto-Space ${jwt}`)
+  expect(headers.authorization).toBe(`Atproto-Space-Credential ${jwt}`)
   expect(headers['atproto-space-audience']).toBe(OTHER_READER)
-  expect(headers['signature-input']).toBe('atproto-space=("authorization" "atproto-space-audience")')
-  const base = [
-    `"authorization": Atproto-Space ${jwt}`,
-    `"atproto-space-audience": ${OTHER_READER}`,
-    '"@signature-params": ("authorization" "atproto-space-audience")',
-  ].join('\n')
-  expect(checkSignature({ Signature: headers.signature }, base, keyDid)).toBe(true)
+  expect(headers['signature-input']).toBe(
+    'atproto-space-credential=("authorization" "atproto-space-audience");tag="atproto-space-credential"',
+  )
+  // Checked by the reference verifier, so the bytes are what a host accepts.
+  await expect(verifyCredentialSig(headers, keyDid)).resolves.toBeUndefined()
 })
 
 test('a read that names no repo is signed for the authority', async () => {
@@ -137,6 +126,53 @@ test('a read that names no repo is signed for the authority', async () => {
   await credential.fetch(`${AUTHORITY_HOST}/xrpc/com.atproto.space.listRepos?space=x`)
   const headers = (fetchMock.mock.calls[1][1] as RequestInit).headers as Headers
   expect(headers.get('Atproto-Space-Audience')).toBe('did:plc:authority')
+})
+
+// --- Public spaces ---
+
+test('a public credential is asked for with no delegation at all', async () => {
+  const credential = await mintPublicSpaceCredential(SPACE)
+  expect(pdsXrpc).not.toHaveBeenCalled()
+  expect(exchangeBody()).toEqual({ space: SPACE, credentialKid: expect.stringMatching(/^did:key:zDn/) })
+  expect(credential.readerDid).toBeNull()
+})
+
+test('a space that is not public says so, rather than that it is gone', async () => {
+  // An authority answers SpaceNotFound for a space it will not disclose.
+  fetchMock.mockImplementation(async () => Response.json({ error: 'SpaceNotFound' }, { status: 400 }))
+  const err = await mintPublicSpaceCredential(SPACE).catch((e) => e)
+  expect(err.code).toBe('NotPublic')
+  expect(isSpaceGone(err)).toBe(false)
+  expect(isNotAuthorized(err)).toBe(true)
+})
+
+test('a deleted space is deleted for a public reader too', async () => {
+  fetchMock.mockImplementation(async () => Response.json({ error: 'SpaceDeleted' }, { status: 400 }))
+  expect(isSpaceGone(await mintPublicSpaceCredential(SPACE).catch((e) => e))).toBe(true)
+})
+
+test('a public credential is reused until close to expiry', async () => {
+  await publicSpaceCredential(SPACE)
+  await publicSpaceCredential(SPACE)
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  await publicSpaceCredential(SPACE, { refresh: true })
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+})
+
+test('with no session able to read it, a public space is read as the public', async () => {
+  pdsXrpc.mockRejectedValue(Object.assign(new Error('ejected'), { status: 403 }))
+  const credential = await getSpaceCredential(oauth as any, SPACE, [READER])
+  expect(credential.readerDid).toBeNull()
+})
+
+test('a space neither a session nor the public can read reports the session refusal', async () => {
+  fetchMock.mockImplementation(async (_url: string, init: RequestInit) =>
+    JSON.parse(init.body as string).delegationToken
+      ? Response.json({ error: 'UserNotAuthorized' }, { status: 403 })
+      : Response.json({ error: 'SpaceNotFound' }, { status: 400 }),
+  )
+  const err = await getSpaceCredential(oauth as any, SPACE, [READER]).catch((e) => e)
+  expect(err.code).toBe('UserNotAuthorized')
 })
 
 test('a refusal names what the authority said', async () => {
@@ -203,7 +239,8 @@ test('a deleted space stops the walk rather than trying everyone', async () => {
   expect(fetchMock).toHaveBeenCalledTimes(1)
 })
 
-test('with no candidate able to read, the failure says so', async () => {
+test('with no candidate able to read and no public access, the failure says so', async () => {
+  fetchMock.mockImplementation(async () => Response.json({ error: 'SpaceNotFound' }, { status: 400 }))
   const err = await getSpaceCredential(oauth as any, SPACE, []).catch((e) => e)
   expect(err.code).toBe('NoReader')
 })

@@ -10,34 +10,46 @@
  *               writer's current rev. Anything whose rev has moved is synced;
  *               anything the authority no longer names is dropped.
  *   sync        one writer's repo, forward from the rev we last read, through
- *               `listRepoOps` — or wholesale through `listRecords` when there
- *               is no rev to start from, or when the op log has been compacted
- *               past it.
+ *               `listRepoOps` — or wholesale through `getRepo` when there is
+ *               no position to start from, or when the op log has been
+ *               compacted past it.
  *
  * Write notices exist too and are far cheaper, but they are best-effort by
- * design: the reference host forwards them once from an in-memory queue and
- * logs the failure. So reconcile is the thing that makes sync correct, and a
- * notice only makes it prompt.
+ * design: a notice that never arrives is recovered only by the next sweep. So
+ * reconcile is the thing that makes sync correct, and a notice only makes it
+ * prompt.
  *
- * What is deliberately not done here is verification. The alpha signs a commit
- * over the repo's LtHash state, and a syncer can check it. hatk does not check
- * the equivalent on the firehose path either — it reads records out of relayed
- * CAR blocks and trusts them — so checking here would claim a guarantee the
- * rest of the index does not make. Adding it means depending on `@atproto/space`
- * for LtHash and the commit verifier, and is worth doing to both paths at once
- * rather than to this one alone.
+ * Everything read is verified before it is indexed. A commit carries no
+ * signature; the writer's host vouches for it with a MAC keyed to this one
+ * request (see mac.ts), and the commit's `data` is the hash of the repo's
+ * whole record set. A full read checks the archive against it. A forward read
+ * folds each op into the set hash held from the last read and checks the
+ * result against the head commit, so ops that do not add up to the repo the
+ * host vouched for are never applied — the writer is read whole instead.
  */
 
 import type { OAuthConfig } from '../config.ts'
 import { getLexicon, getLexiconArray } from '../database/schema.ts'
 import { bulkInsertRecords, deleteRecord, insertRecord, purgeSpaceRecords } from '../database/db.ts'
 import { validateRecord } from '@bigmoves/lexicon'
+import { encode } from '@atproto/lex-cbor'
+import { cidForCbor, parseCid, type LexMap } from '@atproto/lex-data'
+import { jsonToLex, lexToJson, type JsonValue } from '@atproto/lex-json'
+import {
+  type Commit,
+  RepoCommit,
+  RepoVerificationError,
+  verifyCommit,
+  verifyRecord,
+  verifyRepoStarFull,
+} from '@atproto/space'
 import { noteReferencedRepos, trackRepo } from '../indexer.ts'
 import { emit, timer } from '../logger.ts'
 import { isPrivateCollection } from '../private-collections.ts'
 import { listSessionDids } from '../oauth/db.ts'
 import { forgetSpaceCredential, getSpaceCredential, isSpaceGone, type SpaceCredential } from './credential.ts'
 import { repoEndpoint, spaceHostEndpoint } from './identity.ts'
+import { COMMIT_MAC_TYPE, RECORD_MAC_TYPE, requestMac, responseMac } from './mac.ts'
 import {
   deleteSpaceRepo,
   deleteSpaceWatch,
@@ -53,7 +65,6 @@ import {
 import { parseSpaceRef, spaceRecordUri } from './uri.ts'
 
 const OPS_PAGE = 1000
-const RECORDS_PAGE = 100
 
 export interface SpaceEngineOptions {
   oauth: OAuthConfig
@@ -146,17 +157,24 @@ interface SpaceOp {
   value?: Record<string, unknown>
 }
 
-async function credentialedGet(
+/** A repo's position: the rev it was read to, and its set hash there. */
+interface RepoPosition {
+  rev: string
+  setHash: Uint8Array
+}
+
+async function credentialedFetch(
   credential: SpaceCredential,
   endpoint: string,
   nsid: string,
   params: Record<string, string | number | undefined>,
-): Promise<Record<string, any>> {
+  headers?: Record<string, string>,
+): Promise<Response> {
   const url = new URL(`${endpoint}/xrpc/${nsid}`)
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined) url.searchParams.set(key, String(value))
   }
-  const res = await credential.fetch(url)
+  const res = await credential.fetch(url, headers ? { headers } : undefined)
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string }
     const err = new Error(body.message ?? `${nsid} failed (${res.status})`) as Error & {
@@ -167,7 +185,16 @@ async function credentialedGet(
     err.code = body.error
     throw err
   }
-  return (await res.json()) as Record<string, any>
+  return res
+}
+
+async function credentialedGet(
+  credential: SpaceCredential,
+  endpoint: string,
+  nsid: string,
+  params: Record<string, string | number | undefined>,
+): Promise<Record<string, any>> {
+  return (await (await credentialedFetch(credential, endpoint, nsid, params)).json()) as Record<string, any>
 }
 
 function statusOf(err: unknown): number | undefined {
@@ -232,13 +259,49 @@ function indexable(uri: string, collection: string, record: unknown): record is 
 }
 
 /**
- * Apply one page of ops to the index.
+ * The current value of one record, read from its writer's host and checked
+ * against the MAC the host answered with. Null when the record is gone.
+ */
+async function fetchRecord(
+  watch: SpaceWatch,
+  writer: string,
+  collection: string,
+  rkey: string,
+  credential: SpaceCredential,
+  writerHost: string,
+): Promise<{ cid: string; value: Record<string, unknown> } | null> {
+  const uri = spaceRecordUri(watch.space, writer, collection, rkey)
+  const mac = await requestMac(RECORD_MAC_TYPE, writer)
+  let res: Response
+  try {
+    res = await credentialedFetch(
+      credential,
+      writerHost,
+      'com.atproto.space.getRecord',
+      { space: watch.space, repo: writer, collection, rkey },
+      mac.headers,
+    )
+  } catch (err) {
+    if (statusOf(err) === 404 || codeOf(err) === 'RecordNotFound') return null
+    throw err
+  }
+  const out = (await res.json()) as { uri: string; cid: string; value: Record<string, unknown> }
+  const verified = await verifyRecord(
+    { uri: out.uri, cid: out.cid, value: jsonToLex(out.value as JsonValue) as LexMap },
+    { uri, sharedSecret: mac.sharedSecret, mac: responseMac(res, mac) },
+  )
+  if (!verified) throw new RepoVerificationError(`record failed verification: ${uri}`)
+  return { cid: out.cid, value: out.value }
+}
+
+/**
+ * Apply ops to the index, once they have been verified.
  *
  * Ops carry no action: a create has no `prev`, a delete no `cid`, an update
  * both. And `value` is inlined only when it is still the record's current
- * value, so an op superseded later in the same page arrives without one — which
- * is why the final state per rkey is resolved here before anything is written,
- * and why a final op still missing its value has to be fetched.
+ * value, so an op superseded later arrives without one — which is why the
+ * final state per rkey is resolved here before anything is written, and why a
+ * final op still missing its value has to be fetched.
  */
 async function applyOps(
   watch: SpaceWatch,
@@ -267,27 +330,20 @@ async function applyOps(
       continue
     }
 
+    let cid = op.cid
     let value = op.value
     if (!value) {
-      // Superseded within the page, or served metadata-only. Either way the
-      // current value is one round trip away and the alternative is an index
-      // that silently disagrees with the repo.
-      try {
-        const out = await credentialedGet(credential, writerHost, 'com.atproto.space.getRecord', {
-          space: watch.space,
-          repo: writer,
-          collection: op.collection,
-          rkey: op.rkey,
-        })
-        value = out.value as Record<string, unknown> | undefined
-      } catch (err) {
-        if (statusOf(err) === 404 || codeOf(err) === 'RecordNotFound') {
-          await deleteRecord(op.collection, uri)
-          deleted++
-          continue
-        }
-        throw err
+      // Superseded since, or served metadata-only. Either way the current
+      // value is one round trip away and the alternative is an index that
+      // silently disagrees with the repo.
+      const current = await fetchRecord(watch, writer, op.collection, op.rkey, credential, writerHost)
+      if (!current) {
+        await deleteRecord(op.collection, uri)
+        deleted++
+        continue
       }
+      cid = current.cid
+      value = current.value
     }
 
     if (!indexable(uri, op.collection, value)) {
@@ -295,7 +351,7 @@ async function applyOps(
       continue
     }
     noteReferencedRepos(op.collection, op.rkey, value)
-    await insertRecord(op.collection, uri, op.cid, writer, { $type: op.collection, ...value })
+    await insertRecord(op.collection, uri, cid, writer, { $type: op.collection, ...value })
     inserted++
   }
   return { inserted, deleted, skipped }
@@ -303,132 +359,147 @@ async function applyOps(
 
 // --- Sync ---
 
+/** A value an op inlines must be the record its cid names. */
+async function checkOpValue(op: SpaceOp): Promise<void> {
+  if (!op.value || !op.cid) return
+  const cid = await cidForCbor(encode(jsonToLex(op.value as JsonValue)))
+  if (!cid.equals(parseCid(op.cid))) {
+    throw new RepoVerificationError(`op value does not match its cid: ${op.collection}/${op.rkey}`)
+  }
+}
+
 /**
  * Read one writer's repo forward from where we left it.
  *
- * Returns the rev the repo was read to, or null if the op log could not carry
- * us there — the log is a transport optimization with no history guarantee, so
- * a host may have compacted past our position, and the answer then is a full
- * read rather than a gap.
+ * Every op is folded into the set hash held at our position, and the result
+ * must match the head commit the host MACs; nothing is applied until it does.
+ * Returns null if the op log could not carry us to the head — the log is a
+ * transport optimization with no history guarantee, so a host may have
+ * compacted past our position, and the answer then is a full read rather
+ * than a gap.
  */
 async function syncForward(
   watch: SpaceWatch,
   writer: string,
-  since: string,
+  from: RepoPosition,
   credential: SpaceCredential,
   writerHost: string,
-): Promise<string | null> {
+): Promise<RepoPosition | null> {
+  const repo = RepoCommit.fromState(from.setHash)
+  const ops: SpaceOp[] = []
   let cursor: string | undefined
-  let head: string | null = null
-  let totals = { inserted: 0, deleted: 0, skipped: 0 }
+  let head: Commit | null = null
 
   for (let page = 0; page < 100; page++) {
-    const out = await credentialedGet(credential, writerHost, 'com.atproto.space.listRepoOps', {
-      space: watch.space,
-      repo: writer,
-      since,
-      cursor,
-      limit: OPS_PAGE,
-    })
-    const ops = (out.ops ?? []) as SpaceOp[]
-    const applied = await applyOps(watch, writer, ops, credential, writerHost)
-    totals = {
-      inserted: totals.inserted + applied.inserted,
-      deleted: totals.deleted + applied.deleted,
-      skipped: totals.skipped + applied.skipped,
+    // A fresh key share per request: a MAC is only ever good for one.
+    const mac = await requestMac(COMMIT_MAC_TYPE, writer)
+    const res = await credentialedFetch(
+      credential,
+      writerHost,
+      'com.atproto.space.listRepoOps',
+      { space: watch.space, repo: writer, since: from.rev, cursor, limit: OPS_PAGE },
+      mac.headers,
+    )
+    const out = (await res.json()) as { ops?: SpaceOp[]; commit?: JsonValue; cursor?: string }
+    for (const op of out.ops ?? []) {
+      await checkOpValue(op)
+      repo.applyOp({
+        collection: op.collection as `${string}.${string}.${string}`,
+        rkey: op.rkey,
+        cid: op.cid ? parseCid(op.cid) : null,
+        prev: op.prev ? parseCid(op.prev) : null,
+      })
+      ops.push(op)
     }
 
     // The commit describes the head, so it only appears once the response has
     // reached it; a full page has more behind it and carries a cursor instead.
-    const commitRev = out.commit?.rev
-    if (typeof commitRev === 'string') {
-      head = commitRev
+    if (out.commit) {
+      const commit = jsonToLex(out.commit) as unknown as Commit
+      const params = { space: watch.space, repo: writer, sharedSecret: mac.sharedSecret, mac: responseMac(res, mac) }
+      if (!verifyCommit(commit, params)) throw new RepoVerificationError('commit failed verification')
+      head = commit
       break
     }
     cursor = typeof out.cursor === 'string' ? out.cursor : undefined
     if (!cursor) break
   }
 
+  if (!head) return null
+  if (!repo.matches(head)) throw new RepoVerificationError('ops do not add up to the commit')
+
+  const totals = await applyOps(watch, writer, ops, credential, writerHost)
   if (totals.inserted || totals.deleted || totals.skipped) {
-    emit('spaces', 'sync_ops', { space: watch.space, writer, ...totals, head })
+    emit('spaces', 'sync_ops', { space: watch.space, writer, ...totals, head: head.rev })
   }
-  return head
+  return { rev: head.rev, setHash: repo.setHash.state() }
 }
 
 /**
  * Read a writer's whole repo in a space and replace what the index holds for it.
  *
- * The rev is taken before the read, not after: a write landing mid-read is then
- * re-read on the next sweep rather than skipped, which is the direction to be
- * wrong in.
+ * One archive, the commit its metadata and every record after it, checked
+ * against the MAC before a record is trusted and against the commit's set
+ * hash once the last one is in.
  */
 async function syncFull(
   watch: SpaceWatch,
   writer: string,
   credential: SpaceCredential,
   writerHost: string,
-): Promise<string | null> {
+): Promise<RepoPosition | null> {
   const collections = collectionsForSpaceType(watch.spaceType)
   if (collections.length === 0) return null
 
-  let rev: string | null = null
+  const mac = await requestMac(COMMIT_MAC_TYPE, writer)
+  let res: Response
   try {
-    const out = await credentialedGet(credential, writerHost, 'com.atproto.space.getLatestCommit', {
-      space: watch.space,
-      repo: writer,
-    })
-    rev = typeof out.commit?.rev === 'string' ? out.commit.rev : null
+    res = await credentialedFetch(
+      credential,
+      writerHost,
+      'com.atproto.space.getRepo',
+      { space: watch.space, repo: writer },
+      mac.headers,
+    )
   } catch (err) {
     // A writer the authority named but whose host holds no repo for them yet:
     // nothing to read, and nothing wrong.
     if (statusOf(err) === 404 || codeOf(err) === 'RepoNotFound') return null
     throw err
   }
+  if (!res.body) throw new RepoVerificationError('getRepo returned no archive')
+  const { commit, records } = await verifyRepoStarFull(res.body as unknown as AsyncIterable<Uint8Array>, {
+    space: watch.space,
+    repo: writer,
+    sharedSecret: mac.sharedSecret,
+    mac: responseMac(res, mac),
+  })
 
-  const records: { collection: string; uri: string; cid: string; did: string; record: Record<string, any> }[] = []
+  const wanted = new Set(collections)
+  const rows: { collection: string; uri: string; cid: string; did: string; record: Record<string, any> }[] = []
   let skipped = 0
-  for (const collection of collections) {
-    let cursor: string | undefined
-    for (let page = 0; page < 200; page++) {
-      let out: Record<string, any>
-      try {
-        out = await credentialedGet(credential, writerHost, 'com.atproto.space.listRecords', {
-          space: watch.space,
-          repo: writer,
-          collection,
-          cursor,
-          limit: RECORDS_PAGE,
-        })
-      } catch (err) {
-        // `RepoNotFound` here means this writer holds nothing in the space,
-        // which the lexicon notes does not distinguish a member who has never
-        // written from someone who is not one. Either way: no records.
-        if (statusOf(err) === 404 || codeOf(err) === 'RepoNotFound') break
-        throw err
-      }
-      for (const rec of (out.records ?? []) as { rkey: string; cid: string; value?: Record<string, unknown> }[]) {
-        if (!indexable(spaceRecordUri(watch.space, writer, collection, rec.rkey), collection, rec.value)) {
-          skipped++
-          continue
-        }
-        noteReferencedRepos(collection, rec.rkey, rec.value)
-        records.push({
-          collection,
-          uri: spaceRecordUri(watch.space, writer, collection, rec.rkey),
-          cid: rec.cid,
-          did: writer,
-          record: { $type: collection, ...rec.value },
-        })
-      }
-      cursor = typeof out.cursor === 'string' ? out.cursor : undefined
-      if (!cursor) break
+  for (const rec of records) {
+    if (!wanted.has(rec.collection)) continue
+    const uri = spaceRecordUri(watch.space, writer, rec.collection, rec.rkey)
+    const value = lexToJson(rec.record) as Record<string, unknown>
+    if (!indexable(uri, rec.collection, value)) {
+      skipped++
+      continue
     }
+    noteReferencedRepos(rec.collection, rec.rkey, value)
+    rows.push({
+      collection: rec.collection,
+      uri,
+      cid: rec.cid.toString(),
+      did: writer,
+      record: { $type: rec.collection, ...value },
+    })
   }
 
   await purgeSpaceRecords(watch.space, writer, collections)
-  const inserted = records.length > 0 ? await bulkInsertRecords(records) : 0
-  emit('spaces', 'sync_full', { space: watch.space, writer, inserted, skipped, rev })
-  return rev
+  const inserted = rows.length > 0 ? await bulkInsertRecords(rows) : 0
+  emit('spaces', 'sync_full', { space: watch.space, writer, inserted, skipped, rev: commit.rev })
+  return { rev: commit.rev, setHash: RepoCommit.fromRecords(records).setHash.state() }
 }
 
 /** Bring one writer's repo in a space up to date, however that has to happen. */
@@ -436,10 +507,11 @@ export async function syncSpaceRepo(watch: SpaceWatch, writer: string, credentia
   const writerHost = await repoEndpoint(writer)
   const local = await getSpaceRepo(watch.space, writer)
 
-  let rev: string | null = null
-  if (local?.rev) {
+  let position: RepoPosition | null = null
+  if (local?.rev && local.setHash) {
     try {
-      rev = await syncForward(watch, writer, local.rev, credential, writerHost)
+      const from = { rev: local.rev, setHash: new Uint8Array(Buffer.from(local.setHash, 'base64')) }
+      position = await syncForward(watch, writer, from, credential, writerHost)
     } catch (err) {
       if (statusOf(err) === 401) throw err
       emit('spaces', 'incremental_fell_back', {
@@ -448,13 +520,19 @@ export async function syncSpaceRepo(watch: SpaceWatch, writer: string, credentia
         since: local.rev,
         error: err instanceof Error ? err.message : String(err),
       })
-      rev = null
+      position = null
     }
   }
-  if (!rev) rev = await syncFull(watch, writer, credential, writerHost)
-  if (!rev) return
+  if (!position) position = await syncFull(watch, writer, credential, writerHost)
+  if (!position) return
 
-  await putSpaceRepo({ space: watch.space, did: writer, pds: writerHost, rev })
+  await putSpaceRepo({
+    space: watch.space,
+    did: writer,
+    pds: writerHost,
+    rev: position.rev,
+    setHash: Buffer.from(position.setHash).toString('base64'),
+  })
 }
 
 // --- Reconcile ---

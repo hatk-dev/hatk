@@ -8,9 +8,8 @@
  * job, with its own credential.
  *
  * This only makes sync prompt, never correct. Delivery is best-effort by
- * design: the reference host forwards each notice once from an in-memory queue
- * and logs the failure, so a missed one is recovered by the reconcile sweep or
- * by the next write. Nothing here may be load-bearing.
+ * design, so a missed one is recovered by the reconcile sweep or by the next
+ * write. Nothing here may be load-bearing.
  *
  * ## Why this needs its own verifier
  *
@@ -107,19 +106,13 @@ export interface WriteNotice {
   spaceRev?: string
 }
 
-/**
- * A forwarded notice is `{ space, repo, repoRev, hash, spaceRev, prevSpaceRev? }`.
- * An authority on a release before the space-revision split sends `rev` in
- * place of `repoRev` and no `spaceRev`; that is read too, since nothing here
- * depends on either beyond knowing which repo to look at.
- */
+/** A forwarded notice is `{ space, repo, repoRev, data, spaceRev, prevSpaceRev? }`. */
 export function parseWriteNotice(body: unknown): WriteNotice | null {
   if (!body || typeof body !== 'object') return null
-  const { space, repo, repoRev, rev, spaceRev } = body as Record<string, unknown>
-  const at = typeof repoRev === 'string' ? repoRev : rev
-  if (typeof space !== 'string' || typeof repo !== 'string' || typeof at !== 'string') return null
+  const { space, repo, repoRev, spaceRev } = body as Record<string, unknown>
+  if (typeof space !== 'string' || typeof repo !== 'string' || typeof repoRev !== 'string') return null
   if (!parseSpaceRef(space) || !repo.startsWith('did:')) return null
-  return { space, repo, repoRev: at, ...(typeof spaceRev === 'string' ? { spaceRev } : {}) }
+  return { space, repo, repoRev, ...(typeof spaceRev === 'string' ? { spaceRev } : {}) }
 }
 
 /**

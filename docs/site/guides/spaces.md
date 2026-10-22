@@ -38,9 +38,9 @@ Leave `spaces` out and none of this runs. No space row is indexed, and every rea
 
 ### Why OAuth is required
 
-hatk is a member of nothing. Reading a space begins with a delegation token from the reader's **own** PDS, so an instance holding no sessions has no way in at all. hatk borrows a signed-in member's delegation, exchanges it with the authority for a credential, and reads as them.
+hatk is a member of nothing. Reading a space begins with a delegation token from the reader's **own** PDS, so an instance holding no sessions has no way in. hatk borrows a signed-in member's delegation, exchanges it with the authority for a credential, and reads as them.
 
-The consequence worth planning around: a space is only indexed while somebody who can read it has a live session on your instance.
+The consequence worth planning around: a space is only indexed while somebody who can read it has a live session on your instance. The exception is a space whose read policy is public: its authority issues a credential to anyone who asks, so hatk reads it with no session behind it when nobody signed in can.
 
 ### The DID document
 
@@ -50,7 +50,7 @@ When `serviceDid` is set, hatk serves the matching document at `/.well-known/did
 
 A record indexed from a space carries the space it came from, and is served only to a request that has proven it may read that space. That proof is not hatk's opinion: it mints a credential as the viewer and takes the authority's answer, cached briefly.
 
-**A signed-out visitor is never shown a space record.** `readableBy: ["public"]` in the spaces protocol means any _authenticated_ reader, not anyone, and there is no anonymous read path into a space.
+**A signed-out visitor is never shown a space record from the index**, even from a public space: the index serves a space's rows to viewers the authority has admitted by name. To show a public space to visitors, read it yourself with `publicSpaceCredential` (below).
 
 ### The helpers built for it
 
@@ -152,7 +152,11 @@ const res = await credential.fetch(
 )
 ```
 
-hatk signs each request for the account it reads — the `repo` it names, or the space's authority for `listRepos` — and caches the credential per viewer until shortly before it expires. When the viewer may not read the space it throws a `SpaceCredentialError` whose `status` and `code` are the authority's; with no viewer, the status is 401. If a host refuses a credential that has not expired, call again with `{ refresh: true }`. After something that may change the viewer's standing in a space, such as leaving it, `ctx.forgetSpaceCredential(space)` drops the cached one.
+hatk presents it as `Authorization: Atproto-Space-Credential …`, signs each request for the account it reads — the `repo` it names, or the space's authority for `listRepos` — and caches the credential per viewer until shortly before it expires. When the viewer may not read the space it throws a `SpaceCredentialError` whose `status` and `code` are the authority's; with no viewer, the status is 401. If a host refuses a credential that has not expired, call again with `{ refresh: true }`. After something that may change the viewer's standing in a space, such as leaving it, `ctx.forgetSpaceCredential(space)` drops the cached one.
+
+`getRecord`, `getRepo`, `getLatestCommit` and `listRepoOps` refuse a credential that does not also ask for a MAC (`BadSpaceMac`); `listRecords`, `listRepos` and `getBlob` do not. hatk's own sync asks for one on every request and checks it.
+
+A space whose read policy is public needs no viewer. `publicSpaceCredential(space)` from `@hatk/hatk/spaces` gets a credential with no session behind it, cached the same way; for any other space it throws a `SpaceCredentialError` with code `NotPublic`.
 
 ## What to expect
 
@@ -164,4 +168,4 @@ hatk signs each request for the account it reads — the `repo` it names, or the
 
 **Records are validated.** A record that fails its lexicon is skipped, the same as one arriving over the firehose.
 
-**Nothing is cryptographically verified.** hatk trusts the repo host it read from, which is the same posture it takes toward the relay on the firehose path.
+**Space records are verified.** Each writer's host vouches for the commit it serves with a MAC keyed to that one request, against the writer's `#atproto_kem` key, and the commit hashes the repo's whole record set. A full read checks the archive against it; a forward read checks that the ops add up to it, and reads the writer whole when they do not. The firehose path still trusts the relay.

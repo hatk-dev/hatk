@@ -26,7 +26,9 @@ export {
 } from './engine.ts'
 export {
   getSpaceCredential,
+  mintPublicSpaceCredential,
   mintSpaceCredential,
+  publicSpaceCredential,
   readerSpaceCredential,
   forgetReaderSpaceCredential,
   isNotAuthorized,
@@ -63,7 +65,7 @@ export {
   verifyNotice,
   type WriteNotice,
 } from './notify.ts'
-export { generateSpaceSigKey, spaceSigHeaders, type SpaceSigKey } from './signature.ts'
+export { CREDENTIAL_SCHEME, generateSpaceSigKey, spaceSigHeaders, type SpaceSigKey } from './signature.ts'
 export * from './uri.ts'
 export { asPreset, blobCid, resetSpaceBlobCache, type SpaceBlobPreset, spaceBlobUrl } from './blob.ts'
 export { records, requireSpace, spaceRecords } from './records.ts'
