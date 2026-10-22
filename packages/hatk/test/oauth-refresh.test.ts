@@ -3,7 +3,10 @@ import { initOAuth, refreshPdsSession } from '../src/oauth/server.ts'
 import { OAUTH_DDL, getSession, storeSession } from '../src/oauth/db.ts'
 import { parseJwt } from '../src/oauth/crypto.ts'
 import { runSQL } from '../src/database/db.ts'
+import { emit } from '../src/logger.ts'
 import { setupFixtureDatabase } from './fixture.ts'
+
+vi.mock('../src/logger.ts', { spy: true })
 
 // A PDS access token lives an hour; the session lives months. Everything
 // between is `refreshPdsSession`, and a wrong answer here either logs a user
@@ -190,6 +193,28 @@ describe('refreshPdsSession', () => {
     expect(await getSession(DID)).toBeNull()
   })
 
+  test('a refused refresh logs why, since the status is the same for every reason', async () => {
+    vi.mocked(emit).mockClear()
+    stubFetch((_url, n) =>
+      n === 1
+        ? json({ error: 'use_dpop_nonce' }, 400, { 'DPoP-Nonce': 'n-1' })
+        : json({ error: 'invalid_grant', error_description: 'Refresh token replayed' }, 400),
+    )
+
+    await refreshPdsSession(config, fullSession)
+
+    const refusals = vi.mocked(emit).mock.calls.filter(([m, o]) => m === 'oauth' && o === 'pds_session_refresh_error')
+    expect(refusals.map(([, , data]) => data)).toEqual([
+      {
+        status: 400,
+        did: DID,
+        pds_endpoint: PDS,
+        error: 'invalid_grant',
+        error_description: 'Refresh token replayed',
+      },
+    ])
+  })
+
   test('a refusal after the nonce retry also drops the session', async () => {
     stubFetch((_url, n) =>
       n === 1 ? json({ error: 'use_dpop_nonce' }, 400, { 'DPoP-Nonce': 'n-1' }) : json({ error: 'invalid_grant' }, 400),
@@ -219,5 +244,80 @@ describe('refreshPdsSession', () => {
     // RFC 8252: the redirect is on 127.0.0.1, never the literal "localhost".
     expect(clientId.searchParams.get('redirect_uri')).toBe('http://127.0.0.1:3000/oauth/callback')
     expect(clientId.searchParams.get('scope')).toBe('atproto repo:x')
+  })
+
+  describe('one refresh per DID', () => {
+    // The reference auth server revokes a whole grant when a refresh token is
+    // used twice. Every case here is a second caller that must not spend one.
+
+    test('callers that find the token expired together share one exchange', async () => {
+      let release!: () => void
+      const held = new Promise<void>((resolve) => (release = resolve))
+      const calls: Call[] = []
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+          calls.push({ url: String(input), init })
+          await held
+          return json(granted)
+        }),
+      )
+
+      const first = refreshPdsSession(config, { ...fullSession, access_token: 'at-old' })
+      const second = refreshPdsSession(config, { ...fullSession, access_token: 'at-old' })
+      release()
+
+      expect(await first).toMatchObject({ accessToken: 'at-new', refreshToken: 'rt-new' })
+      expect(await second).toMatchObject({ accessToken: 'at-new', refreshToken: 'rt-new' })
+      expect(calls).toHaveLength(1)
+      expect((await getSession(DID)).refresh_token).toBe('rt-new')
+    })
+
+    test('a caller holding a session read before a finished refresh gets what it stored', async () => {
+      stubFetch(() => json(granted))
+      await refreshPdsSession(config, fullSession)
+      const calls = stubFetch(() => json({ error: 'invalid_grant' }, 400))
+
+      const result = await refreshPdsSession(config, { ...fullSession, access_token: 'at-old' })
+
+      expect(result).toEqual({ accessToken: 'at-new', refreshToken: 'rt-new', expiresAt: expect.any(Number) })
+      expect(calls).toHaveLength(0)
+      expect((await getSession(DID)).access_token).toBe('at-new')
+    })
+
+    test('a renewal that kept the refresh token is told apart by the access token', async () => {
+      stubFetch(() => json({ access_token: 'at-new', expires_in: 3600 }))
+      await refreshPdsSession(config, fullSession)
+      const calls = stubFetch(() => json({ error: 'invalid_grant' }, 400))
+
+      const result = await refreshPdsSession(config, { ...fullSession, access_token: 'at-old' })
+
+      expect(result).toMatchObject({ accessToken: 'at-new', refreshToken: 'rt-old' })
+      expect(calls).toHaveLength(0)
+    })
+
+    test('a caller whose session ended meanwhile asks nothing', async () => {
+      await runSQL('DELETE FROM _oauth_sessions')
+      const calls = stubFetch(() => json(granted))
+
+      expect(await refreshPdsSession(config, { ...fullSession, access_token: 'at-old' })).toBeNull()
+      expect(calls).toHaveLength(0)
+    })
+
+    test('the next expiry refreshes again', async () => {
+      stubFetch(() => json(granted))
+      await refreshPdsSession(config, { ...fullSession, access_token: 'at-old' })
+      const calls = stubFetch(() => json({ access_token: 'at-3', refresh_token: 'rt-3', expires_in: 3600 }))
+
+      const result = await refreshPdsSession(config, {
+        ...fullSession,
+        access_token: 'at-new',
+        refresh_token: 'rt-new',
+      })
+
+      expect(result?.accessToken).toBe('at-3')
+      expect(calls).toHaveLength(1)
+      expect(formOf(calls[0]).get('refresh_token')).toBe('rt-new')
+    })
   })
 })

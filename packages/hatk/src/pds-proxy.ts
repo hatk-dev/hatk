@@ -74,10 +74,21 @@ function withheldByServer(session: ProxySession): boolean {
 }
 
 /** End the session so the user authorizes again — unless that could not help. */
-async function refuseForScope(session: ProxySession): Promise<never> {
+async function refuseForScope(session: ProxySession, pdsUrl: string, refusal: PdsProxyResult): Promise<never> {
   if (withheldByServer(session)) throw new ScopeWithheldProxyError()
+  emit('oauth', 'pds_session_ended', {
+    did: session.did,
+    nsid: nsidOf(pdsUrl),
+    status: refusal.status,
+    error: refusal.body.error,
+    message: refusal.body.message,
+  })
   await deleteSession(session.did)
   throw new ScopeMissingProxyError()
+}
+
+function nsidOf(pdsUrl: string): string {
+  return new URL(pdsUrl).pathname.replace(/^\/xrpc\//, '')
 }
 
 // --- Low-level PDS proxy with DPoP + nonce retry + token refresh ---
@@ -95,6 +106,28 @@ type FetchFn = (token: string, nonce?: string) => Promise<PdsProxyResult>
 async function withDpopRetry(
   oauthConfig: OAuthConfig,
   session: ProxySession,
+  pdsUrl: string,
+  doFetch: FetchFn,
+): Promise<PdsProxyResult> {
+  const result = await fetchWithDpopRetry(oauthConfig, session, pdsUrl, doFetch)
+  // Callers pass on only the error name; the message is what says which blob
+  // was missing or which record was refused.
+  if (!result.ok) {
+    emit('pds', 'refused', {
+      did: session.did,
+      nsid: nsidOf(pdsUrl),
+      status: result.status,
+      error: result.body.error,
+      message: result.body.message,
+    })
+  }
+  return result
+}
+
+async function fetchWithDpopRetry(
+  oauthConfig: OAuthConfig,
+  session: ProxySession,
+  pdsUrl: string,
   doFetch: FetchFn,
 ): Promise<PdsProxyResult> {
   let accessToken = session.access_token
@@ -114,7 +147,7 @@ async function withDpopRetry(
   }
 
   // Step 2: handle insufficient scope — see refuseForScope
-  if (result.body.error === 'ScopeMissingError') await refuseForScope(session)
+  if (result.body.error === 'ScopeMissingError') await refuseForScope(session, pdsUrl, result)
 
   // Step 3: handle expired PDS token — refresh and retry
   if (isTokenError(result.body.error)) {
@@ -138,7 +171,7 @@ async function withDpopRetry(
       // handled above; pds.js answers InvalidToken for a scope its permissioned
       // space endpoints refuse, which is indistinguishable from expiry until
       // the refresh rules expiry out.
-      if (!result.ok && isTokenError(result.body.error)) await refuseForScope(session)
+      if (!result.ok && isTokenError(result.body.error)) await refuseForScope(session, pdsUrl, result)
     }
   }
 
@@ -189,7 +222,7 @@ async function proxyToPds(
   const privateJwk = JSON.parse(serverKey!.privateKey)
   const publicJwk = JSON.parse(serverKey!.publicKey)
 
-  return withDpopRetry(oauthConfig, session, async (token, nonce) => {
+  return withDpopRetry(oauthConfig, session, pdsUrl, async (token, nonce) => {
     const proof = await createDpopProof(privateJwk, publicJwk, method, pdsUrl, token, nonce)
     // A GET carries no body, and sending a JSON content-type without one makes
     // some servers try to parse it. Queries reach here through pdsXrpc.
@@ -220,7 +253,7 @@ async function proxyToPdsRaw(
   const privateJwk = JSON.parse(serverKey!.privateKey)
   const publicJwk = JSON.parse(serverKey!.publicKey)
 
-  return withDpopRetry(oauthConfig, session, async (token, nonce) => {
+  return withDpopRetry(oauthConfig, session, pdsUrl, async (token, nonce) => {
     const proof = await createDpopProof(privateJwk, publicJwk, 'POST', pdsUrl, token, nonce)
     const res = await fetch(pdsUrl, {
       method: 'POST',

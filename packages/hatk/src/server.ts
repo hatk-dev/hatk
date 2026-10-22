@@ -498,7 +498,7 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
     adminStats = null
   }
 
-  return async (request: Request): Promise<Response> => {
+  const route = async (request: Request, logRequest: (fields: Record<string, unknown>) => void): Promise<Response> => {
     const url = new URL(request.url)
     const acceptEncoding = request.headers.get('accept-encoding')
 
@@ -1731,9 +1731,10 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
       return withCors(jsonError(500, err.message, acceptEncoding))
     } finally {
       if ((isXrpc || isAdmin) && elapsed) {
-        emit('server', 'request', {
+        logRequest({
           method: request.method,
           path: url.pathname,
+          viewer: viewer?.did,
           duration_ms: elapsed(),
           collection: url.searchParams.get('collection') || undefined,
           query: url.searchParams.get('q') || undefined,
@@ -1741,6 +1742,15 @@ export function createHandler(config: HandlerConfig): (request: Request) => Prom
         })
       }
     }
+  }
+
+  // The status is only known once a route has answered, and routes answer from
+  // dozens of places, so the line is written here rather than inside.
+  return async (request: Request): Promise<Response> => {
+    let fields: Record<string, unknown> | undefined
+    const response = await route(request, (logged) => (fields = logged))
+    if (fields) emit('server', 'request', { ...fields, status: response.status })
+    return response
   }
 }
 

@@ -33,6 +33,7 @@ import {
   storeAuthCode,
   consumeAuthCode,
   storeSession,
+  getSession,
   deleteSession,
   checkAndStoreDpopJti,
   cleanupExpiredOAuth,
@@ -1167,21 +1168,69 @@ export async function obtainSession(
 
 // --- PDS Session Refresh ---
 
+type RefreshableSession = {
+  did: string
+  pds_endpoint: string
+  pds_auth_server?: string
+  pds_token_endpoint?: string
+  /** The access token the caller was refused with, when it has one. */
+  access_token?: string
+  refresh_token: string
+  dpop_jkt: string
+  requested_scope?: string | null
+  granted_scope?: string | null
+}
+
+type RefreshedTokens = { accessToken: string; refreshToken?: string; expiresAt?: number }
+
+/** The refresh in flight for each DID, which every caller arriving meanwhile shares. */
+const refreshesInFlight = new Map<string, Promise<RefreshedTokens | null>>()
+
+/**
+ * Renew a PDS session's access token, once per DID at a time.
+ *
+ * A refresh token is single-use, and the reference auth server treats a second
+ * use as theft: it answers `invalid_grant` and revokes the whole grant, the
+ * tokens just issued to the first use included. Two requests that find the
+ * access token expired together — an upload and the client's retry of it, say
+ * — would each spend the same refresh token, and the second would sign the
+ * user out. So a caller arriving while a refresh is in flight waits for that
+ * one, and a caller holding a session read before someone else's refresh
+ * finished is handed the tokens that refresh stored rather than replaying the
+ * spent one.
+ */
 export async function refreshPdsSession(
   config: OAuthConfig,
-  session: {
-    did: string
-    pds_endpoint: string
-    pds_auth_server?: string
-    pds_token_endpoint?: string
-    refresh_token: string
-    dpop_jkt: string
-    requested_scope?: string | null
-    granted_scope?: string | null
-  },
-): Promise<{ accessToken: string; refreshToken?: string; expiresAt?: number } | null> {
+  session: RefreshableSession,
+): Promise<RefreshedTokens | null> {
   if (!session.refresh_token) return null
 
+  const inFlight = refreshesInFlight.get(session.did)
+  if (inFlight) return inFlight
+
+  const refresh = refreshUnlessRenewed(config, session).finally(() => refreshesInFlight.delete(session.did))
+  refreshesInFlight.set(session.did, refresh)
+  return refresh
+}
+
+async function refreshUnlessRenewed(config: OAuthConfig, session: RefreshableSession): Promise<RefreshedTokens | null> {
+  const stored = await getSession(session.did)
+  // A refresh that failed meanwhile ended the session; asking again would fail too.
+  if (!stored) return null
+  const renewed =
+    stored.refresh_token !== session.refresh_token ||
+    (session.access_token !== undefined && stored.access_token !== session.access_token)
+  if (renewed) {
+    return {
+      accessToken: stored.access_token,
+      refreshToken: stored.refresh_token ?? undefined,
+      expiresAt: stored.token_expires_at == null ? undefined : Number(stored.token_expires_at),
+    }
+  }
+  return exchangeRefreshToken(config, session)
+}
+
+async function exchangeRefreshToken(config: OAuthConfig, session: RefreshableSession): Promise<RefreshedTokens | null> {
   // Prefer the endpoint the auth server advertised when this session was
   // authorized. Sessions predating that column fall back to the auth server
   // (or, older still, the PDS) with the path this used to hardcode.
@@ -1213,8 +1262,9 @@ export async function refreshPdsSession(
   })
 
   // Handle DPoP nonce retry
+  let errBody: Record<string, unknown> = {}
   if (!tokenRes.ok) {
-    const errBody = await tokenRes.json().catch(() => ({}))
+    errBody = await tokenRes.json().catch(() => ({}))
     if (errBody.error === 'use_dpop_nonce') {
       const nonce = tokenRes.headers.get('DPoP-Nonce')
       if (nonce) {
@@ -1231,15 +1281,20 @@ export async function refreshPdsSession(
           headers: { 'Content-Type': 'application/x-www-form-urlencoded', DPoP: retryProof },
           body: body.toString(),
         })
+        if (!tokenRes.ok) errBody = await tokenRes.json().catch(() => ({}))
       }
     }
   }
 
   if (!tokenRes.ok) {
+    // The description is what tells a replayed refresh token from a revoked
+    // or expired grant; the status is 400 for all of them.
     emit('oauth', 'pds_session_refresh_error', {
       status: tokenRes.status,
       did: session.did,
       pds_endpoint: session.pds_endpoint,
+      error: errBody.error,
+      error_description: errBody.error_description,
     })
     await deleteSession(session.did)
     return null

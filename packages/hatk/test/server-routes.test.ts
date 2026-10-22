@@ -11,12 +11,15 @@ import { registerOgHandler } from '../src/opengraph.ts'
 import { registerRenderer } from '../src/renderer.ts'
 import { configurePlc } from '../src/backfill.ts'
 import { getRepoStatus, getSchema, insertLabels, insertRecord, runSQL, setRepoStatus } from '../src/database/db.ts'
+import { emit } from '../src/logger.ts'
 import { setupFixtureDatabase, PUBLIC_COLLECTION } from './fixture.ts'
 
 // The public surface of the server, without OAuth: the dev.hatk.* read
 // endpoints and their parameter handling, custom XRPC dispatch and error
 // mapping, the repo endpoints clients use to enrol themselves, and the static
 // file / SPA / SSR fallback chain.
+
+vi.mock('../src/logger.ts', { spy: true })
 
 const backfill = vi.hoisted(() => ({ triggerAutoBackfill: vi.fn(async () => {}) }))
 vi.mock('../src/indexer.ts', async (importOriginal) => ({
@@ -68,6 +71,17 @@ test('a CORS preflight is answered for any path without touching a route', async
   expect(res.status).toBe(200)
   expect(res.headers.get('access-control-allow-origin')).toBe('*')
   expect(res.headers.get('access-control-allow-methods')).toContain('POST')
+})
+
+test('every XRPC request is logged with who asked and how it was answered', async () => {
+  viewer = { did: ALICE }
+  vi.mocked(emit).mockClear()
+
+  await get('/xrpc/dev.hatk.getRecords')
+
+  const logged = vi.mocked(emit).mock.calls.filter(([mod, op]) => mod === 'server' && op === 'request')
+  expect(logged).toHaveLength(1)
+  expect(logged[0][2]).toMatchObject({ method: 'GET', path: '/xrpc/dev.hatk.getRecords', viewer: ALICE, status: 400 })
 })
 
 test('the health check answers ok', async () => {

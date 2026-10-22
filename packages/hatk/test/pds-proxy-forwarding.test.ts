@@ -14,7 +14,16 @@ import { OAUTH_DDL, getSession, storeSession } from '../src/oauth/db.ts'
 import { parseJwt, base64UrlEncode, sha256 } from '../src/oauth/crypto.ts'
 import { insertRecord, querySQL, runSQL } from '../src/database/db.ts'
 import { storeLexicons } from '../src/database/schema.ts'
+import { emit } from '../src/logger.ts'
 import { PUBLIC_COLLECTION, fixtureLexicons, setupFixtureDatabase } from './fixture.ts'
+
+vi.mock('../src/logger.ts', { spy: true })
+
+const logged = (mod: string, op: string) =>
+  vi
+    .mocked(emit)
+    .mock.calls.filter(([m, o]) => m === mod && o === op)
+    .map(([, , data]) => data)
 
 // Every write a user makes goes through here to their PDS, with our session
 // on their behalf. What matters is what reaches the PDS (method, headers,
@@ -210,6 +219,39 @@ describe('token refresh on the way through', () => {
     expect(proofOf(pds[2]).nonce).toBe('n-2')
   })
 
+  test('a refusal is logged with the message the caller does not pass on', async () => {
+    vi.mocked(emit).mockClear()
+    stubPds(() => json({ error: 'InvalidRequest', message: 'Could not find blob: bafy-gone' }, 400))
+
+    await expect(
+      pdsXrpc(config, viewer, 'com.atproto.repo.applyWrites', { method: 'POST', body: {} }),
+    ).rejects.toMatchObject({
+      status: 400,
+      message: 'InvalidRequest',
+    })
+
+    expect(logged('pds', 'refused')).toEqual([
+      {
+        did: DID,
+        nsid: 'com.atproto.repo.applyWrites',
+        status: 400,
+        error: 'InvalidRequest',
+        message: 'Could not find blob: bafy-gone',
+      },
+    ])
+  })
+
+  test('a session ended for scope says so in the log', async () => {
+    vi.mocked(emit).mockClear()
+    stubPds(() => json({ error: 'InvalidToken', message: 'Bad token scope' }, 401))
+
+    await expect(pdsXrpc(config, viewer, 'com.atproto.space.listRepos')).rejects.toBeInstanceOf(ScopeMissingProxyError)
+
+    expect(logged('oauth', 'pds_session_ended')).toEqual([
+      { did: DID, nsid: 'com.atproto.space.listRepos', status: 401, error: 'InvalidToken', message: 'Bad token scope' },
+    ])
+  })
+
   test('a PDS that names a missing scope ends the session and says so', async () => {
     // Re-authorizing is the only fix; a stale grant must not linger.
     stubPds(() => json({ error: 'ScopeMissingError' }, 403))
@@ -241,6 +283,42 @@ describe('token refresh on the way through', () => {
     // No replay without a new token, and the failed refresh already dropped the session.
     expect(pdsCalls(calls)).toHaveLength(1)
     expect(await getSession(DID)).toBeNull()
+  })
+
+  test('two uploads that find the token expired together keep the session', async () => {
+    // An upload and the client's retry of it, an hour after the last write.
+    // The auth server treats refresh tokens as the reference one does: each
+    // works once, and a second use revokes the grant.
+    // at-old has expired; only a token minted here is accepted.
+    let access: string | undefined
+    let refresh = 'rt-old'
+    let minted = 0
+    const calls = stubPds(
+      (_url, init) =>
+        (init!.headers as any).Authorization === `DPoP ${access}`
+          ? json({ blob: { ref: access } })
+          : json({ error: 'InvalidToken' }, 401),
+      () => {
+        const presented = new URLSearchParams(String(calls.at(-1)!.init?.body)).get('refresh_token')
+        if (presented !== refresh) {
+          access = refresh = 'revoked'
+          return json({ error: 'invalid_grant', error_description: 'Refresh token replayed' }, 400)
+        }
+        minted++
+        access = `at-${minted}`
+        refresh = `rt-${minted}`
+        return json({ access_token: access, refresh_token: refresh, expires_in: 3600 })
+      },
+    )
+
+    const results = await Promise.all([
+      pdsUploadBlob(config, viewer, new Uint8Array(1), 'image/jpeg'),
+      pdsUploadBlob(config, viewer, new Uint8Array(1), 'image/jpeg'),
+    ])
+
+    expect(results).toEqual([{ blob: { ref: 'at-1' } }, { blob: { ref: 'at-1' } }])
+    expect(calls.filter((c) => c.url === TOKEN)).toHaveLength(1)
+    expect(await getSession(DID)).toMatchObject({ access_token: 'at-1', refresh_token: 'rt-1' })
   })
 })
 
